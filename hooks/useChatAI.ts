@@ -9,7 +9,7 @@ import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
 import { ChatParser } from '../utils/chatParser';
 // 思考链 / HTML / MCD / memoryPalace 注入已下沉到 chatRequestPayload；这里不再直接调用
-import { useMusic, loadMusicHooks, loadMusicPlaybackSnapshot } from '../context/MusicContext';
+import { loadMusicHooks, loadMusicPlaybackSnapshot } from '../context/MusicContext';
 import { processNewMessages, mergePalaceFragmentsIntoMemories, getMemoryPalaceHighWaterMark } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 // evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
@@ -444,9 +444,6 @@ export const useChatAI = ({
     luckinChatRef,
 }: UseChatAIProps) => {
     
-    // 音乐上下文 — 用于聊天时注入"user 正在听什么 + 当前歌词窗口"
-    const music = useMusic();
-
     const [isTyping, setIsTyping] = useState(false);
     // 流式预览气泡：stream 开启时，已完成行与安全尾句随增量以临时气泡上屏。
     // 流结束后由 applyAssistantPostProcessing 正常落库渲染，预览随即清空 —— 只影响体感，不改持久化。
@@ -510,15 +507,14 @@ export const useChatAI = ({
     // DB 里 (activeMsgRuntime.flushInboxToChat 已 await saveMessage), DB.getRecentMessagesByCharId
     // 拿到的 history 含它.
     //
-    // 用 ref 包高频变化的依赖 (music / userProfile / 等), 不在 dep 数组里 → effect 只在 char.id 变时
-    // 重建 listener (切角色), 避免 music 每秒 tick 一次都 remove+addEventListener.
+    // 用 ref 包高频变化的依赖，不在 dep 数组里 → effect 只在 char.id 变时重建 listener。
     const emotionEvalDepsRef = useRef({
         userProfile, groups, emojis, categories, realtimeConfig, apiConfig,
-        translationConfig, music, mcdMiniAppRef, luckinMiniAppRef, luckinChatRef, evolvedNarrative,
+        translationConfig, mcdMiniAppRef, luckinMiniAppRef, luckinChatRef, evolvedNarrative,
     });
     emotionEvalDepsRef.current = {
         userProfile, groups, emojis, categories, realtimeConfig, apiConfig,
-        translationConfig, music, mcdMiniAppRef, luckinMiniAppRef, luckinChatRef, evolvedNarrative,
+        translationConfig, mcdMiniAppRef, luckinMiniAppRef, luckinChatRef, evolvedNarrative,
     };
 
     useEffect(() => {
@@ -569,15 +565,7 @@ export const useChatAI = ({
                     contextLimit: Math.max(1, contextMsgs.length),
                     realtimeConfig: deps.realtimeConfig,
                     innerState: deps.evolvedNarrative || undefined,
-                    musicSnapshot: {
-                        current: deps.music.current,
-                        playing: deps.music.playing,
-                        lyric: deps.music.lyric,
-                        activeLyricIdx: deps.music.activeLyricIdx,
-                        listeningTogetherWith: deps.music.listeningTogetherWith,
-                        cfg: deps.music.cfg,
-                        recentTrackChange: deps.music.recentTrackChange,
-                    },
+                    musicSnapshot: loadMusicPlaybackSnapshot(),
                     translationConfig: deps.translationConfig,
                     htmlMode: { enabled: !!(evalChar as any).htmlModeEnabled, customPrompt: (evalChar as any).htmlModeCustomPrompt },
                     thinkingChain: { enabled: !!(evalChar as any).showThinkingChain, customPrompt: (evalChar as any).thinkingChainCustomPrompt },
@@ -756,25 +744,7 @@ export const useChatAI = ({
             const mcdInheritMeta = mcdMiniOpen ? { fromMcdMiniApp: true } : undefined;
             const luckinMiniSnap = luckinMiniAppRef?.current;
             const luckinMiniOpen = !!luckinMiniSnap?.open;
-            const cachedMusicSnapshot = loadMusicPlaybackSnapshot();
-            const liveMusicSnapshot = {
-                ...cachedMusicSnapshot,
-                current: music.current,
-                queue: music.queue,
-                idx: music.idx,
-                playing: music.playing,
-                progress: music.progress,
-                duration: music.duration,
-                lyric: music.lyric,
-                activeLyricIdx: music.activeLyricIdx,
-                listeningTogetherWith: music.listeningTogetherWith,
-                listeningTogetherInviterByCharId: music.listeningTogetherInviterByCharId,
-                listeningTogetherStartedAt: music.listeningTogetherStartedAt,
-                listeningTogetherChangeCount: cachedMusicSnapshot?.listeningTogetherChangeCount || 0,
-                listeningTogetherPreviousSong: cachedMusicSnapshot?.listeningTogetherPreviousSong || null,
-                cfg: music.cfg,
-                recentTrackChange: music.recentTrackChange,
-            };
+            const liveMusicSnapshot = loadMusicPlaybackSnapshot();
 
             const payload = await stageT('payload', buildChatRequestPayload({
                 char: charForGen, userProfile, groups, emojis, categories,

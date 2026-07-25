@@ -1609,7 +1609,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   }, [activeApp, activeCharacterId]);
 
   useEffect(() => subscribeWorkbenchBackgroundTasks(task => {
-      if (task.status === 'running') return;
+      if (task.status === 'running' || task.status === 'waiting_approval') return;
       const isViewingTask = activeAppRef.current === AppID.Workbench
           && getActiveWorkbenchSessionSnapshot() === task.sessionId;
       if (!isViewingTask) {

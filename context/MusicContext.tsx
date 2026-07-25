@@ -171,6 +171,10 @@ export interface MusicPlaybackSnapshot {
 }
 let __musicPlaybackSnapshot: MusicPlaybackSnapshot | null = null;
 export const loadMusicPlaybackSnapshot = (): MusicPlaybackSnapshot | null => __musicPlaybackSnapshot;
+const patchMusicPlaybackSnapshot = (patch: Partial<MusicPlaybackSnapshot>) => {
+  if (!__musicPlaybackSnapshot) return;
+  __musicPlaybackSnapshot = { ...__musicPlaybackSnapshot, ...patch };
+};
 
 const MUSIC_TOGETHER_SESSION_KEY = 'sully.music.together.session';
 const MUSIC_TOGETHER_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
@@ -891,20 +895,38 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // 播放单曲
   const playSong = useCallback(async (song: Song, opts: { alsoSetQueue?: boolean; replaceQueue?: Song[]; startIdx?: number } = {}) => {
     const { alsoSetQueue = true, replaceQueue, startIdx } = opts;
+    let nextQueue = queueRef.current;
+    let nextIdx = nextQueue.findIndex(s => s.id === song.id);
 
     if (replaceQueue) {
-      setQueueState(replaceQueue);
-      setIdx(typeof startIdx === 'number' ? startIdx : replaceQueue.findIndex(s => s.id === song.id));
+      nextQueue = replaceQueue;
+      nextIdx = typeof startIdx === 'number' ? startIdx : replaceQueue.findIndex(s => s.id === song.id);
+      setQueueState(nextQueue);
+      setIdx(nextIdx);
     } else if (alsoSetQueue) {
-      const qnow = queueRef.current;
-      const existing = qnow.findIndex(s => s.id === song.id);
-      if (existing >= 0) {
-        setIdx(existing);
+      if (nextIdx >= 0) {
+        setIdx(nextIdx);
       } else {
-        setQueueState(q => [...q, song]);
-        setIdx(qnow.length);
+        nextIdx = nextQueue.length;
+        nextQueue = [...nextQueue, song];
+        setQueueState(nextQueue);
+        setIdx(nextIdx);
       }
     }
+
+    // Publish the selected song before React commits so a same-tick chat request
+    // cannot read the previous track.
+    queueRef.current = nextQueue;
+    if (nextIdx >= 0) idxRef.current = nextIdx;
+    patchMusicPlaybackSnapshot({
+      current: song,
+      queue: nextQueue,
+      idx: nextIdx,
+      progress: 0,
+      duration: 0,
+      lyric: [],
+      activeLyricIdx: -1,
+    });
 
     setLoadingSong(true); setLyric([]); setTlyric([]); setProgress(0); setDuration(0);
     try {
@@ -1132,6 +1154,12 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       recentTrackChange,
     };
   }, [current, queue, idx, playing, progress, duration, lyric, activeLyricIdx, listeningTogetherWith, listeningTogetherInviterByCharId, listeningTogetherStartedAt, listeningTogetherChangeCount, listeningTogetherPreviousSong, cfg, recentTrackChange]);
+
+  useLayoutEffect(() => {
+    return () => {
+      __musicPlaybackSnapshot = null;
+    };
+  }, []);
 
   // 把整组 musicHooks 写到模块级 slot — useChatAI 和 instant push activeMsgRuntime 都从这里取.
   // current / addListeningPartner 变化时刷新闭包, 保证读到的是最新 React state.

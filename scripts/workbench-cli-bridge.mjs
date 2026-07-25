@@ -184,6 +184,212 @@ let projectRegistry = {
 let activeMessageRun = null;
 const messageJobs = new Map();
 const messageJobsByClientTaskId = new Map();
+const codexServers = new Map();
+const APPROVAL_TIMEOUT_MS = Number(process.env.WORKBENCH_APPROVAL_TIMEOUT_MS || 10 * 60_000);
+
+const publicApproval = approval => approval ? {
+  id: approval.id,
+  kind: approval.kind,
+  command: approval.command,
+  cwd: approval.cwd,
+  reason: approval.reason,
+  grantRoot: approval.grantRoot,
+  requestedAt: approval.requestedAt,
+  availableDecisions: approval.availableDecisions,
+} : undefined;
+
+const createCodexServer = project => {
+  const child = spawn(CODEX_BIN, ['app-server', '--listen', 'stdio://'], {
+    cwd: project.path,
+    env: process.env,
+    windowsHide: true,
+    shell: false,
+  });
+  const lines = createInterface({ input: child.stdout });
+  const pending = new Map();
+  const turns = new Map();
+  const threads = new Map();
+  let nextId = 1;
+  let closedError = null;
+
+  const send = value => {
+    if (closedError || child.killed) throw closedError || new Error('Codex app-server is unavailable');
+    child.stdin.write(`${JSON.stringify(value)}\n`);
+  };
+  const request = (method, params = {}) => new Promise((resolveRequest, rejectRequest) => {
+    const id = nextId++;
+    pending.set(String(id), { resolve: resolveRequest, reject: rejectRequest });
+    send({ jsonrpc: '2.0', id, method, params });
+  });
+  const close = error => {
+    if (closedError) return;
+    closedError = error instanceof Error ? error : new Error(String(error || 'Codex app-server stopped'));
+    pending.forEach(item => item.reject(closedError));
+    pending.clear();
+    turns.forEach(item => {
+      if (item.approval?.timer) clearTimeout(item.approval.timer);
+      item.approval = null;
+      delete item.job.approval;
+      item.reject(closedError);
+    });
+    turns.clear();
+    codexServers.delete(project.id);
+  };
+
+  lines.on('line', line => {
+    let message;
+    try { message = JSON.parse(line); } catch { return; }
+    if (message.id !== undefined && !message.method) {
+      const waiter = pending.get(String(message.id));
+      if (!waiter) return;
+      pending.delete(String(message.id));
+      if (message.error) waiter.reject(new Error(message.error.message || 'Codex app-server request failed'));
+      else waiter.resolve(message.result);
+      return;
+    }
+    if (message.id !== undefined && (
+      message.method === 'item/commandExecution/requestApproval'
+      || message.method === 'item/fileChange/requestApproval'
+    )) {
+      const params = message.params || {};
+      const turn = turns.get(String(params.turnId || ''));
+      if (!turn) {
+        send({ jsonrpc: '2.0', id: message.id, result: { decision: 'decline' } });
+        return;
+      }
+      const approval = {
+        id: `wbapproval_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+        requestId: message.id,
+        kind: message.method.includes('commandExecution') ? 'command' : 'file',
+        command: typeof params.command === 'string' ? params.command : '',
+        cwd: typeof params.cwd === 'string' ? params.cwd : '',
+        reason: typeof params.reason === 'string' ? params.reason : '',
+        grantRoot: typeof params.grantRoot === 'string' ? params.grantRoot : '',
+        requestedAt: Date.now(),
+        availableDecisions: Array.isArray(params.availableDecisions)
+          ? params.availableDecisions.filter(value => ['accept', 'acceptForSession', 'decline'].includes(value))
+          : ['accept', 'acceptForSession', 'decline'],
+      };
+      turn.approval = approval;
+      turn.job.status = 'waiting_approval';
+      turn.job.approval = publicApproval(approval);
+      approval.timer = setTimeout(() => {
+        if (turn.approval?.id !== approval.id) return;
+        try {
+          send({ jsonrpc: '2.0', id: approval.requestId, result: { decision: 'decline' } });
+        } catch {
+          return;
+        }
+        turn.approval = null;
+        turn.job.status = 'running';
+        delete turn.job.approval;
+      }, APPROVAL_TIMEOUT_MS);
+      approval.timer.unref?.();
+      return;
+    }
+    if (message.method === 'item/agentMessage/delta') {
+      const turn = turns.get(String(message.params?.turnId || ''));
+      if (turn && typeof message.params?.delta === 'string') turn.reply += message.params.delta;
+      return;
+    }
+    if (message.method === 'item/completed') {
+      const turn = turns.get(String(message.params?.turnId || ''));
+      const item = message.params?.item;
+      if (turn && item?.type === 'agentMessage' && !turn.reply) {
+        turn.reply = String(item.text || item.content || '');
+      }
+      return;
+    }
+    if (message.method === 'turn/completed') {
+      const turnId = String(message.params?.turn?.id || message.params?.turnId || '');
+      const turn = turns.get(turnId);
+      if (!turn) return;
+      turns.delete(turnId);
+      if (turn.approval?.timer) clearTimeout(turn.approval.timer);
+      const status = String(message.params?.turn?.status || '');
+      if (status === 'failed') {
+        turn.reject(new Error(message.params?.turn?.error?.message || 'Codex turn failed'));
+      } else {
+        turn.resolve(turn.reply);
+      }
+    }
+  });
+  child.stderr.on('data', chunk => {
+    if (DEBUG) console.warn(`[workbench-bridge] app-server stderr: ${chunk.toString('utf8').trim()}`);
+  });
+  child.on('error', close);
+  child.on('close', code => close(new Error(`Codex app-server exited with code ${code}`)));
+
+  const ready = request('initialize', {
+    clientInfo: { name: 'sullyos-workbench', version: '1.0.0' },
+    capabilities: {},
+  }).then(() => {
+    send({ jsonrpc: '2.0', method: 'initialized', params: {} });
+  });
+
+  const run = async (body, prompt, job) => {
+    await ready;
+    const sessionKey = `${body.sessionId || 'default'}:${body.capabilityMode === 'execute' ? 'execute' : 'chat'}:${body.selectedModel || ''}`;
+    let threadId = threads.get(sessionKey);
+    if (!threadId) {
+      const started = await request('thread/start', {
+        cwd: project.path,
+        model: body.selectedModel || null,
+        sandbox: body.capabilityMode === 'execute' ? 'workspace-write' : 'read-only',
+        approvalPolicy: 'on-request',
+        approvalsReviewer: 'user',
+        ephemeral: true,
+      });
+      threadId = String(started?.thread?.id || '');
+      if (!threadId) throw new Error('Codex app-server did not return a thread id');
+      threads.set(sessionKey, threadId);
+    }
+    const startedTurn = await request('turn/start', {
+      threadId,
+      input: [
+        { type: 'text', text: prompt },
+        ...(Array.isArray(body.recentMessages)
+          ? body.recentMessages
+              .map(message => message?.imageData)
+              .filter(value => typeof value === 'string' && value.startsWith('data:image/'))
+              .slice(-3)
+              .map(url => ({ type: 'image', url }))
+          : []),
+      ],
+      cwd: project.path,
+      model: body.selectedModel || null,
+      approvalPolicy: 'on-request',
+    });
+    const turnId = String(startedTurn?.turn?.id || '');
+    if (!turnId) throw new Error('Codex app-server did not return a turn id');
+    return await new Promise((resolveTurn, rejectTurn) => {
+      turns.set(turnId, { resolve: resolveTurn, reject: rejectTurn, reply: '', job, approval: null });
+    });
+  };
+
+  const approve = (job, approvalId, decision) => {
+    const turn = Array.from(turns.values()).find(item => item.job === job && item.approval?.id === approvalId);
+    if (!turn) return false;
+    if (decision !== 'decline' && !turn.approval.availableDecisions.includes(decision)) return false;
+    clearTimeout(turn.approval.timer);
+    send({ jsonrpc: '2.0', id: turn.approval.requestId, result: { decision } });
+    turn.approval = null;
+    job.status = 'running';
+    delete job.approval;
+    return true;
+  };
+
+  return { run, approve };
+};
+
+const getCodexServer = project => {
+  let server = codexServers.get(project.id);
+  if (!server) {
+    server = createCodexServer(project);
+    codexServers.set(project.id, server);
+  }
+  return server;
+};
 
 const normalizeProjectRegistry = raw => {
   const defaultProject = normalizeProject({ id: DEFAULT_PROJECT_ID, name: basename(WORKDIR) || '默认项目', path: WORKDIR, permission: 'write' });
@@ -780,7 +986,7 @@ const runCli = async (command, prompt, project = resolveProject(''), imageData =
   }
 };
 
-const executeMessage = async body => {
+const executeMessage = async (body, job = null) => {
   const project = resolveProject(body);
   if (activeMessageRun) {
     const error = new Error('Code 正在处理上一条请求，请等它完成后再发送。');
@@ -811,7 +1017,9 @@ const executeMessage = async body => {
     const imageData = Array.isArray(body.recentMessages)
       ? body.recentMessages.map(message => message?.imageData).filter(Boolean)
       : [];
-    rawReply = await runCli(agentInfo.command, prompt, project, imageData, agentInfo.agent);
+    rawReply = agentInfo.agent === 'codex' && !body.customAgentCommand && job
+      ? await getCodexServer(project).run(body, prompt, job)
+      : await runCli(agentInfo.command, prompt, project, imageData, agentInfo.agent);
   } finally {
     activeMessageRun = null;
   }
@@ -948,10 +1156,16 @@ const server = createServer(async (req, res) => {
         return;
       }
       const jobId = `wbjob_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-      const job = { id: jobId, clientTaskId, status: 'running', createdAt: Date.now() };
+      const job = {
+        id: jobId,
+        clientTaskId,
+        projectId: resolveProject(body).id,
+        status: 'running',
+        createdAt: Date.now(),
+      };
       messageJobs.set(jobId, job);
       if (clientTaskId) messageJobsByClientTaskId.set(clientTaskId, jobId);
-      void executeMessage(body).then(result => {
+      void executeMessage(body, job).then(result => {
         Object.assign(job, { status: 'done', finishedAt: Date.now(), result });
       }).catch(error => {
         Object.assign(job, {
@@ -981,6 +1195,30 @@ const server = createServer(async (req, res) => {
         return;
       }
       json(res, 200, job);
+      return;
+    }
+
+    const approvalMatch = req.method === 'POST' ? url.pathname.match(/^\/jobs\/([^/]+)\/approval$/) : null;
+    if (approvalMatch) {
+      const job = messageJobs.get(decodeURIComponent(approvalMatch[1]));
+      if (!job) {
+        json(res, 404, { error: 'Code background task is unavailable' });
+        return;
+      }
+      const body = await readBody(req);
+      const decision = String(body?.decision || '');
+      if (!['accept', 'acceptForSession', 'decline'].includes(decision)) {
+        json(res, 400, { error: 'Invalid approval decision' });
+        return;
+      }
+      const approvalId = String(body?.approvalId || '');
+      const project = resolveProject(job.projectId || '');
+      const accepted = getCodexServer(project).approve(job, approvalId, decision);
+      if (!accepted) {
+        json(res, 409, { error: 'This approval is no longer pending' });
+        return;
+      }
+      json(res, 200, { status: 'running' });
       return;
     }
 

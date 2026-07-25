@@ -178,6 +178,18 @@ export const saveWorkbenchBridgeConfig = (config: WorkbenchBridgeConfig): void =
     }));
 };
 
+export type WorkbenchBridgeApprovalDecision = 'accept' | 'acceptForSession' | 'decline';
+export type WorkbenchBridgeApproval = {
+    id: string;
+    kind: 'command' | 'file';
+    command?: string;
+    cwd?: string;
+    reason?: string;
+    grantRoot?: string;
+    requestedAt: number;
+    availableDecisions?: WorkbenchBridgeApprovalDecision[];
+};
+
 export const loadWorkbenchMode = (): WorkbenchMode => {
     try {
         return localStorage.getItem(WORKBENCH_MODE_KEY) === 'sully' ? 'sully' : 'codex';
@@ -483,6 +495,7 @@ export const sendWorkbenchBridgeMessage = async (
             if (jobId) {
                 window.clearTimeout(timeout);
                 const deadline = Date.now() + 60 * 60_000;
+                let notifiedApprovalId = '';
                 while (Date.now() < deadline) {
                     await new Promise(resolve => window.setTimeout(resolve, 1_500));
                     let poll: Response;
@@ -499,6 +512,24 @@ export const sendWorkbenchBridgeMessage = async (
                     }
                     const job = await poll.json().catch(() => null) as Record<string, any> | null;
                     if (job?.status === 'error') throw new Error(String(job.error || '电脑端 Code 后台任务失败'));
+                    if (job?.status === 'waiting_approval' && job.approval?.id && job.approval.id !== notifiedApprovalId) {
+                        notifiedApprovalId = String(job.approval.id);
+                        const approval = job.approval as WorkbenchBridgeApproval;
+                        args.onApproval?.(approval, async decision => {
+                            const approvalResponse = await fetch(`${base}/jobs/${encodeURIComponent(jobId)}/approval`, {
+                                method: 'POST',
+                                headers: bridgeHeaders(config),
+                                body: JSON.stringify({ approvalId: approval.id, decision }),
+                            });
+                            if (!approvalResponse.ok) {
+                                const data = await approvalResponse.json().catch(() => null);
+                                throw new Error(String(data?.error || `Approval failed (${approvalResponse.status})`));
+                            }
+                        });
+                    } else if (notifiedApprovalId && job?.status !== 'waiting_approval') {
+                        notifiedApprovalId = '';
+                        args.onApprovalCleared?.();
+                    }
                     if (job?.status === 'done') {
                         const result = job.result && typeof job.result === 'object' ? job.result : {};
                         return {
@@ -548,6 +579,15 @@ export const sendWorkbenchFallbackMessage = async (
         content: string;
         recentMessages: WorkbenchMessage[];
         taskIndex?: string;
+        onApproval?: (
+            approval: WorkbenchBridgeApproval,
+            decide: (decision: WorkbenchBridgeApprovalDecision) => Promise<void>,
+        ) => void;
+        onApprovalCleared?: () => void;
+        onApproval?: (
+            approval: WorkbenchBridgeApproval,
+            decide: (decision: WorkbenchBridgeApprovalDecision) => Promise<void>,
+        ) => void;
     },
 ): Promise<WorkbenchBridgeReply> => {
     const base = String(config.fallbackApiBaseUrl || '').trim().replace(/\/+$/, '');

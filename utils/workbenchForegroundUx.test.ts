@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 describe('Workbench foreground UX', () => {
     const workbenchSource = readFileSync(new URL('../apps/WorkbenchApp.tsx', import.meta.url), 'utf8');
     const osContextSource = readFileSync(new URL('../context/OSContext.tsx', import.meta.url), 'utf8');
+    const bridgeSource = readFileSync(new URL('./workbenchBridge.ts', import.meta.url), 'utf8');
+    const bridgeServerSource = readFileSync(new URL('../scripts/workbench-cli-bridge.mjs', import.meta.url), 'utf8');
 
     it('closes the emoji panel when the task input receives focus', () => {
         expect(workbenchSource).toContain('onFocus={() => setEmojiPanelOpen(false)}');
@@ -11,10 +13,20 @@ describe('Workbench foreground UX', () => {
 
     it('shows the background completion toast briefly instead of keeping it on screen', () => {
         expect(osContextSource).toContain(
+            "task.status === 'running' || task.status === 'waiting_approval'",
+        );
+        expect(osContextSource).toContain(
             "addToast('Code 后台任务已完成', 'success', 1500)",
         );
         expect(osContextSource).toContain('durationMs = 3000');
         expect(osContextSource).toContain('}, durationMs)');
+    });
+
+    it('clears expired approval cards and cancels approval timers when app-server closes', () => {
+        expect(bridgeSource).toContain("notifiedApprovalId && job?.status !== 'waiting_approval'");
+        expect(bridgeSource).toContain('args.onApprovalCleared?.()');
+        expect(workbenchSource).toContain('onApprovalCleared: () => {');
+        expect(bridgeServerSource).toContain('if (item.approval?.timer) clearTimeout(item.approval.timer)');
     });
 
     it('restores the current conversation before the async database refresh finishes', () => {

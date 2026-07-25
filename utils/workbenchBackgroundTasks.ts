@@ -1,5 +1,10 @@
+import type {
+    WorkbenchBridgeApproval,
+    WorkbenchBridgeApprovalDecision,
+} from './workbenchBridge';
+
 export type WorkbenchBackgroundSpeaker = 'codex' | 'character';
-export type WorkbenchBackgroundStatus = 'running' | 'done' | 'error';
+export type WorkbenchBackgroundStatus = 'running' | 'waiting_approval' | 'done' | 'error';
 
 export interface WorkbenchBackgroundTaskSnapshot {
     id: string;
@@ -9,6 +14,11 @@ export interface WorkbenchBackgroundTaskSnapshot {
     startedAt: number;
     finishedAt?: number;
     error?: string;
+    approval?: {
+        request: WorkbenchBridgeApproval;
+        decide: (decision: WorkbenchBridgeApprovalDecision) => Promise<void>;
+        submitting: boolean;
+    };
 }
 
 type Listener = (snapshot: WorkbenchBackgroundTaskSnapshot) => void;
@@ -29,12 +39,29 @@ const emit = (snapshot: WorkbenchBackgroundTaskSnapshot) => {
 
 export const getRunningWorkbenchTask = (sessionId?: string | null) => {
     if (!sessionId) return null;
-    return Array.from(tasks.values()).find(task => task.sessionId === sessionId && task.status === 'running') || null;
+    return Array.from(tasks.values()).find(task => (
+        task.sessionId === sessionId
+        && (task.status === 'running' || task.status === 'waiting_approval')
+    )) || null;
 };
 
 export const subscribeWorkbenchBackgroundTasks = (listener: Listener) => {
     listeners.add(listener);
     return () => listeners.delete(listener);
+};
+
+export const setWorkbenchBackgroundApproval = (
+    sessionId: string,
+    approval: WorkbenchBackgroundTaskSnapshot['approval'] | null,
+) => {
+    const task = Array.from(tasks.values()).find(item => (
+        item.sessionId === sessionId
+        && (item.status === 'running' || item.status === 'waiting_approval')
+    ));
+    if (!task) return;
+    task.approval = approval || undefined;
+    task.status = approval ? 'waiting_approval' : 'running';
+    emit(task);
 };
 
 export const runWorkbenchBackgroundTask = async <T>(

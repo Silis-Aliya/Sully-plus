@@ -32,7 +32,11 @@ import {
     summarizeWorkbenchProgressCardWithCharacter,
     testWorkbenchBridge,
 } from '../utils/workbenchBridge';
-import type { WorkbenchModelOption } from '../utils/workbenchBridge';
+import type {
+    WorkbenchBridgeApproval,
+    WorkbenchBridgeApprovalDecision,
+    WorkbenchModelOption,
+} from '../utils/workbenchBridge';
 import {
     createWorkbenchXhsCaches,
     processWorkbenchXhsDirectives,
@@ -49,6 +53,7 @@ import {
     getRunningWorkbenchTask,
     runWorkbenchBackgroundTask,
     setActiveWorkbenchSessionSnapshot,
+    setWorkbenchBackgroundApproval,
     subscribeWorkbenchBackgroundTasks,
 } from '../utils/workbenchBackgroundTasks';
 import { QUICK_SYNC_APPLIED_EVENT } from '../utils/quickSync';
@@ -867,6 +872,11 @@ const WorkbenchApp: React.FC = () => {
     const [input, setInput] = useState('');
     const [busy, setBusy] = useState(false);
     const [thinkingSpeaker, setThinkingSpeaker] = useState<'codex' | 'character' | null>(null);
+    const [bridgeApproval, setBridgeApproval] = useState<{
+        request: WorkbenchBridgeApproval;
+        decide: (decision: WorkbenchBridgeApprovalDecision) => Promise<void>;
+        submitting: boolean;
+    } | null>(null);
     const [summaryBusy, setSummaryBusy] = useState(false);
     const [progressPanelOpen, setProgressPanelOpen] = useState(false);
     const [progressCards, setProgressCards] = useState<WorkbenchSummary[]>([]);
@@ -1248,9 +1258,10 @@ const WorkbenchApp: React.FC = () => {
 
     useEffect(() => subscribeWorkbenchBackgroundTasks(task => {
         if (task.sessionId !== session?.id) return;
-        const running = task.status === 'running';
+        const running = task.status === 'running' || task.status === 'waiting_approval';
         setBusy(running);
         setThinkingSpeaker(running ? task.speaker : null);
+        setBridgeApproval(task.approval || null);
         if (!running) {
             void refresh();
             if (task.status === 'done') addToast('Code 后台回复已完成', 'success');
@@ -1261,6 +1272,7 @@ const WorkbenchApp: React.FC = () => {
         const task = getRunningWorkbenchTask(session?.id);
         setBusy(!!task);
         setThinkingSpeaker(task?.speaker || null);
+        setBridgeApproval(task?.approval || null);
     }, [session?.id]);
 
     useEffect(() => {
@@ -2172,8 +2184,21 @@ const WorkbenchApp: React.FC = () => {
                     content: requestContent,
                     recentMessages: recent,
                     taskIndex: contextIndex,
+                    onApproval: (request, decide) => {
+                        const approval = { request, decide, submitting: false };
+                        setBridgeApproval(approval);
+                        setWorkbenchBackgroundApproval(s.id, approval);
+                    },
+                    onApprovalCleared: () => {
+                        setBridgeApproval(null);
+                        setWorkbenchBackgroundApproval(s.id, null);
+                    },
                 });
+                setBridgeApproval(null);
+                setWorkbenchBackgroundApproval(s.id, null);
             } catch (error) {
+                setBridgeApproval(null);
+                setWorkbenchBackgroundApproval(s.id, null);
                 if (!isWorkbenchBridgeConnectionError(error)) throw error;
                 setBridgeStatus('offline');
                 setTestResult('电脑未连接');
@@ -2521,6 +2546,22 @@ const WorkbenchApp: React.FC = () => {
         void send(emoji.url, { type: 'emoji', metadata: { emojiName: emoji.name } });
     };
 
+    const decideBridgeApproval = async (decision: WorkbenchBridgeApprovalDecision) => {
+        const pending = bridgeApproval;
+        if (!pending || pending.submitting) return;
+        setBridgeApproval({ ...pending, submitting: true });
+        setWorkbenchBackgroundApproval(session?.id || '', { ...pending, submitting: true });
+        try {
+            await pending.decide(decision);
+            setBridgeApproval(null);
+            setWorkbenchBackgroundApproval(session?.id || '', null);
+        } catch (error: any) {
+            setBridgeApproval({ ...pending, submitting: false });
+            setWorkbenchBackgroundApproval(session?.id || '', { ...pending, submitting: false });
+            addToast(error?.message || '审批提交失败', 'error');
+        }
+    };
+
     const sendImage = async (file?: File | null) => {
         if (!file) return;
         try {
@@ -2754,7 +2795,51 @@ const WorkbenchApp: React.FC = () => {
                                 </div>
                                 );
                             })}
-                            {busy && thinkingSpeaker && (
+                            {bridgeApproval && (
+                                <div className="ml-0 sm:ml-11 max-w-[min(34rem,calc(100vw-2rem))] rounded-lg border border-amber-200 bg-white px-3 py-3 shadow-sm">
+                                    <div className="text-sm font-semibold text-slate-800">
+                                        {bridgeApproval.request.kind === 'command' ? 'Codex 请求执行命令' : 'Codex 请求修改文件'}
+                                    </div>
+                                    {(bridgeApproval.request.command || bridgeApproval.request.grantRoot || bridgeApproval.request.reason) && (
+                                        <div className="mt-2 max-h-28 overflow-auto rounded-md bg-slate-50 px-2.5 py-2 text-xs text-slate-600 whitespace-pre-wrap break-all">
+                                            {bridgeApproval.request.command
+                                                || bridgeApproval.request.grantRoot
+                                                || bridgeApproval.request.reason}
+                                        </div>
+                                    )}
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        {(!bridgeApproval.request.availableDecisions || bridgeApproval.request.availableDecisions.includes('accept')) && (
+                                            <button
+                                                type="button"
+                                                disabled={bridgeApproval.submitting}
+                                                onClick={() => void decideBridgeApproval('accept')}
+                                                className="h-8 rounded-md bg-slate-900 px-3 text-xs font-medium text-white disabled:opacity-50"
+                                            >
+                                                允许一次
+                                            </button>
+                                        )}
+                                        {bridgeApproval.request.availableDecisions?.includes('acceptForSession') && (
+                                            <button
+                                                type="button"
+                                                disabled={bridgeApproval.submitting}
+                                                onClick={() => void decideBridgeApproval('acceptForSession')}
+                                                className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 disabled:opacity-50"
+                                            >
+                                                本次对话允许
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            disabled={bridgeApproval.submitting}
+                                            onClick={() => void decideBridgeApproval('decline')}
+                                            className="h-8 rounded-md border border-rose-200 bg-white px-3 text-xs font-medium text-rose-600 disabled:opacity-50"
+                                        >
+                                            拒绝
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                            {busy && thinkingSpeaker && !bridgeApproval && (
                                 <div className={`flex gap-2.5 ${avatarRowAlign}`}>
                                     {showAssistantAvatar && (thinkingAvatar ? (
                                         <WorkbenchAvatarImage
