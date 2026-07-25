@@ -17,4 +17,4 @@ if "%WORKBENCH_BRIDGE_TOKEN%"=="" (
   exit /b 1
 )
 
-pnpm workbench:bridge -- --host 0.0.0.0 --port %WORKBENCH_BRIDGE_PORT% --agent %WORKBENCH_AGENT% --token "%WORKBENCH_BRIDGE_TOKEN%" >> workbench-bridge.log 2>&1
+node scripts\workbench-cli-bridge.mjs --host 0.0.0.0 --port %WORKBENCH_BRIDGE_PORT% --agent %WORKBENCH_AGENT% --token "%WORKBENCH_BRIDGE_TOKEN%" >> workbench-bridge.log 2>&1

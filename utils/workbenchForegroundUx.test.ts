@@ -53,4 +53,11 @@ describe('Workbench foreground UX', () => {
         expect(workbenchSource).toContain('const memoryCount = memoryCountBySummaryId.get(card.id) || 0');
         expect(workbenchSource).toContain('Memory · {memoryCount}');
     });
+
+    it('keeps progress-card formatting out of ordinary AI assistant replies', () => {
+        expect(bridgeServerSource).toContain('普通回复不得生成、续写或模仿“[Code 进度]”格式');
+        expect(bridgeSource).toContain("requestKind: 'progress-summary'");
+        expect(bridgeServerSource).toContain("body.requestKind === 'progress-summary'");
+        expect(bridgeServerSource).toContain('[系统明确任务]');
+    });
 });

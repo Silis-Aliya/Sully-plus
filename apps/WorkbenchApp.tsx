@@ -47,6 +47,7 @@ import {
     parseWorkbenchXhsShareSegments,
     splitWorkbenchCharacterTextChunks,
     stripWorkbenchAssistantMention,
+    stripUnexpectedWorkbenchProgressCard,
 } from '../utils/workbenchText';
 import type { XhsNote } from '../utils/realtimeContext';
 import {
@@ -1523,6 +1524,8 @@ const WorkbenchApp: React.FC = () => {
         quoteContext: WorkbenchMessage[] = messages,
     ): Promise<WorkbenchMessage[]> => {
         const saved: WorkbenchMessage[] = [];
+        rawReply = stripUnexpectedWorkbenchProgressCard(rawReply);
+        if (!ChatParser.hasDisplayContent(rawReply)) return saved;
         const xhsShareSegments = parseWorkbenchXhsShareSegments(rawReply);
         if (xhsShareSegments.some(segment => segment.type === 'xhs_card')) {
             for (const segment of xhsShareSegments) {

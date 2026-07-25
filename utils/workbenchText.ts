@@ -8,6 +8,21 @@ export const cleanWorkbenchContent = (content: string) => normalizeWorkbenchLine
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
+const WORKBENCH_PROGRESS_HEADER_RE = /^\s*(?:[*_~`>#-]\s*)*\[Code\s*进度(?:-[^\]]+)?\]\s*[*_~`]*\s*$/i;
+const WORKBENCH_PROGRESS_FIELD_RE = /^\s*(?:[*_~`-]\s*)*(?:作者|任务|状态|决策|进度|待办|备注)\s*[：:]/;
+
+export const stripUnexpectedWorkbenchProgressCard = (content: string): string => {
+    const lines = normalizeWorkbenchLineBreaks(content).split('\n');
+    for (let index = 0; index < lines.length; index += 1) {
+        if (!WORKBENCH_PROGRESS_HEADER_RE.test(lines[index])) continue;
+        const tail = lines.slice(index + 1);
+        const fieldCount = tail.filter(line => WORKBENCH_PROGRESS_FIELD_RE.test(line)).length;
+        if (fieldCount < 3) continue;
+        return cleanWorkbenchContent(lines.slice(0, index).join('\n'));
+    }
+    return cleanWorkbenchContent(content);
+};
+
 export type WorkbenchXhsShareSegment =
     | { type: 'text'; content: string }
     | { type: 'xhs_card'; note: Record<string, any> };

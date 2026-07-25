@@ -2193,9 +2193,7 @@ const MessageItem = React.memo(({
                 const hooks = loadMusicHooks();
                 await hooks?.playSharedSong?.(song as any);
                 hooks?.setPlayMode?.('shuffle');
-                window.setTimeout(() => {
-                    loadMusicHooks()?.joinListeningTogether?.(m.charId, 'character');
-                }, 0);
+                hooks?.joinListeningTogether?.(m.charId, 'character');
             }
         };
 

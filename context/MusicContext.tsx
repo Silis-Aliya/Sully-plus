@@ -656,7 +656,23 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     () => initialTogetherSession?.startedAt || null,
   );
   const addListeningPartner = useCallback((charId: string, inviter: 'user' | 'character' = 'user') => {
-    setListeningTogetherStartedAt(prev => prev ?? Date.now());
+    const snapshot = loadMusicPlaybackSnapshot();
+    const startedAt = snapshot?.listeningTogetherStartedAt ?? Date.now();
+    const nextListeners = snapshot?.listeningTogetherWith.includes(charId)
+      ? snapshot.listeningTogetherWith
+      : [...(snapshot?.listeningTogetherWith || []), charId];
+    const nextInviters = snapshot?.listeningTogetherInviterByCharId[charId] === inviter
+      ? snapshot.listeningTogetherInviterByCharId
+      : { ...(snapshot?.listeningTogetherInviterByCharId || {}), [charId]: inviter };
+
+    // Requests can run before React commits this state change. Publish the
+    // membership immediately so they see the same together session as the UI.
+    patchMusicPlaybackSnapshot({
+      listeningTogetherWith: nextListeners,
+      listeningTogetherInviterByCharId: nextInviters,
+      listeningTogetherStartedAt: startedAt,
+    });
+    setListeningTogetherStartedAt(prev => prev ?? startedAt);
     setListeningTogetherWith(prev => prev.includes(charId) ? prev : [...prev, charId]);
     setListeningTogetherInviterByCharId(prev => prev[charId] === inviter ? prev : { ...prev, [charId]: inviter });
   }, []);

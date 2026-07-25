@@ -437,6 +437,7 @@ export const sendWorkbenchBridgeMessage = async (
         sessionId: string;
         mode: WorkbenchMode;
         capabilityMode?: 'chat' | 'execute';
+        requestKind?: 'chat' | 'progress-summary';
         clientTaskId?: string;
         content: string;
         recentMessages: WorkbenchMessage[];
@@ -452,6 +453,7 @@ export const sendWorkbenchBridgeMessage = async (
         sessionId: args.sessionId,
         mode: args.mode,
         capabilityMode: args.capabilityMode || 'chat',
+        requestKind: args.requestKind || 'chat',
         clientDevice: detectWorkbenchClientDevice(),
         runtimeMode: config.runtimeMode || 'computer',
         agent: config.defaultAgent,
@@ -699,6 +701,7 @@ export const summarizeWorkbenchProgressCardWithBridge = async (
     const result = await sendWorkbenchBridgeMessage(config, {
         sessionId: args.sessionId,
         mode: 'codex',
+        requestKind: 'progress-summary',
         content: [
             CODEX_PROGRESS_CARD_PROMPT,
             '',
@@ -941,7 +944,7 @@ export const buildWorkbenchCurrentProgressContext = async (sessionId: string, li
         .slice(-limit);
     if (!currentSummaries.length) return '';
     return [
-        '[当前 Code 对话已保存进度卡]',
+        '[当前 Code 对话既有进展]',
         ...currentSummaries.map(summary => {
             const stamp = new Date(summary.createdAt).toLocaleString('zh-CN', {
                 month: '2-digit',
@@ -950,12 +953,20 @@ export const buildWorkbenchCurrentProgressContext = async (sessionId: string, li
                 minute: '2-digit',
             });
             const author = summary.sourceName || (summary.source === 'character' ? '角色' : summary.source === 'codex' ? 'Code' : '');
-            const authorLine = author ? `作者：${author}\n` : '';
-            const content = summary.content.trim();
-            return `--- ${stamp} ---\n${content.includes('作者：') || !authorLine ? '' : authorLine}${content}`;
+            const content = compactWorkbenchProgressSummary(summary.content);
+            return `- ${stamp}${author ? ` · ${author}` : ''}：${content}`;
         }),
     ].join('\n\n');
 };
+
+const compactWorkbenchProgressSummary = (content: string): string => content
+    .replace(/^\s*\[Code\s*进度(?:-[^\]]+)?\]\s*/i, '')
+    .split(/\r?\n/)
+    .map(line => line.replace(/^\s*(?:作者|任务|状态|决策|进度|待办|备注)\s*[：:]\s*/, '').trim())
+    .filter(Boolean)
+    .join('；')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 export const buildWorkbenchTaskIndex = async (currentSessionId?: string, limit = 6): Promise<string> => {
     const { DB } = await import('./db');
@@ -980,7 +991,7 @@ export const buildWorkbenchTaskIndex = async (currentSessionId?: string, limit =
         });
         const title = session.title || '未命名任务';
         const author = summary.sourceName || (summary.source === 'character' ? '角色' : summary.source === 'codex' ? 'Code' : '');
-        const content = `${author ? `作者：${author}；` : ''}${summary.content.replace(/\s+/g, ' ').trim()}`;
+        const content = `${author ? `${author}；` : ''}${compactWorkbenchProgressSummary(summary.content)}`;
         lines.push(`- ${title} · ${stamp}: ${content.slice(0, 260)}`);
         if (lines.length >= limit) break;
     }
