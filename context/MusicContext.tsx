@@ -8,7 +8,7 @@
  *   4. Media Session API 暴露锁屏控件 (Android/iOS 原生通知栏也能控制)。
  */
 import React, {
-  createContext, useCallback, useContext, useEffect,
+  createContext, useCallback, useContext, useEffect, useLayoutEffect,
   useMemo, useRef, useState,
 } from 'react';
 import { cachedCall as _cachedCall, invalidate as _invalidateCache, clearAll as _clearAllCache } from '../utils/musicCache';
@@ -16,6 +16,7 @@ import { DB } from '../utils/db';
 import { getProxyWorkerUrl, DEFAULT_PROXY_WORKER, PROXY_WORKER_CHANGED_EVENT } from '../utils/proxyWorker';
 import type { PostProcessMusicHooks } from '../utils/applyAssistantPostProcessing';
 import { buildMusicWakePickableSongs, getRememberedMusicWakePickableSongs } from '../utils/musicTrackChange';
+import { LOCAL_SETTINGS_IMPORTED_EVENT } from '../utils/localSettingsBackup';
 
 export const MUSIC_TOGETHER_LEFT_EVENT = 'music-together-left';
 
@@ -170,6 +171,71 @@ export interface MusicPlaybackSnapshot {
 let __musicPlaybackSnapshot: MusicPlaybackSnapshot | null = null;
 export const loadMusicPlaybackSnapshot = (): MusicPlaybackSnapshot | null => __musicPlaybackSnapshot;
 
+const MUSIC_TOGETHER_SESSION_KEY = 'sully.music.together.session';
+const MUSIC_TOGETHER_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+interface PersistedMusicTogetherSession {
+  charIds: string[];
+  inviterByCharId: Record<string, 'user' | 'character'>;
+  startedAt: number;
+  updatedAt: number;
+  currentSongId?: number;
+}
+
+const normalizeMusicTogetherSession = (
+  value: unknown,
+  queue: Song[],
+  idx: number,
+  validCharacterIds?: Set<string>,
+): PersistedMusicTogetherSession | null => {
+  const parsed = value as Partial<PersistedMusicTogetherSession> | null;
+  const current = idx >= 0 && idx < queue.length ? queue[idx] : null;
+  const charIds = Array.isArray(parsed?.charIds)
+    ? [...new Set(parsed.charIds.filter((id): id is string =>
+        typeof id === 'string' && !!id.trim() && (!validCharacterIds || validCharacterIds.has(id))))]
+    : [];
+  const updatedAt = Number(parsed?.updatedAt);
+  const startedAt = Number(parsed?.startedAt);
+  const expectedSongId = Number(parsed?.currentSongId);
+  if (
+    charIds.length === 0
+    || !current
+    || !Number.isFinite(updatedAt)
+    || Date.now() - updatedAt > MUSIC_TOGETHER_SESSION_MAX_AGE_MS
+    || (Number.isFinite(expectedSongId) && expectedSongId !== current.id)
+  ) return null;
+  const inviterByCharId: Record<string, 'user' | 'character'> = {};
+  for (const charId of charIds) {
+    inviterByCharId[charId] = parsed?.inviterByCharId?.[charId] === 'character' ? 'character' : 'user';
+  }
+  return {
+    charIds,
+    inviterByCharId,
+    startedAt: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : updatedAt,
+    updatedAt,
+    currentSongId: current.id,
+  };
+};
+
+const loadMusicTogetherSession = (
+  queue: Song[],
+  idx: number,
+  fallback?: PersistedMusicTogetherSession | null,
+): PersistedMusicTogetherSession | null => {
+  try {
+    const raw = sessionStorage.getItem(MUSIC_TOGETHER_SESSION_KEY);
+    const restored = normalizeMusicTogetherSession(raw ? JSON.parse(raw) : fallback, queue, idx);
+    if (!restored) {
+      sessionStorage.removeItem(MUSIC_TOGETHER_SESSION_KEY);
+      return null;
+    }
+    return restored;
+  } catch {
+    try { sessionStorage.removeItem(MUSIC_TOGETHER_SESSION_KEY); } catch {}
+    return null;
+  }
+};
+
 /**
  * 模块级 musicHooks 出口 — 给 ChatParser.MUSIC_ACTION 用的三个钩子打包成一个对象, 由
  * MusicProvider mount 后持续写入最新闭包. 让 useChatAI (本地 fetch 路径) 和
@@ -183,17 +249,38 @@ const saveCfg = (cfg: MusicCfg) => {
   try { localStorage.setItem(LS_CFG_KEY, JSON.stringify(cfg)); } catch {}
 };
 
-const loadState = (): { queue: Song[]; idx: number } => {
+interface PersistedMusicState {
+  queue: Song[];
+  idx: number;
+  playMode: 'loop' | 'shuffle' | 'single';
+  togetherSession: PersistedMusicTogetherSession | null;
+}
+
+const loadState = (): PersistedMusicState => {
+  const empty: PersistedMusicState = { queue: [], idx: -1, playMode: 'loop', togetherSession: null };
   try {
     const raw = localStorage.getItem(LS_STATE_KEY);
-    if (!raw) return { queue: [], idx: -1 };
+    if (!raw) return empty;
     const s = JSON.parse(raw);
-    return { queue: Array.isArray(s.queue) ? s.queue : [], idx: typeof s.idx === 'number' ? s.idx : -1 };
-  } catch { return { queue: [], idx: -1 }; }
+    const queue = Array.isArray(s.queue) ? s.queue : [];
+    const idx = typeof s.idx === 'number' ? s.idx : -1;
+    const playMode = s.playMode === 'shuffle' || s.playMode === 'single' ? s.playMode : 'loop';
+    return {
+      queue,
+      idx,
+      playMode,
+      togetherSession: normalizeMusicTogetherSession(s.togetherSession, queue, idx),
+    };
+  } catch { return empty; }
 };
 
-const saveState = (queue: Song[], idx: number) => {
-  try { localStorage.setItem(LS_STATE_KEY, JSON.stringify({ queue, idx })); } catch {}
+const saveState = (
+  queue: Song[],
+  idx: number,
+  playMode: 'loop' | 'shuffle' | 'single',
+  togetherSession: PersistedMusicTogetherSession | null,
+) => {
+  try { localStorage.setItem(LS_STATE_KEY, JSON.stringify({ queue, idx, playMode, togetherSession })); } catch {}
 };
 
 export const parseLyric = (txt: string): LyricLine[] => {
@@ -445,7 +532,6 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   // 队列持久化
-  useEffect(() => { saveState(queue, idx); }, [queue, idx]);
 
   // 播放
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -550,12 +636,20 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [current, cfg, likedSet, localAlbumSongs, addLocalSong, removeLocalSong, toast]);
 
   // 播放模式
-  const [playMode, setPlayMode] = useState<PlayMode>('loop');
+  const [playMode, setPlayMode] = useState<PlayMode>(initialState.playMode);
 
   // 一起听 - char 加入后在 miniPlayer / 播放页显示徽标；切歌 / 结束自动清空
-  const [listeningTogetherWith, setListeningTogetherWith] = useState<string[]>([]);
-  const [listeningTogetherInviterByCharId, setListeningTogetherInviterByCharId] = useState<Record<string, 'user' | 'character'>>({});
-  const [listeningTogetherStartedAt, setListeningTogetherStartedAt] = useState<number | null>(null);
+  const initialTogetherSession = useMemo(
+    () => loadMusicTogetherSession(initialState.queue, initialState.idx, initialState.togetherSession),
+    [initialState],
+  );
+  const [listeningTogetherWith, setListeningTogetherWith] = useState<string[]>(() => initialTogetherSession?.charIds || []);
+  const [listeningTogetherInviterByCharId, setListeningTogetherInviterByCharId] = useState<Record<string, 'user' | 'character'>>(
+    () => initialTogetherSession?.inviterByCharId || {},
+  );
+  const [listeningTogetherStartedAt, setListeningTogetherStartedAt] = useState<number | null>(
+    () => initialTogetherSession?.startedAt || null,
+  );
   const addListeningPartner = useCallback((charId: string, inviter: 'user' | 'character' = 'user') => {
     setListeningTogetherStartedAt(prev => prev ?? Date.now());
     setListeningTogetherWith(prev => prev.includes(charId) ? prev : [...prev, charId]);
@@ -591,6 +685,119 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setListeningTogetherPreviousSong(null);
     setListeningTogetherWith(prev => prev.length ? [] : prev);
   }, []);
+
+  useEffect(() => {
+    try {
+      if (!listeningTogetherWith.length || !listeningTogetherStartedAt) {
+        sessionStorage.removeItem(MUSIC_TOGETHER_SESSION_KEY);
+        return;
+      }
+      const inviterByCharId: Record<string, 'user' | 'character'> = {};
+      for (const charId of listeningTogetherWith) {
+        inviterByCharId[charId] = listeningTogetherInviterByCharId[charId] === 'character' ? 'character' : 'user';
+      }
+      sessionStorage.setItem(MUSIC_TOGETHER_SESSION_KEY, JSON.stringify({
+        charIds: listeningTogetherWith,
+        inviterByCharId,
+        startedAt: listeningTogetherStartedAt,
+        updatedAt: Date.now(),
+        currentSongId: current?.id,
+      } satisfies PersistedMusicTogetherSession));
+    } catch {}
+  }, [current?.id, listeningTogetherWith, listeningTogetherInviterByCharId, listeningTogetherStartedAt]);
+
+  useEffect(() => {
+    const inviterByCharId: Record<string, 'user' | 'character'> = {};
+    for (const charId of listeningTogetherWith) {
+      inviterByCharId[charId] = listeningTogetherInviterByCharId[charId] === 'character' ? 'character' : 'user';
+    }
+    const togetherSession = listeningTogetherWith.length > 0 && listeningTogetherStartedAt && current
+      ? {
+          charIds: listeningTogetherWith,
+          inviterByCharId,
+          startedAt: listeningTogetherStartedAt,
+          updatedAt: Date.now(),
+          currentSongId: current.id,
+        } satisfies PersistedMusicTogetherSession
+      : null;
+    saveState(queue, idx, playMode, togetherSession);
+  }, [
+    current,
+    idx,
+    listeningTogetherInviterByCharId,
+    listeningTogetherStartedAt,
+    listeningTogetherWith,
+    playMode,
+    queue,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const validateParticipants = async () => {
+      if (!listeningTogetherWith.length) return;
+      const characters = await DB.getAllCharacters();
+      if (cancelled) return;
+      const validIds = new Set(characters.map(char => char.id));
+      const validSession = normalizeMusicTogetherSession({
+        charIds: listeningTogetherWith,
+        inviterByCharId: listeningTogetherInviterByCharId,
+        startedAt: listeningTogetherStartedAt || Date.now(),
+        updatedAt: Date.now(),
+        currentSongId: current?.id,
+      }, queue, idx, validIds);
+      if (!validSession) {
+        clearListeningPartners();
+        return;
+      }
+      setListeningTogetherWith(validSession.charIds);
+      setListeningTogetherInviterByCharId(validSession.inviterByCharId);
+    };
+    void validateParticipants();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    const restoreImportedRuntime = async (event: Event) => {
+      const keys = (event as CustomEvent<{ keys?: string[] }>).detail?.keys || [];
+      if (keys.includes(LS_CFG_KEY)) {
+        setCfgState(prev => {
+          const next = loadCfg();
+          if (prev.cookie !== next.cookie || prev.workerUrl !== next.workerUrl) {
+            _clearAllCache();
+          }
+          return next;
+        });
+      }
+      if (keys.includes(LS_LOCAL_ALBUM_KEY)) {
+        setLocalAlbumSongs(loadLocalAlbum());
+      }
+      if (keys.includes(LS_STATE_KEY)) {
+        const restored = loadState();
+        const characters = await DB.getAllCharacters();
+        const validIds = new Set(characters.map(char => char.id));
+        const togetherSession = normalizeMusicTogetherSession(
+          restored.togetherSession,
+          restored.queue,
+          restored.idx,
+          validIds,
+        );
+        setQueueState(restored.queue);
+        setIdx(restored.idx);
+        setPlayMode(restored.playMode);
+        setListeningTogetherWith(togetherSession?.charIds || []);
+        setListeningTogetherInviterByCharId(togetherSession?.inviterByCharId || {});
+        setListeningTogetherStartedAt(togetherSession?.startedAt || null);
+      }
+    };
+    window.addEventListener(LOCAL_SETTINGS_IMPORTED_EVENT, restoreImportedRuntime);
+    return () => window.removeEventListener(LOCAL_SETTINGS_IMPORTED_EVENT, restoreImportedRuntime);
+  }, []);
+
+  useEffect(() => {
+    if (listeningTogetherWith.length > 0 && !current) {
+      clearListeningPartners();
+    }
+  }, [current, listeningTogetherWith.length, clearListeningPartners]);
 
   // 一起听是跨歌曲持续的会话，切歌只记录变化供角色理解，不结束会话。
   // 只有任一方明确退出或播放器发生错误时才清空参与者。
@@ -892,7 +1099,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // 把当前播放状态写到模块级快照，供非 React 调用者（OSContext.runProactive
   // 等位于 MusicProvider 上层的代码）读取。useMusic() 在那一层用不了。
-  useEffect(() => {
+  useLayoutEffect(() => {
     __musicPlaybackSnapshot = {
       current,
       queue,

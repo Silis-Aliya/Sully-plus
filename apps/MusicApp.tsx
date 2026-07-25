@@ -180,6 +180,10 @@ const MusicApp: React.FC = () => {
     setView('player');
   }, []);
 
+  const openInternalSettings = useCallback(() => {
+    setView('settings');
+  }, []);
+
   useEffect(() => {
     if (!listeningTogetherStartedAt) return;
     setTogetherNow(Date.now());
@@ -462,7 +466,7 @@ const MusicApp: React.FC = () => {
               <UserIcon size={16} weight="bold" />
             </button>
             <button
-              onClick={() => setView('settings')}
+              onClick={openInternalSettings}
               className="p-1.5 rounded-full transition-all"
               style={{ color: C.primary }}
             >
@@ -1012,13 +1016,13 @@ const MusicApp: React.FC = () => {
     const commit = () => {
       if (!cfg.workerUrl.trim()) setCfg({ ...cfg, workerUrl: getProxyWorkerUrl() });
       addToast('已保存', 'success');
-      setView('search');
+      setView('profile');
     };
     return (
       <div className="flex flex-col h-full relative"
         style={{ background: `linear-gradient(180deg, #ffffff 0%, ${C.bg} 50%, ${C.bgDeep} 100%)` }}>
         <BokehBg />
-        <MizuHeader title="设置" onBack={() => setView('search')} />
+        <MizuHeader title="设置" onBack={() => setView('profile')} />
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5 text-sm relative z-10 shizuku-scrollbar">
           <div className="rounded-2xl p-3.5 shizuku-glass" style={{ boxShadow: `0 2px 16px ${C.glow}08` }}>
             <div className="text-[10px] mb-2 tracking-wider flex items-center justify-between" style={{ color: C.muted }}>
@@ -1113,7 +1117,7 @@ const MusicApp: React.FC = () => {
             onBack={closeApp}
             onOpenPlayer={() => openInternalPlayer('profile')}
             onOpenSearch={() => setView('search')}
-            onOpenSettings={() => setView('settings')}
+            onOpenSettings={openInternalSettings}
             onVisitChar={id => { setVisitCharId(id); setView('visit_char'); }}
           />
         </div>

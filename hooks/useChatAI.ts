@@ -9,7 +9,7 @@ import { ProactiveChat } from '../utils/proactiveChat';
 import { ContextBuilder } from '../utils/context';
 import { ChatParser } from '../utils/chatParser';
 // 思考链 / HTML / MCD / memoryPalace 注入已下沉到 chatRequestPayload；这里不再直接调用
-import { useMusic, loadMusicHooks } from '../context/MusicContext';
+import { useMusic, loadMusicHooks, loadMusicPlaybackSnapshot } from '../context/MusicContext';
 import { processNewMessages, mergePalaceFragmentsIntoMemories, getMemoryPalaceHighWaterMark } from '../utils/memoryPalace/pipeline';
 import { incrementDigestRound, runCognitiveDigestion, detectPersonalityStyle } from '../utils/memoryPalace';
 // evolveFlowNarrative 保留为低频深刷新备用，日常意识流由副 API 的情绪评估同轮产出（innerState 字段）
@@ -756,7 +756,23 @@ export const useChatAI = ({
             const mcdInheritMeta = mcdMiniOpen ? { fromMcdMiniApp: true } : undefined;
             const luckinMiniSnap = luckinMiniAppRef?.current;
             const luckinMiniOpen = !!luckinMiniSnap?.open;
-            const isMusicTogetherForChar = music.listeningTogetherWith.includes(char.id);
+            const liveMusicSnapshot = loadMusicPlaybackSnapshot() || {
+                current: music.current,
+                queue: music.queue,
+                idx: music.idx,
+                playing: music.playing,
+                progress: music.progress,
+                duration: music.duration,
+                lyric: music.lyric,
+                activeLyricIdx: music.activeLyricIdx,
+                listeningTogetherWith: music.listeningTogetherWith,
+                listeningTogetherInviterByCharId: music.listeningTogetherInviterByCharId,
+                listeningTogetherStartedAt: music.listeningTogetherStartedAt,
+                listeningTogetherChangeCount: 0,
+                listeningTogetherPreviousSong: null,
+                cfg: music.cfg,
+                recentTrackChange: music.recentTrackChange,
+            };
 
             const payload = await stageT('payload', buildChatRequestPayload({
                 char: charForGen, userProfile, groups, emojis, categories,
@@ -765,51 +781,7 @@ export const useChatAI = ({
                 contextLimit: limit,
                 realtimeConfig,
                 innerState: skipEmotionInjection ? undefined : (evolvedNarrative || undefined),
-                userListeningContext: (() => {
-                    if (!isMusicTogetherForChar) return null;
-                    if (music.current && music.lyric.length > 0) {
-                        const idx = music.activeLyricIdx;
-                        if (idx >= 0) {
-                            const from = Math.max(0, idx - 2);
-                            const to = Math.min(music.lyric.length, idx + 2 + 1);
-                            const window = music.lyric.slice(from, to).map(l => l.text);
-                            return {
-                                songName: music.current.name,
-                                artists: music.current.artists,
-                                lyricWindow: window,
-                                activeIdx: idx - from,
-                            };
-                        }
-                    }
-                    if (music.current) {
-                        return {
-                            songName: music.current.name,
-                            artists: music.current.artists,
-                            lyricWindow: [],
-                            activeIdx: -1,
-                        };
-                    }
-                    return null;
-                })(),
-                isListeningTogether: isMusicTogetherForChar,
-                musicCfg: music.cfg,
-                musicSnapshot: {
-                    current: music.current,
-                    queue: music.queue,
-                    idx: music.idx,
-                    playing: music.playing,
-                    progress: music.progress,
-                    duration: music.duration,
-                    lyric: music.lyric,
-                    activeLyricIdx: music.activeLyricIdx,
-                    listeningTogetherWith: music.listeningTogetherWith,
-                    listeningTogetherStartedAt: music.listeningTogetherStartedAt,
-                    listeningTogetherChangeCount: 0,
-                    listeningTogetherPreviousSong: null,
-                    cfg: music.cfg,
-                    recentTrackChange: music.recentTrackChange,
-                },
-                recentTrackChange: music.recentTrackChange,
+                musicSnapshot: liveMusicSnapshot,
                 translationConfig,
                 htmlMode: { enabled: !!(char as any).htmlModeEnabled, customPrompt: (char as any).htmlModeCustomPrompt },
                 thinkingChain: { enabled: !!(char as any).showThinkingChain, customPrompt: (char as any).thinkingChainCustomPrompt },

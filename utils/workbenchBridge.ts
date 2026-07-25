@@ -991,13 +991,34 @@ const formatWorkbenchXhsNoteForContext = (note: any): string => {
     return parts.join('\n');
 };
 
-const workbenchContentForContext = (m: WorkbenchMessage): string => {
+export const workbenchContentForContext = (m: WorkbenchMessage): string => {
+    if (m.type === 'webpage_card') {
+        const webpage = m.metadata?.webpage || {};
+        const sender = m.metadata?.sharedBy === 'user'
+            ? '用户'
+            : m.metadata?.speakerName || (m.role === 'user' ? '用户' : '角色');
+        const comment = m.metadata?.shareCommentPersistedAsMessage
+            ? ''
+            : String(m.metadata?.shareComment || '').trim();
+        const body = String(webpage.content || webpage.excerpt || '').trim();
+        return [
+            '[网页分享]',
+            `分享者：${sender}`,
+            comment ? `分享者附言：${comment}` : '',
+            `链接：${webpage.finalUrl || webpage.url || '未获取'}`,
+            `标题：${webpage.title || m.content || '无标题'}`,
+            webpage.siteName ? `来源：${webpage.siteName}` : '',
+            body ? `网页正文：${body.slice(0, 1800)}` : '网页正文：未能抓取',
+        ].filter(Boolean).join('\n');
+    }
     if (m.type === 'xhs_card') {
         const note = m.metadata?.xhsNote || {};
         const sender = m.metadata?.sharedBy === 'user'
             ? '用户'
             : m.metadata?.speakerName || (m.role === 'user' ? '用户' : '角色');
-        const comment = String(m.metadata?.shareComment || '').trim();
+        const comment = m.metadata?.shareCommentPersistedAsMessage
+            ? ''
+            : String(m.metadata?.shareComment || '').trim();
         const lines = [
             `[小红书分享]`,
             `分享者：${sender}`,

@@ -73,7 +73,7 @@ export interface WorkbenchMessage {
   id: string;
   sessionId: string;
   role: 'user' | 'codex' | 'character' | 'sully' | 'system';
-  type?: 'text' | 'image' | 'emoji' | 'file' | 'xhs_card';
+  type?: 'text' | 'image' | 'emoji' | 'file' | 'xhs_card' | 'webpage_card';
   kind?: 'chat' | 'action' | 'consult' | 'summary' | 'error';
   mode: WorkbenchMode;
   content: string;
@@ -2192,7 +2192,7 @@ export interface CharMusicProfile {
     reviews?: CharMusicReview[];
     /** 此刻在听（Schedule 运行时填充，UI 展示用） */
     currentListening?: CharCurrentListening;
-    /** 是否允许 char 读取 user 的网易云数据（默认 true） */
+    /** @deprecated 旧备份兼容字段；当前歌曲仅在角色已加入一起听时注入。 */
     canReadUserMusic?: boolean;
     /** 初始化时间 */
     initializedAt?: number;

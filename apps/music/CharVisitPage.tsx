@@ -59,6 +59,7 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
   const {
     cfg, playSong,
     current, playing, togglePlay, nextSong, prevSong,
+    listeningTogetherWith,
   } = useMusic();
   const char = useMemo(() => characters.find(c => c.id === charId), [characters, charId]);
   const localDateKey = useLocalDateKey();
@@ -123,6 +124,18 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
 
   const profile = char?.musicProfile;
   const initialized = !!(char && CharMusicPersona.isInitialized(char));
+  const displayCurrentListening = useMemo(() => {
+    if (current && listeningTogetherWith.includes(charId)) {
+      return {
+        songId: current.id,
+        songName: current.name,
+        artists: current.artists,
+        albumPic: current.albumPic,
+        startedAt: 0,
+      };
+    }
+    return profile?.currentListening;
+  }, [charId, current, listeningTogetherWith, profile?.currentListening]);
 
   // 拜访时刷新 char 此刻在听的歌（纯本地计算，零网络）
   // 只在 char.id / initialized 变化时刷新一次，避免每秒 tick
@@ -406,7 +419,7 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
         )}
 
         {/* 正在听 */}
-        {initialized && profile?.currentListening && (
+        {initialized && displayCurrentListening && (
           <div className="mx-4 mt-4 rounded-2xl p-4 shizuku-glass"
             style={{ boxShadow: `0 4px 20px ${C.glow}15` }}>
             <div className="flex items-center gap-2 mb-2">
@@ -414,8 +427,8 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
               <span className="text-[10px] tracking-[0.25em] uppercase" style={{ color: C.muted }}>此刻在听</span>
             </div>
             <div className="flex items-center gap-3">
-              {profile.currentListening.albumPic ? (
-                <img src={profile.currentListening.albumPic} className="w-12 h-12 rounded-xl object-cover" alt="" />
+              {displayCurrentListening.albumPic ? (
+                <img src={displayCurrentListening.albumPic} className="w-12 h-12 rounded-xl object-cover" alt="" />
               ) : (
                 <div className="w-12 h-12 rounded-xl flex items-center justify-center"
                   style={{ background: gradientFor('gradient-03'), color: 'white' }}>
@@ -424,16 +437,16 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
               )}
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium truncate" style={{ color: C.text }}>
-                  {profile.currentListening.songName}
+                  {displayCurrentListening.songName}
                 </div>
                 <div className="text-[10px] truncate" style={{ color: C.muted }}>
-                  {profile.currentListening.artists}
+                  {displayCurrentListening.artists}
                 </div>
               </div>
             </div>
-            {profile.currentListening.vibe && (
+            {displayCurrentListening.vibe && (
               <div className="text-[10px] mt-2 italic" style={{ color: C.faint }}>
-                {profile.currentListening.vibe}
+                {displayCurrentListening.vibe}
               </div>
             )}
           </div>
@@ -654,23 +667,9 @@ const CharVisitPage: React.FC<Props> = ({ charId, onBack, onOpenPlayer }) => {
           </div>
         )}
 
-        {/* 隐私开关 + 重新生成 */}
+        {/* 重新生成 */}
         {initialized && (
           <div className="mx-4 mt-6 mb-2 text-[10px] text-center space-y-2" style={{ color: C.faint }}>
-            <label className="inline-flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={profile?.canReadUserMusic ?? true}
-                onChange={e => {
-                  if (!profile) return;
-                  updateCharacter(char.id, {
-                    musicProfile: { ...profile, canReadUserMusic: e.target.checked, updatedAt: Date.now() },
-                  });
-                }}
-                className="w-3 h-3"
-              />
-              允许 {char.name} 翻阅你的网易云数据（最近在听 / 歌单）
-            </label>
             <div>
               <button
                 onClick={doRegenerate}

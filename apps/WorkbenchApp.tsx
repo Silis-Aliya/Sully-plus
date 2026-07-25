@@ -5,6 +5,8 @@ import { ChatParser } from '../utils/chatParser';
 import { processImage } from '../utils/file';
 import { migrateDataUrlToRef, useBlobRefUrl } from '../utils/blobRef';
 import { resolveXhsShareLink } from '../utils/xhsShareLink';
+import { detectFirstUrl, extractWebpageContent, isXhsUrl, type ExtractedWebpage } from '../utils/webpageExtractor';
+import { isVideoShareUrl, parseVideoShareUrl } from '../utils/videoParser';
 import type { Emoji, EmojiCategory, Message, WorkbenchArtifact, WorkbenchBridgeConfig, WorkbenchMemory, WorkbenchMessage, WorkbenchMode, WorkbenchProject, WorkbenchSession, WorkbenchSummary } from '../types';
 import {
     DEFAULT_WORKBENCH_CONFIG,
@@ -49,9 +51,18 @@ import {
     setActiveWorkbenchSessionSnapshot,
     subscribeWorkbenchBackgroundTasks,
 } from '../utils/workbenchBackgroundTasks';
+import { QUICK_SYNC_APPLIED_EVENT } from '../utils/quickSync';
+import WebpageShareCard from '../components/chat/WebpageShareCard';
 
 type WorkbenchSpace = 'work' | 'inspiration';
 type WorkbenchConversationItem = WorkbenchSession & { messageCount: number };
+type WorkbenchViewSnapshot = {
+    session: WorkbenchSession | null;
+    messages: WorkbenchMessage[];
+    conversations: WorkbenchConversationItem[];
+};
+
+let workbenchViewSnapshot: WorkbenchViewSnapshot | null = null;
 
 const WORKBENCH_SPACES: Record<WorkbenchSpace, {
     sessionId: string;
@@ -159,6 +170,44 @@ const extractWorkbenchXhsShareComment = (text: string, note?: Record<string, any
         .replace(/[📕📖🔗]+/g, '')
         .replace(/\s+/g, ' ')
         .trim();
+};
+
+const extractWorkbenchWebpageShareComment = (text: string, url: string) => (
+    text.replace(url, '').replace(/\s+/g, ' ').trim()
+);
+
+export const findWorkbenchWebpageUrls = (text: string): string[] => {
+    const urls = (text.match(/https?:\/\/[^\s<>"'，。；！？（）【】]+/gi) || [])
+        .map(url => url.replace(/[),.;!?，。；！？）]+$/g, ''))
+        .filter(url => !isXhsUrl(url));
+    return [...new Set(urls)];
+};
+
+const resolveWorkbenchWebpage = async (
+    text: string,
+    addToast: (message: string, type?: 'success' | 'error' | 'info') => void,
+): Promise<ExtractedWebpage | null> => {
+    const url = detectFirstUrl(text);
+    if (!url || isXhsUrl(url)) return null;
+    let webpage: ExtractedWebpage | null = null;
+    if (isVideoShareUrl(url)) {
+        try {
+            addToast('正在解析视频链接…', 'info');
+            webpage = await parseVideoShareUrl(url);
+        } catch (error) {
+            console.warn('Workbench video parse failed, fallback to webpage fetch:', error);
+        }
+    }
+    if (!webpage) {
+        try {
+            addToast('正在读取网页内容…', 'info');
+            webpage = await extractWebpageContent(url);
+        } catch (error: any) {
+            console.warn('Workbench webpage fetch failed:', error);
+            addToast(`网页抓取失败：${error?.message || '可能被这个站点拦截了，已保留原始链接。'}`, 'error');
+        }
+    }
+    return webpage;
 };
 
 const parseProgressCard = (content: string) => {
@@ -400,6 +449,9 @@ const renderWorkbenchMessageContent = (
     if (message.metadata?.xhsNote) {
         return renderWorkbenchXhsNoteCard(message.metadata.xhsNote);
     }
+    if (message.type === 'webpage_card' && message.metadata?.webpage) {
+        return <WebpageShareCard webpage={message.metadata.webpage as ExtractedWebpage} />;
+    }
     if (message.type === 'image') {
         return message.content ? (
             <img
@@ -468,6 +520,15 @@ const workbenchMessageText = (message: WorkbenchMessage) => (
 );
 
 const workbenchMessageTextForCopy = (message: WorkbenchMessage) => {
+    const webpage = message.type === 'webpage_card' ? message.metadata?.webpage as ExtractedWebpage | undefined : undefined;
+    if (webpage) {
+        return [
+            `网页：${webpage.title || message.content || '未命名网页'}`,
+            webpage.siteName ? `来源：${webpage.siteName}` : '',
+            webpage.excerpt ? `摘要：${webpage.excerpt}` : '',
+            webpage.finalUrl || webpage.url || '',
+        ].filter(Boolean).join('\n');
+    }
     const note = message.metadata?.xhsNote;
     if (note) {
         const comments = Array.isArray(note.comments) ? note.comments : [];
@@ -561,7 +622,8 @@ const WorkbenchMessageRow: React.FC<{
     const isUser = message.role === 'user';
     const isEmojiOnly = message.type === 'emoji';
     const isXhsCard = message.type === 'xhs_card' || !!message.metadata?.xhsNote;
-    const isBareContent = isEmojiOnly || isXhsCard;
+    const isWebpageCard = message.type === 'webpage_card' && !!message.metadata?.webpage;
+    const isBareContent = isEmojiOnly || isXhsCard || isWebpageCard;
 
     const clearLongPress = () => {
         if (timerRef.current !== null) {
@@ -784,9 +846,10 @@ const WorkbenchApp: React.FC = () => {
         realtimeConfig,
         theme: osTheme,
     } = useOS();
-    const [session, setSession] = useState<WorkbenchSession | null>(null);
-    const [messages, setMessages] = useState<WorkbenchMessage[]>([]);
-    const [conversations, setConversations] = useState<WorkbenchConversationItem[]>([]);
+    const [session, setSession] = useState<WorkbenchSession | null>(() => workbenchViewSnapshot?.session || null);
+    const [messages, setMessages] = useState<WorkbenchMessage[]>(() => workbenchViewSnapshot?.messages || []);
+    const [conversations, setConversations] = useState<WorkbenchConversationItem[]>(() => workbenchViewSnapshot?.conversations || []);
+    const [conversationHydrated, setConversationHydrated] = useState(() => workbenchViewSnapshot !== null);
     const [config, setConfig] = useState<WorkbenchBridgeConfig>(() => loadWorkbenchBridgeConfig());
     const [draftConfig, setDraftConfig] = useState<WorkbenchBridgeConfig>(() => loadWorkbenchBridgeConfig());
     const [settingsOpen, setSettingsOpen] = useState(false);
@@ -842,16 +905,29 @@ const WorkbenchApp: React.FC = () => {
     const bridgeReady = !!config.bridgeUrl.trim();
     const fallbackReady = !!config.fallbackApiBaseUrl?.trim() && !!config.fallbackApiModel?.trim();
     const usageStats = useMemo(() => buildUsageStats(messages), [messages]);
+    const memoryCountBySummaryId = useMemo(() => {
+        const counts = new Map<string, number>();
+        for (const memory of codeMemories) {
+            if (!memory.summaryId) continue;
+            counts.set(memory.summaryId, (counts.get(memory.summaryId) || 0) + 1);
+        }
+        return counts;
+    }, [codeMemories]);
     const visibleMessages = useMemo(() => messages.filter((message, index, all) => {
         if (message.metadata?.hidden) return false;
-        if (message.type !== 'text' || !WORKBENCH_XHS_URL_RE.test(message.content || '')) return true;
+        if (message.type !== 'text') return true;
         const next = all[index + 1];
-        return !(
+        const hidesXhsSource = WORKBENCH_XHS_URL_RE.test(message.content || '') && (
             next
             && next.role === message.role
             && (next.type === 'xhs_card' || !!next.metadata?.xhsNote)
-            && Math.abs(next.createdAt - message.createdAt) <= 5_000
         );
+        const hidesWebpageSource = !!detectFirstUrl(message.content || '') && (
+            next
+            && next.role === message.role
+            && next.type === 'webpage_card'
+        );
+        return !(hidesXhsSource || hidesWebpageSource);
     }), [messages]);
     const usageLimit = Number(config.monthlyUsageLimit || 0);
     const usagePct = usageLimit > 0 ? Math.min(100, Math.round((usageStats.month / usageLimit) * 100)) : 0;
@@ -1073,27 +1149,44 @@ const WorkbenchApp: React.FC = () => {
         }
     };
 
-    const refresh = async () => {
+    const refresh = async (preferredSessionId = session?.id) => {
         const staleErrorIds = (await DB.getRawStoreData('workbench_messages').catch(() => [] as WorkbenchMessage[]))
             .filter((message: WorkbenchMessage) => message.kind === 'error')
             .map((message: WorkbenchMessage) => message.id);
         if (staleErrorIds.length > 0) await DB.deleteWorkbenchMessages(staleErrorIds);
         const list = await loadConversations();
         setConversations(list);
-        const active = session ? list.find(s => s.id === session.id) : null;
+        const active = preferredSessionId ? list.find(s => s.id === preferredSessionId) : null;
         const nextSession = active || list[0] || null;
+        const nextMessages = nextSession ? await DB.getWorkbenchMessages(nextSession.id, Number.MAX_SAFE_INTEGER) : [];
         setSession(nextSession);
-        setMessages(nextSession ? await DB.getWorkbenchMessages(nextSession.id, Number.MAX_SAFE_INTEGER) : []);
+        setMessages(nextMessages);
         await loadProgressCards(nextSession?.id);
         await loadCodeMemories();
         const next = loadWorkbenchBridgeConfig();
         setConfig(next);
         setDraftConfig(next);
+        setConversationHydrated(true);
     };
 
     useEffect(() => {
         void refresh();
     }, []);
+
+    useEffect(() => {
+        const onQuickSyncApplied = (event: Event) => {
+            const stores = (event as CustomEvent<{ stores?: string[] }>).detail?.stores || [];
+            if (!stores.some(store => store.startsWith('workbench_'))) return;
+            void refresh(workbenchViewSnapshot?.session?.id || session?.id);
+        };
+        window.addEventListener(QUICK_SYNC_APPLIED_EVENT, onQuickSyncApplied);
+        return () => window.removeEventListener(QUICK_SYNC_APPLIED_EVENT, onQuickSyncApplied);
+    }, [session?.id]);
+
+    useEffect(() => {
+        if (!conversationHydrated) return;
+        workbenchViewSnapshot = { session, messages, conversations };
+    }, [conversationHydrated, conversations, messages, session]);
 
     useEffect(() => {
         setActiveWorkbenchSessionSnapshot(session?.id || null);
@@ -1183,6 +1276,15 @@ const WorkbenchApp: React.FC = () => {
             }
         }
         await DB.saveWorkbenchMessage(nextMessage);
+        if (
+            workbenchViewSnapshot?.session?.id === nextMessage.sessionId
+            && !workbenchViewSnapshot.messages.some(item => item.id === nextMessage.id)
+        ) {
+            workbenchViewSnapshot = {
+                ...workbenchViewSnapshot,
+                messages: [...workbenchViewSnapshot.messages, nextMessage],
+            };
+        }
         setMessages(prev => [...prev, nextMessage]);
     };
 
@@ -1283,6 +1385,46 @@ const WorkbenchApp: React.FC = () => {
         addToast(`已把这张进度卡标为 ${authorName} 写`, 'success');
     };
 
+    const deleteProgressCard = async (card: WorkbenchSummary) => {
+        if (!window.confirm('删除这张 Code 进度卡？Code 对话和角色聊天里的同步卡片也会一起删除。')) return;
+
+        const workbenchMessages = await DB.getRawStoreData('workbench_messages').catch(() => [] as WorkbenchMessage[]);
+        const matchingWorkbenchIds = workbenchMessages
+            .filter((message: WorkbenchMessage) => (
+                message.metadata?.progressCard
+                && (
+                    message.metadata?.workbenchSummaryId === card.id
+                    || (
+                        message.sessionId === card.sessionId
+                        && message.content === card.content
+                    )
+                )
+            ))
+            .map((message: WorkbenchMessage) => message.id);
+        const chatMessages = await DB.getRawStoreData('messages').catch(() => [] as Message[]);
+        const matchingChatMessages = chatMessages.filter((message: Message) => (
+            message.type === 'code_card'
+            && (
+                message.metadata?.workbenchSummaryId === card.id
+                || (
+                    message.metadata?.source === 'workbench_progress'
+                    && message.metadata?.workbenchSessionId === card.sessionId
+                    && message.content === card.content
+                )
+            )
+        ));
+
+        await DB.deleteWorkbenchSummary(card.id);
+        await DB.deleteWorkbenchMessages(matchingWorkbenchIds);
+        await Promise.all(matchingChatMessages.map(message => DB.deleteMessage(message.id)));
+
+        setProgressCards(prev => prev.filter(item => item.id !== card.id));
+        setMessages(prev => prev.filter(message => !matchingWorkbenchIds.includes(message.id)));
+        setProgressAuthorMenuCardId(prev => prev === card.id ? null : prev);
+        setConversations(await loadConversations());
+        addToast('Code 进度卡已删除', 'info');
+    };
+
     const appendAssistantReply = async (
         base: Omit<WorkbenchMessage, 'id' | 'content' | 'createdAt' | 'type'>,
         rawReply: string,
@@ -1311,6 +1453,49 @@ const WorkbenchApp: React.FC = () => {
                 await appendMessage(card);
                 saved.push(card);
             }
+            return saved;
+        }
+        const webpageUrls = findWorkbenchWebpageUrls(rawReply);
+        if (webpageUrls.length) {
+            const shareComment = webpageUrls
+                .reduce((text, url) => text.replace(url, ' '), rawReply)
+                .replace(/\s+/g, ' ')
+                .trim();
+            if (shareComment) {
+                const textMessages = await appendAssistantReply(base, shareComment, split, quoteContext);
+                saved.push(...textMessages);
+            } else {
+                const sourceMessage: WorkbenchMessage = {
+                    ...base,
+                    id: makeId('wbm'),
+                    type: 'text',
+                    content: rawReply.trim(),
+                    createdAt: Date.now(),
+                };
+                await appendMessage(sourceMessage);
+                saved.push(sourceMessage);
+            }
+            void (async () => {
+                for (const url of webpageUrls) {
+                    const webpage = await resolveWorkbenchWebpage(url, addToast);
+                    if (!webpage) continue;
+                    await appendMessage({
+                        ...base,
+                        id: makeId('wbm'),
+                        type: 'webpage_card',
+                        content: webpage.title || '网页',
+                        createdAt: Date.now(),
+                        metadata: {
+                            ...(base.metadata || {}),
+                            webpage,
+                            originalText: url,
+                            shareComment,
+                            shareCommentPersistedAsMessage: !!shareComment,
+                            sharedBy: base.role === 'user' ? 'user' : base.role,
+                        },
+                    });
+                }
+            })().catch(error => console.warn('Workbench webpage card append failed:', error));
             return saved;
         }
         const resolveQuoteTarget = (quotedTextRaw: string): WorkbenchMessage['replyTo'] | undefined => {
@@ -1678,6 +1863,7 @@ const WorkbenchApp: React.FC = () => {
         && message.type !== 'image'
         && message.type !== 'file'
         && message.type !== 'xhs_card'
+        && message.type !== 'webpage_card'
         && message.kind !== 'summary'
         && message.kind !== 'error'
         && !message.metadata?.progressCard
@@ -1796,6 +1982,7 @@ const WorkbenchApp: React.FC = () => {
             } catch (memoryError) {
                 console.warn('[Workbench] Code Memory extraction skipped', memoryError);
             }
+            await loadCodeMemories();
             if (participantEnabled && selectedParticipant) {
                 await DB.saveMessage({
                     charId: selectedParticipant.id,
@@ -2002,6 +2189,9 @@ const WorkbenchApp: React.FC = () => {
         const xhsNote = (options?.type || 'text') === 'text'
             ? await resolveWorkbenchXhsNote(text, realtimeConfig, addToast)
             : null;
+        const webpage = (options?.type || 'text') === 'text' && !xhsNote
+            ? await resolveWorkbenchWebpage(text, addToast)
+            : null;
         const now = Date.now();
         const userMessage: WorkbenchMessage = {
             id: makeId('wbm'),
@@ -2031,16 +2221,47 @@ const WorkbenchApp: React.FC = () => {
                     xhsNote,
                     originalText: text,
                     shareComment: extractWorkbenchXhsShareComment(text, xhsNote),
+                    shareCommentPersistedAsMessage: !!extractWorkbenchXhsShareComment(text, xhsNote),
                     sharedBy: 'user',
                 },
             }
             : null;
-        if (xhsCardMessage) {
-            await appendMessage(xhsCardMessage);
+        const webpageCardMessage: WorkbenchMessage | null = webpage
+            ? {
+                id: makeId('wbm'),
+                sessionId: s.id,
+                role: 'user',
+                kind: 'chat',
+                type: 'webpage_card',
+                mode: 'codex',
+                content: webpage.title || '网页',
+                createdAt: now + 1,
+                status: 'sent',
+                metadata: {
+                    webpage,
+                    originalText: text,
+                    shareComment: extractWorkbenchWebpageShareComment(text, webpage.url),
+                    shareCommentPersistedAsMessage: !!extractWorkbenchWebpageShareComment(text, webpage.url),
+                    sharedBy: 'user',
+                },
+            }
+            : null;
+        const sharedCardMessage = xhsCardMessage || webpageCardMessage;
+        if (sharedCardMessage) {
+            const shareComment = String(sharedCardMessage.metadata?.shareComment || '').trim();
+            if (shareComment) {
+                await appendMessage({ ...userMessage, content: shareComment });
+            }
+            await appendMessage(sharedCardMessage);
         } else {
             await appendMessage(userMessage);
         }
-        const savedTurnMessages = xhsCardMessage ? [xhsCardMessage] : [userMessage];
+        const savedTurnMessages = sharedCardMessage
+            ? [
+                ...(sharedCardMessage.metadata?.shareComment ? [{ ...userMessage, content: String(sharedCardMessage.metadata.shareComment) }] : []),
+                sharedCardMessage,
+            ]
+            : [userMessage];
         try {
             if (userMessage.type !== 'emoji' && hasAssistantMention(text)) {
                 if (!assistantAvailable) {
@@ -2333,7 +2554,7 @@ const WorkbenchApp: React.FC = () => {
                 <div className="min-w-0 flex-1 flex flex-col bg-white overflow-hidden">
                     <div className="flex-1 overflow-y-auto bg-white workbench-index-scroll sully-workbench-scroll">
                         <div className="min-h-full min-w-0 max-w-full overflow-hidden px-4 py-5 space-y-5">
-                            {messages.length === 0 && (
+                            {conversationHydrated && messages.length === 0 && (
                                 <div className="h-full min-h-[360px] flex items-center justify-center">
                                     <div className="w-full max-w-[310px] text-center">
                                         <div className="mx-auto w-12 h-12 rounded-xl border border-slate-200 bg-white flex items-center justify-center text-slate-700 mb-4">
@@ -2352,7 +2573,8 @@ const WorkbenchApp: React.FC = () => {
                                 const avatar = m.role === 'user' ? '' : getMessageAvatar(m);
                                 const isEmojiOnly = m.type === 'emoji';
                                 const isXhsCard = m.type === 'xhs_card' || !!m.metadata?.xhsNote;
-                                const isBareContent = isEmojiOnly || isXhsCard;
+                                const isWebpageCard = m.type === 'webpage_card' && !!m.metadata?.webpage;
+                                const isBareContent = isEmojiOnly || isXhsCard || isWebpageCard;
                                 const isProgressCard = m.role === 'system' && !!m.metadata?.progressCard;
                                 if (isProgressCard) {
                                     return (
@@ -2580,6 +2802,7 @@ const WorkbenchApp: React.FC = () => {
                             <textarea
                                 value={input}
                                 onChange={e => setInput(e.target.value)}
+                                onFocus={() => setEmojiPanelOpen(false)}
                                 onKeyDown={e => {
                                     if (e.key === 'Enter' && !e.shiftKey) {
                                         e.preventDefault();
@@ -2769,6 +2992,7 @@ const WorkbenchApp: React.FC = () => {
                                 const fields = parseProgressCard(card.content);
                                 const status = fields['状态'] || '待确认';
                                 const author = fields['作者'] || card.sourceName || (card.source === 'character' ? '角色' : 'Code');
+                                const memoryCount = memoryCountBySummaryId.get(card.id) || 0;
                                 const statusClass = status.includes('已完成')
                                     ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                     : status.includes('阻塞')
@@ -2784,6 +3008,14 @@ const WorkbenchApp: React.FC = () => {
                                                     <span className="text-[10px] font-semibold text-slate-400">#{progressCards.length - index}</span>
                                                     <span className={`px-2 py-0.5 rounded-full border text-[10px] font-semibold ${statusClass}`}>{status}</span>
                                                     <span className="px-2 py-0.5 rounded-full border border-violet-100 bg-violet-50 text-[10px] font-semibold text-violet-700">{author} 写</span>
+                                                    {memoryCount > 0 && (
+                                                        <span
+                                                            className="px-2 py-0.5 rounded-full border border-sky-100 bg-sky-50 text-[10px] font-semibold text-sky-700"
+                                                            title={`这张卡提炼了 ${memoryCount} 条 Code Memory`}
+                                                        >
+                                                            Memory · {memoryCount}
+                                                        </span>
+                                                    )}
                                                     <div className="relative">
                                                         <button
                                                             type="button"
@@ -2820,6 +3052,17 @@ const WorkbenchApp: React.FC = () => {
                                                             </div>
                                                         )}
                                                     </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => { void deleteProgressCard(card); }}
+                                                        className="flex h-6 w-6 items-center justify-center rounded-md border border-rose-100 bg-white text-rose-400 active:scale-95"
+                                                        aria-label="删除这张进度卡"
+                                                        title="删除进度卡"
+                                                    >
+                                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5" aria-hidden="true">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" />
+                                                        </svg>
+                                                    </button>
                                                 </div>
                                                 <h3 className="mt-2 text-sm font-semibold text-slate-900 break-words">{fields['任务'] || session?.title || '未命名任务'}</h3>
                                             </div>

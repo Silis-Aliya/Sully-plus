@@ -48,7 +48,7 @@ import { isEmotionEvalSkipped } from '../utils/devDebug';
 import { getActiveWorkbenchSessionSnapshot, subscribeWorkbenchBackgroundTasks } from '../utils/workbenchBackgroundTasks';
 import { toMountedWorldbook } from '../utils/worldbook';
 import { initLocalStorageMirror } from '../utils/lsMirror';
-import { exportLocalStorageSettings, importLocalStorageSettings } from '../utils/localSettingsBackup';
+import { exportLocalStorageSettings, replaceLocalStorageSettings } from '../utils/localSettingsBackup';
 // 备份用：把存在 localStorage 的本机配置随导出一起带走（键名须与 importFullData 对齐）
 import { exportPostOfficeLocal } from '../utils/vrWorld/postOffice';
 import { exportSignalLocal } from '../utils/vrWorld/signal';
@@ -403,7 +403,7 @@ interface OSContextType {
   importAppearancePreset: (file: File) => Promise<void>;
 
   toasts: Toast[];
-  addToast: (message: string, type?: Toast['type']) => void;
+  addToast: (message: string, type?: Toast['type'], durationMs?: number) => void;
 
   // 长报错弹窗：toast 一行装不下 / 手机没法开 console 时, 用 showError 弹一个
   // 多行预览框 + 复制按钮, 方便用户把原文反馈过来。
@@ -1613,7 +1613,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               [task.sessionId]: (prev[task.sessionId] || 0) + 1,
           }));
       }
-      if (task.status === 'done') addToast('Code 后台任务已完成', 'success');
+      if (task.status === 'done') addToast('Code 后台任务已完成', 'success', 1500);
       else addToast(`Code 后台任务失败：${task.error || '未知错误'}`, 'error');
   }), []);
   // 通话状态（含挂起到后台的通话）——主动消息流程读它来判断"是否正在通话"
@@ -3168,7 +3168,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       if (stored) await DB.saveAsset(`icon_${appId}`, stored);
       else await DB.deleteAsset(`icon_${appId}`);
   };
-  const addToast = (message: string, type: Toast['type'] = 'info') => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 3000); };
+  const addToast = (message: string, type: Toast['type'] = 'info', durationMs = 3000) => { const id = Date.now().toString(); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, durationMs); };
   const showError = (title: string, details: string) => { setErrorDialog({ title, details }); };
   const dismissError = () => { setErrorDialog(null); };
 
@@ -4350,7 +4350,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (typeof data.lastActiveCharId === 'string') localStorage.setItem('os_last_active_char_id', data.lastActiveCharId);
           if (data.dreamCollection && typeof data.dreamCollection === 'object') localStorage.setItem('os_dream_collection', JSON.stringify(data.dreamCollection));
           if (typeof data.gotchiAccentHue === 'string' && /^\d+$/.test(data.gotchiAccentHue)) localStorage.setItem('tama_accent_hue', data.gotchiAccentHue);
-          importLocalStorageSettings(data.localStorageSettings);
+          replaceLocalStorageSettings(data.localStorageSettings);
           if (data.eventNotifFlags && typeof data.eventNotifFlags === 'object') {
               for (const [key, val] of Object.entries(data.eventNotifFlags)) {
                   // 只允许 sullyos_ 前缀，避免污染其它键

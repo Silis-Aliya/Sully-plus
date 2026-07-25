@@ -1308,6 +1308,19 @@ export const DB = {
     });
   },
 
+  deleteWorkbenchSummary: async (summaryId: string): Promise<void> => {
+    if (!summaryId) return;
+    const db = await openDB();
+    if (!db.objectStoreNames.contains(STORE_WORKBENCH_SUMMARIES)) return;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_WORKBENCH_SUMMARIES, 'readwrite');
+      tx.objectStore(STORE_WORKBENCH_SUMMARIES).delete(summaryId);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error || new Error('deleteWorkbenchSummary aborted'));
+    });
+  },
+
   getRecentWorkbenchSummaries: async (limit = 8): Promise<WorkbenchSummary[]> => {
     const db = await openDB();
     return new Promise((resolve, reject) => {

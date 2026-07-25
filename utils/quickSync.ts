@@ -23,6 +23,7 @@ export const QUICK_SYNC_PREFIX = 'Sully_QuickSync_delta_';
 export const QUICK_SYNC_LATEST_NAME = 'Sully_QuickSync_delta_latest.zip';
 export const QUICK_SYNC_MANIFEST_KEY = 'sully_quick_sync_manifest_v1';
 export const QUICK_SYNC_DEVICE_KEY = 'sully_quick_sync_device_id_v1';
+export const QUICK_SYNC_APPLIED_EVENT = 'sully-quick-sync-applied';
 
 export const QUICK_SYNC_STORES = [
     'characters',
@@ -419,6 +420,7 @@ export const applyQuickSyncDelta = async (
     const meta = JSON.parse(await metaFile.async('string')) as QuickSyncDeltaMeta;
     const manifest = JSON.parse(await manifestFile.async('string')) as QuickSyncManifest;
     let changed = 0;
+    const changedStores: string[] = [];
     const total = Object.values(meta.stores || {}).reduce((sum, store) => sum + store.upserts + store.deletes, 0);
     let done = 0;
 
@@ -470,6 +472,7 @@ export const applyQuickSyncDelta = async (
             }
         }
         const storeTotal = upserts.length + (patch.deletes?.length || 0);
+        if (storeTotal > 0) changedStores.push(storeName);
         const deleteKeys = (patch.deletes || []).map(key => restoreQuickSyncDeleteKey(storeName, key));
         await DB.applyRawStorePatch(storeName, upserts, deleteKeys, (storeDone) => {
             onProgress?.(done + storeDone, total || storeTotal);
@@ -494,5 +497,10 @@ export const applyQuickSyncDelta = async (
     }
 
     saveQuickSyncManifest(manifest);
+    if (changed > 0 && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(QUICK_SYNC_APPLIED_EVENT, {
+            detail: { stores: changedStores },
+        }));
+    }
     return { changed, meta };
 };

@@ -1,14 +1,23 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     exportLocalStorageSettings,
     applyLocalStorageSettingsPatch,
     importLocalStorageSettings,
+    replaceLocalStorageSettings,
     shouldBackupLocalStorageKey,
 } from './localSettingsBackup';
 
 describe('localSettingsBackup', () => {
     beforeEach(() => {
         localStorage.clear();
+        const values = new Map<string, string>();
+        vi.stubGlobal('sessionStorage', {
+            getItem: (key: string) => values.get(key) ?? null,
+            setItem: (key: string, value: string) => values.set(key, value),
+            removeItem: (key: string) => values.delete(key),
+            clear: () => values.clear(),
+        });
+        sessionStorage.clear();
     });
 
     it('applies allowed setting deletions for incremental sync', () => {
@@ -19,6 +28,28 @@ describe('localSettingsBackup', () => {
 
         expect(localStorage.getItem('workbench_bridge_config_v1')).toBeNull();
         expect(localStorage.getItem('temporary_cache_blob')).toBe('keep');
+    });
+
+    it('replaces portable settings during full import without clearing device-only keys', () => {
+        localStorage.setItem('sully_music_local_album_v1', '[{"id":1}]');
+        localStorage.setItem('workbench_mode_v1', 'sully');
+        localStorage.setItem('temporary_cache_blob', 'keep');
+
+        replaceLocalStorageSettings({
+            workbench_mode_v1: 'assistant',
+        });
+
+        expect(localStorage.getItem('sully_music_local_album_v1')).toBeNull();
+        expect(localStorage.getItem('workbench_mode_v1')).toBe('assistant');
+        expect(localStorage.getItem('temporary_cache_blob')).toBe('keep');
+    });
+
+    it('keeps legacy backups without a local-settings section non-destructive', () => {
+        localStorage.setItem('sully_music_local_album_v1', '[{"id":1}]');
+
+        replaceLocalStorageSettings(undefined);
+
+        expect(localStorage.getItem('sully_music_local_album_v1')).toBe('[{"id":1}]');
     });
 
     it('exports and imports XHS cookies and backup credentials', () => {
@@ -94,5 +125,57 @@ describe('localSettingsBackup', () => {
 
         const snapshot = exportLocalStorageSettings();
         expect(snapshot).toEqual({ 'chat_translate_enabled_char-1': 'true' });
+    });
+
+    it('backs up the complete music runtime and configuration state', () => {
+        expect(shouldBackupLocalStorageKey('sully_music_cfg_v1')).toBe(true);
+        expect(shouldBackupLocalStorageKey('sully_music_state_v1')).toBe(true);
+        expect(shouldBackupLocalStorageKey('sully_music_local_album_v1')).toBe(true);
+
+        localStorage.setItem('sully_music_state_v1', JSON.stringify({
+            queue: [{ id: 7, name: 'Track' }],
+            idx: 0,
+            playMode: 'shuffle',
+            togetherSession: {
+                charIds: ['char-1'],
+                inviterByCharId: { 'char-1': 'character' },
+                startedAt: Date.now(),
+                updatedAt: Date.now(),
+                currentSongId: 7,
+            },
+        }));
+
+        const snapshot = exportLocalStorageSettings();
+        expect(JSON.parse(snapshot?.sully_music_state_v1 || '{}')).toMatchObject({
+            idx: 0,
+            playMode: 'shuffle',
+            togetherSession: {
+                charIds: ['char-1'],
+                currentSongId: 7,
+            },
+        });
+    });
+
+    it('stamps an actively listening-together snapshot at export time', () => {
+        localStorage.setItem('sully_music_state_v1', JSON.stringify({
+            queue: [{ id: 7 }],
+            idx: 0,
+            playMode: 'loop',
+            togetherSession: {
+                charIds: ['char-1'],
+                inviterByCharId: { 'char-1': 'user' },
+                startedAt: 100,
+                updatedAt: 100,
+                currentSongId: 7,
+            },
+        }));
+        sessionStorage.setItem('sully.music.together.session', JSON.stringify({ charIds: ['char-1'] }));
+
+        const before = Date.now();
+        const snapshot = exportLocalStorageSettings();
+        const exported = JSON.parse(snapshot?.sully_music_state_v1 || '{}');
+
+        expect(exported.togetherSession.updatedAt).toBeGreaterThanOrEqual(before);
+        expect(JSON.parse(localStorage.getItem('sully_music_state_v1') || '{}').togetherSession.updatedAt).toBe(100);
     });
 });

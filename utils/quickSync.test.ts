@@ -54,6 +54,9 @@ describe('quickSync settings coverage', () => {
         expect(shouldBackupLocalStorageKey('signal_my_lines')).toBe(true);
         expect(shouldBackupLocalStorageKey('signal_notice_ack')).toBe(true);
         expect(shouldBackupLocalStorageKey('mg_style_v1')).toBe(true);
+        expect(shouldBackupLocalStorageKey('sully_music_cfg_v1')).toBe(true);
+        expect(shouldBackupLocalStorageKey('sully_music_state_v1')).toBe(true);
+        expect(shouldBackupLocalStorageKey('sully_music_local_album_v1')).toBe(true);
         expect(shouldBackupLocalStorageKey('vr_po_admin_token')).toBe(false);
         expect(shouldBackupLocalStorageKey('signal_whisper')).toBe(false);
     });

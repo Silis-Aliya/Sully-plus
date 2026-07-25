@@ -111,7 +111,7 @@ Current known baseline:
 - Accepting a character-created invitation keeps the user's existing queue, starts with the shared song, and switches the queue to shuffle; later manual mode changes remain authoritative.
 - User and character exits reuse the established exit-event design while preserving actor ownership: user exits render on the user/right side and character exits on the assistant/left side.
 - The user's Now Playing exit control opens a centered two-option confirmation dialog.
-- Active together-listening session state is transient and is intentionally not restored by import/export or QuickSync.
+- Together-listening restores as a short-lived live-session snapshot for at most 12 hours. It carries participants, current song metadata, queue, and play mode through refresh, full backup, and QuickSync; playback position and playing/paused state remain transient.
 
 ### Code / Workbench
 
@@ -813,3 +813,39 @@ Last recorded stable deployment was `ecc01ab` on remote `master` from 2026-07-21
 
 - Refreshed `upstream/master` before publishing on 2026-07-22. The latest upstream commit is `ece65a3` (PR #421, manual phone contact aliases), with PR #420's Spark request-race fixes included.
 - The upstream changes were merged locally in `9740321` with no conflicts. Rebuild and focused tests passed after the merge; release requires remote `master` push plus Vercel deployment verification.
+
+## 2026-07-25 Backup Policy Clarification
+
+### Upstream Versus Fork Principle
+
+- Upstream is primarily database-bound: durable IndexedDB stores are exported broadly, while `localStorage`, page runtime state, and rebuildable caches do not share one migration contract. Upstream does not provide this fork's QuickSync path.
+- This fork is continuity-bound: durable user/character data, settings, action results, and user creations must be evaluated for both full backup and QuickSync. Create, update, and delete operations must follow the same migration semantics.
+- User-created, non-rebuildable works and assets are archive data and should carry their real payload. Search/API/TTS results that can be fetched or generated again are caches and should not migrate.
+- Code project file bodies remain on the bridge computer. SullyOS migrates the related conversations, summaries, memories, and file-card metadata.
+- QuickSync is lightweight last-write-wins recovery, not real-time multi-device collaborative merging.
+
+### Together-Listening Snapshot
+
+- The participating character, current track, queue, queue index, and play mode form one short-lived scene snapshot and may migrate together.
+- The snapshot must expire and validate referenced characters/tracks before restoration. Playback seconds and play/pause state remain transient.
+- This section supersedes older entries that categorically described the active together-listening session, or all music/audio runtime data, as excluded from backup. Those entries remain above as historical records.
+- Synthesized `voice_msg_*` and `tts_*` audio remains rebuildable cache. Character voice settings and message text are durable data. User-generated songs are creations rather than caches, so their audio payload belongs in the migration contract.
+
+## 2026-07-25 Code Webpage Sharing
+
+- Code now reuses the normal-chat webpage and video extraction pipeline for ordinary HTTP(S) links. User, character, and AI-assistant shares can render as clickable `webpage_card` previews with site, title, excerpt, and cover.
+- Chat and Code render those previews through the same `components/chat/WebpageShareCard.tsx` component. Do not restore a separate Workbench webpage-card renderer during upstream merges; each surface owns only its message shell.
+- Text around a shared URL remains a separate chat bubble, followed by the card. If extraction fails, the original text and URL remain visible instead of being replaced by a failed card.
+- Character and AI-assistant text is persisted immediately; webpage cards are extracted and appended asynchronously in source URL order so slow sites do not delay the visible reply.
+- Extracted webpage text is serialized into both character and bridge context, so later turns can discuss the shared page. This is independent from the connected Codex/Claude CLI's own browsing capability and does not grant new network permissions.
+- XHS links continue through the dedicated XHS Lite/MCP card path and must not be intercepted by the generic webpage branch.
+- Fork merge rule: preserve Code `webpage_card` rendering, click-through, context serialization, and the text-plus-card sequence when merging upstream Workbench changes.
+
+## 2026-07-25 Progress Cards, Foreground Sync, And Full-Import Deletes
+
+- Every progress card has an explicit delete command. Deletion removes the `workbench_summaries` row, its matching Code system card, and the selected character's normal-chat `code_card`; it intentionally does not delete separately managed Code Memory entries.
+- Progress cards display `Memory · N` only when current `workbench_memories` rows reference that card's `summaryId`. Editing or deleting those Memory rows updates the displayed count.
+- Code Memory remains isolated from Memory Palace. The selected character's normal chat can read the copied progress card, while Code assistants and Code character turns can use `workbench_memories`.
+- QuickSync dispatches the changed store list after applying a delta. An already-open Workbench reloads its current conversation when any `workbench_*` store changed, so users no longer need to leave and re-enter Code.
+- Modern full backups carry an explicit local-settings section even when it is empty. Full import replaces portable settings and removes allowed target keys absent from that section; legacy backups without the section remain non-destructive. QuickSync continues to use explicit setting upserts and deletes rather than replacement.
+- Progress-card structured-output hardening remains proposed only. The current progress-card prompts and parser were not changed in this batch.

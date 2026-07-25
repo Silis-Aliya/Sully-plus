@@ -298,7 +298,6 @@ export const CharMusicPersona = {
             likedSongIds: [],
             recentPlays: [],
             reviews: [],
-            canReadUserMusic: true,
             initializedAt: now,
             updatedAt: now,
         };

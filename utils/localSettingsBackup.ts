@@ -66,7 +66,12 @@ export const BACKUP_LOCAL_STORAGE_EXACT_KEYS: readonly string[] = [
     'workbench_bridge_config_v1',
     'workbench_projects_v1',
     'workbench_mode_v1',
+    'sully_music_cfg_v1',
+    'sully_music_state_v1',
+    'sully_music_local_album_v1',
 ] as const;
+
+export const LOCAL_SETTINGS_IMPORTED_EVENT = 'sully-local-settings-imported';
 
 const BACKUP_LOCAL_STORAGE_PREFIXES: readonly string[] = [
     'mp_lastMsgId_',
@@ -79,6 +84,13 @@ const BACKUP_LOCAL_STORAGE_PREFIXES: readonly string[] = [
 ] as const;
 
 const MAX_VALUE_BYTES = 512 * 1024;
+const MAX_MUSIC_VALUE_BYTES = 5 * 1024 * 1024;
+const MUSIC_STATE_KEY = 'sully_music_state_v1';
+const MUSIC_TOGETHER_SESSION_KEY = 'sully.music.together.session';
+const MUSIC_BACKUP_KEYS = new Set(['sully_music_cfg_v1', MUSIC_STATE_KEY, 'sully_music_local_album_v1']);
+
+const maxValueBytesForKey = (key: string): number =>
+    MUSIC_BACKUP_KEYS.has(key) ? MAX_MUSIC_VALUE_BYTES : MAX_VALUE_BYTES;
 
 const byteLength = (value: string): number => {
     try {
@@ -99,12 +111,30 @@ export const exportLocalStorageSettings = (): Record<string, string> | undefined
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
             if (!key || !shouldBackupLocalStorageKey(key)) continue;
-            const value = localStorage.getItem(key);
+            let value = localStorage.getItem(key);
             if (typeof value !== 'string') continue;
-            if (byteLength(value) > MAX_VALUE_BYTES) continue;
+            if (
+                key === MUSIC_STATE_KEY
+                && typeof sessionStorage !== 'undefined'
+                && sessionStorage.getItem(MUSIC_TOGETHER_SESSION_KEY)
+            ) {
+                try {
+                    const state = JSON.parse(value);
+                    if (state?.togetherSession) {
+                        state.togetherSession.updatedAt = Date.now();
+                        value = JSON.stringify(state);
+                    }
+                } catch {
+                    /* malformed music state is left untouched for normal import validation */
+                }
+            }
+            if (byteLength(value) > maxValueBytesForKey(key)) continue;
             out[key] = value;
         }
-        return Object.keys(out).length > 0 ? out : undefined;
+        // Keep an explicit empty object in modern full backups. Its presence
+        // distinguishes "the source has no portable settings" from a legacy
+        // backup that predates this section.
+        return out;
     } catch {
         return undefined;
     }
@@ -112,15 +142,51 @@ export const exportLocalStorageSettings = (): Record<string, string> | undefined
 
 export const importLocalStorageSettings = (data: Record<string, string> | null | undefined): void => {
     if (!data || typeof data !== 'object') return;
+    const importedKeys: string[] = [];
     try {
         for (const [key, value] of Object.entries(data)) {
             if (!shouldBackupLocalStorageKey(key)) continue;
             if (typeof value !== 'string') continue;
-            if (byteLength(value) > MAX_VALUE_BYTES) continue;
+            if (byteLength(value) > maxValueBytesForKey(key)) continue;
             localStorage.setItem(key, value);
+            importedKeys.push(key);
+        }
+        if (importedKeys.length > 0 && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent(LOCAL_SETTINGS_IMPORTED_EVENT, { detail: { keys: importedKeys } }));
         }
     } catch {
         /* localStorage unavailable or quota full: keep import best-effort */
+    }
+};
+
+export const replaceLocalStorageSettings = (data: Record<string, string> | null | undefined): void => {
+    if (!data || typeof data !== 'object') return;
+    const incomingKeys = new Set(
+        Object.entries(data)
+            .filter(([key, value]) =>
+                shouldBackupLocalStorageKey(key)
+                && typeof value === 'string'
+                && byteLength(value) <= maxValueBytesForKey(key))
+            .map(([key]) => key),
+    );
+    const removedKeys: string[] = [];
+    try {
+        const existingKeys: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key) existingKeys.push(key);
+        }
+        for (const key of existingKeys) {
+            if (!shouldBackupLocalStorageKey(key) || incomingKeys.has(key)) continue;
+            localStorage.removeItem(key);
+            removedKeys.push(key);
+        }
+    } catch {
+        /* localStorage unavailable: keep import best-effort */
+    }
+    importLocalStorageSettings(data);
+    if (removedKeys.length > 0 && typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(LOCAL_SETTINGS_IMPORTED_EVENT, { detail: { keys: removedKeys } }));
     }
 };
 
@@ -131,8 +197,15 @@ export const applyLocalStorageSettingsPatch = (
     importLocalStorageSettings(upserts);
     if (!Array.isArray(deletes)) return;
     try {
+        const removedKeys: string[] = [];
         for (const key of deletes) {
-            if (typeof key === 'string' && shouldBackupLocalStorageKey(key)) localStorage.removeItem(key);
+            if (typeof key === 'string' && shouldBackupLocalStorageKey(key)) {
+                localStorage.removeItem(key);
+                removedKeys.push(key);
+            }
+        }
+        if (removedKeys.length > 0 && typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent(LOCAL_SETTINGS_IMPORTED_EVENT, { detail: { keys: removedKeys } }));
         }
     } catch {
         /* localStorage unavailable: keep sync best-effort */

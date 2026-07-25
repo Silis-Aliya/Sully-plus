@@ -51,4 +51,29 @@ describe('ContextBuilder.buildMusicAtmosphere', () => {
         expect(result).not.toContain('Private Song');
         expect(result).not.toContain('Private Artist');
     });
+
+    it('does not expose ambient playback outside together listening even for legacy profiles with reading enabled', () => {
+        const result = ContextBuilder.buildMusicAtmosphere(
+            {
+                id: 'char-1',
+                name: 'Silis',
+                musicProfile: {
+                    canReadUserMusic: true,
+                    playlists: [],
+                },
+            } as any,
+            'User',
+            {
+                songName: 'Ambient Song',
+                artists: 'Ambient Artist',
+                lyricWindow: [],
+                activeIdx: -1,
+            },
+            null,
+            false,
+        );
+
+        expect(result).not.toContain('Ambient Song');
+        expect(result).not.toContain('Ambient Artist');
+    });
 });
