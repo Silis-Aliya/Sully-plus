@@ -88,6 +88,14 @@ const makeId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toSt
 const WORKBENCH_XHS_URL_RE = /(?:https?:\/\/)?(?:www\.)?(?:xiaohongshu\.com|xhslink\.com|xhslink\.cn)\S*/i;
 const SILENT_BRIDGE_OFFLINE = 'silent_workbench_bridge_offline';
 
+const workbenchBridgeConnectionKey = (config: WorkbenchBridgeConfig): string => JSON.stringify([
+    config.bridgeUrl.trim().replace(/\/+$/, ''),
+    config.token.trim(),
+    config.defaultAgent,
+    String(config.customAgentCommand || '').trim(),
+    config.activeWorkbenchProjectId || '',
+]);
+
 const isWorkbenchBridgeConnectionError = (error: unknown): boolean => {
     const message = String((error as any)?.message || error || '');
     return /Failed to fetch|NetworkError|Load failed|ECONNREFUSED|ERR_CONNECTION|Unauthorized|\b40[13]\b|电脑桥接(?:连接|请求)失败|电脑桥接未连接|请先填写电脑桥接地址|连接已断开|连接失败/i.test(message);
@@ -894,6 +902,8 @@ const WorkbenchApp: React.FC = () => {
     const [codeMemoryDrafts, setCodeMemoryDrafts] = useState<Record<string, string>>({});
     const [codeMemoryOpen, setCodeMemoryOpen] = useState(false);
     const bottomRef = useRef<HTMLDivElement | null>(null);
+    const messageScrollRef = useRef<HTMLDivElement | null>(null);
+    const pinBottomAfterIndexResizeRef = useRef(true);
     const codexAvatarInputRef = useRef<HTMLInputElement | null>(null);
     const imageInputRef = useRef<HTMLInputElement | null>(null);
     const messagePressTimerRef = useRef<number | null>(null);
@@ -980,10 +990,52 @@ const WorkbenchApp: React.FC = () => {
     const workExecutable = bridgeStatus === 'online';
     const bridgeConfigured = !!config.bridgeUrl.trim();
     const assistantAvailable = bridgeConfigured || fallbackReady;
+    const bridgeConnectionKey = workbenchBridgeConnectionKey(config);
 
     useEffect(() => {
         setActiveSpace(workExecutable ? 'work' : 'inspiration');
     }, [workExecutable]);
+
+    useEffect(() => {
+        if (!bridgeConfigured) {
+            setBridgeStatus('offline');
+            return;
+        }
+        let disposed = false;
+        let checking = false;
+        let activeController: AbortController | null = null;
+
+        const checkSilently = async () => {
+            if (checking || document.visibilityState !== 'visible') return;
+            checking = true;
+            const controller = new AbortController();
+            activeController = controller;
+            const timeoutId = window.setTimeout(() => controller.abort(), 8_000);
+            try {
+                await testWorkbenchBridge(config, { signal: controller.signal });
+                if (!disposed) setBridgeStatus('online');
+            } catch {
+                if (!disposed) setBridgeStatus('offline');
+            } finally {
+                window.clearTimeout(timeoutId);
+                if (activeController === controller) activeController = null;
+                checking = false;
+            }
+        };
+        const onVisibilityChange = () => {
+            if (document.visibilityState === 'visible') void checkSilently();
+        };
+
+        void checkSilently();
+        const intervalId = window.setInterval(() => { void checkSilently(); }, 30_000);
+        document.addEventListener('visibilitychange', onVisibilityChange);
+        return () => {
+            disposed = true;
+            activeController?.abort();
+            window.clearInterval(intervalId);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
+    }, [bridgeConfigured, bridgeConnectionKey]);
     const visibleEmojiCategories = useMemo(() => {
         const charId = selectedParticipant?.id;
         return emojiCategories.filter(cat => (
@@ -1235,6 +1287,26 @@ const WorkbenchApp: React.FC = () => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }, [messages.length, busy]);
 
+    useEffect(() => {
+        if (!pinBottomAfterIndexResizeRef.current) return;
+        let firstFrame = 0;
+        let secondFrame = 0;
+        const pinToBottom = () => {
+            const container = messageScrollRef.current;
+            if (container) container.scrollTop = container.scrollHeight;
+        };
+        firstFrame = window.requestAnimationFrame(() => {
+            pinToBottom();
+            secondFrame = window.requestAnimationFrame(pinToBottom);
+        });
+        const transitionTimer = window.setTimeout(pinToBottom, 240);
+        return () => {
+            window.cancelAnimationFrame(firstFrame);
+            window.cancelAnimationFrame(secondFrame);
+            window.clearTimeout(transitionTimer);
+        };
+    }, [indexOpen]);
+
     const capabilityLabel = workExecutable ? '电脑已连接' : '电脑未连接';
     const modeCopy = participantEnabled
         ? '一起工作 · ' + (selectedParticipant?.name || '未选择角色') + ' · ' + capabilityLabel
@@ -1286,6 +1358,13 @@ const WorkbenchApp: React.FC = () => {
             };
         }
         setMessages(prev => [...prev, nextMessage]);
+    };
+
+    const toggleWorkbenchIndex = () => {
+        const container = messageScrollRef.current;
+        pinBottomAfterIndexResizeRef.current = !container
+            || container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+        setIndexOpen(prev => !prev);
     };
 
     const appendXhsCardForText = async (
@@ -1634,10 +1713,12 @@ const WorkbenchApp: React.FC = () => {
         };
         saveWorkbenchBridgeConfig(next);
         const stored = loadWorkbenchBridgeConfig();
+        const keepOnline = bridgeStatus === 'online'
+            && workbenchBridgeConnectionKey(config) === workbenchBridgeConnectionKey(stored);
         setConfig(stored);
         setDraftConfig(stored);
-        setBridgeStatus('offline');
-        setTestResult('已保存');
+        setBridgeStatus(keepOnline ? 'online' : 'offline');
+        setTestResult(keepOnline ? '连接成功 · 设置已保存' : '已保存');
         addToast('Code 设置已保存', 'success');
     };
 
@@ -2552,7 +2633,10 @@ const WorkbenchApp: React.FC = () => {
 
             <div className="relative min-h-0 flex-1 flex overflow-hidden">
                 <div className="min-w-0 flex-1 flex flex-col bg-white overflow-hidden">
-                    <div className="flex-1 overflow-y-auto bg-white workbench-index-scroll sully-workbench-scroll">
+                    <div
+                        ref={messageScrollRef}
+                        className="flex-1 overflow-y-auto bg-white workbench-index-scroll sully-workbench-scroll"
+                    >
                         <div className="min-h-full min-w-0 max-w-full overflow-hidden px-4 py-5 space-y-5">
                             {conversationHydrated && messages.length === 0 && (
                                 <div className="h-full min-h-[360px] flex items-center justify-center">
@@ -2892,7 +2976,7 @@ const WorkbenchApp: React.FC = () => {
                 </div>
                 <button
                     type="button"
-                    onClick={() => setIndexOpen(prev => !prev)}
+                    onClick={toggleWorkbenchIndex}
                     className="absolute top-1/2 -translate-y-1/2 z-20 h-11 w-7 rounded-l-xl border border-r-0 border-slate-200 bg-white/92 shadow-sm backdrop-blur flex items-center justify-center text-slate-500 active:scale-95 transition-[right,transform] duration-200"
                     style={{ right: indexOpen ? 'clamp(150px, 38%, 240px)' : 0 }}
                     aria-label={indexOpen ? '收起索引' : '展开索引'}

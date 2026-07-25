@@ -8,6 +8,7 @@ type ScheduleMap = Record<string, MusicTogetherWakeSchedule>;
 
 const STORAGE_KEY = 'music_together_wake_schedules_v1';
 const MAIN_THREAD_CHECK_INTERVAL = 20_000;
+const MAX_OVERDUE_MS = 10 * 60 * 1000;
 
 function loadSchedules(): ScheduleMap {
   try {
@@ -62,6 +63,7 @@ function checkOverdueSchedules() {
     if (schedule.nextWakeAt > now) continue;
     delete schedules[schedule.charId];
     saveSchedules(schedules);
+    if (now - schedule.nextWakeAt > MAX_OVERDUE_MS) continue;
     void triggerCallback(schedule.charId, schedule);
   }
 
@@ -148,6 +150,32 @@ export const MusicTogetherWake = {
     if (Object.keys(loadSchedules()).length === 0) return;
     attachListeners();
     checkOverdueSchedules();
+  },
+
+  reconcile(activeCharIds: string[]) {
+    const active = new Set(activeCharIds.filter(Boolean));
+    const schedules = loadSchedules();
+    const now = Date.now();
+    let changed = false;
+    for (const [charId, schedule] of Object.entries(schedules)) {
+      const valid = (
+        active.has(charId)
+        && schedule?.charId === charId
+        && Number.isFinite(schedule.nextWakeAt)
+        && Number.isFinite(schedule.intervalMs)
+        && schedule.intervalMs > 0
+        && schedule.nextWakeAt >= now - MAX_OVERDUE_MS
+      );
+      if (valid) continue;
+      delete schedules[charId];
+      changed = true;
+    }
+    if (changed) saveSchedules(schedules);
+    if (Object.keys(schedules).length === 0) {
+      detachListeners();
+      return;
+    }
+    attachListeners();
   },
 
   detach() {

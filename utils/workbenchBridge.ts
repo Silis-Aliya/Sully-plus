@@ -195,12 +195,16 @@ const bridgeHeaders = (config: WorkbenchBridgeConfig): HeadersInit => ({
     ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}),
 });
 
-export const testWorkbenchBridge = async (config: WorkbenchBridgeConfig): Promise<string> => {
+export const testWorkbenchBridge = async (
+    config: WorkbenchBridgeConfig,
+    options?: { signal?: AbortSignal },
+): Promise<string> => {
     if (!config.bridgeUrl.trim()) throw new Error('请先填写电脑桥接地址');
     const base = config.bridgeUrl.trim().replace(/\/+$/, '');
     const res = await fetch(`${base}/health`, {
         method: 'POST',
         headers: bridgeHeaders(config),
+        signal: options?.signal,
         body: JSON.stringify({
             agent: config.defaultAgent,
             customAgentCommand: config.customAgentCommand || undefined,

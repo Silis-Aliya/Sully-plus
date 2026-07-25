@@ -756,7 +756,9 @@ export const useChatAI = ({
             const mcdInheritMeta = mcdMiniOpen ? { fromMcdMiniApp: true } : undefined;
             const luckinMiniSnap = luckinMiniAppRef?.current;
             const luckinMiniOpen = !!luckinMiniSnap?.open;
-            const liveMusicSnapshot = loadMusicPlaybackSnapshot() || {
+            const cachedMusicSnapshot = loadMusicPlaybackSnapshot();
+            const liveMusicSnapshot = {
+                ...cachedMusicSnapshot,
                 current: music.current,
                 queue: music.queue,
                 idx: music.idx,
@@ -768,8 +770,8 @@ export const useChatAI = ({
                 listeningTogetherWith: music.listeningTogetherWith,
                 listeningTogetherInviterByCharId: music.listeningTogetherInviterByCharId,
                 listeningTogetherStartedAt: music.listeningTogetherStartedAt,
-                listeningTogetherChangeCount: 0,
-                listeningTogetherPreviousSong: null,
+                listeningTogetherChangeCount: cachedMusicSnapshot?.listeningTogetherChangeCount || 0,
+                listeningTogetherPreviousSong: cachedMusicSnapshot?.listeningTogetherPreviousSong || null,
                 cfg: music.cfg,
                 recentTrackChange: music.recentTrackChange,
             };

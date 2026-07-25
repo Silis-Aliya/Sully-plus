@@ -6,6 +6,7 @@ describe('Music settings navigation', () => {
 
     it('treats search and settings as sibling pages under the profile home', () => {
         expect(source).toContain("onOpenSearch={() => setView('search')}");
+        expect(source).toContain("onClose={() => setView('profile')}");
         expect(source).toContain('onOpenSettings={openInternalSettings}');
         expect(source).toContain('onClick={openInternalSettings}');
         expect(source).not.toContain('settingsReturnViewRef');

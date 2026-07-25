@@ -19,6 +19,7 @@ import { buildMusicWakePickableSongs, getRememberedMusicWakePickableSongs } from
 import { LOCAL_SETTINGS_IMPORTED_EVENT } from '../utils/localSettingsBackup';
 
 export const MUSIC_TOGETHER_LEFT_EVENT = 'music-together-left';
+export const MUSIC_TOGETHER_RESTORED_EVENT = 'music-together-restored';
 
 /* ───────────── 类型 ───────────── */
 export type MusicQuality = 'standard' | 'higher' | 'exhigh' | 'lossless' | 'hires';
@@ -787,6 +788,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setListeningTogetherWith(togetherSession?.charIds || []);
         setListeningTogetherInviterByCharId(togetherSession?.inviterByCharId || {});
         setListeningTogetherStartedAt(togetherSession?.startedAt || null);
+        window.dispatchEvent(new CustomEvent(MUSIC_TOGETHER_RESTORED_EVENT, {
+          detail: { charIds: togetherSession?.charIds || [] },
+        }));
       }
     };
     window.addEventListener(LOCAL_SETTINGS_IMPORTED_EVENT, restoreImportedRuntime);
@@ -806,23 +810,33 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [listeningTogetherPreviousSong, setListeningTogetherPreviousSong] = useState<{ id: number; name: string; artists: string } | null>(null);
   const listeningTogetherRef = useRef(listeningTogetherWith);
   listeningTogetherRef.current = listeningTogetherWith;
+  const pendingCharacterTrackChangeRef = useRef<{ charId: string } | null>(null);
   const [recentTrackChange, setRecentTrackChange] = useState<RecentTrackChange | null>(null);
   useEffect(() => {
     const previousSong = previousSongRef.current;
     if (previousSong && previousSong.id !== current?.id) {
       const wasListening = listeningTogetherRef.current;
+      const characterChange = pendingCharacterTrackChangeRef.current;
+      pendingCharacterTrackChangeRef.current = null;
       if (wasListening.length > 0) {
         setRecentTrackChange({
           previousSong: { id: previousSong.id, name: previousSong.name, artists: previousSong.artists },
           charIds: [...wasListening],
           at: Date.now(),
         });
-        setListeningTogetherChangeCount(prev => prev + 1);
-        setListeningTogetherPreviousSong({
-          id: previousSong.id,
-          name: previousSong.name,
-          artists: previousSong.artists,
-        });
+        if (characterChange && wasListening.includes(characterChange.charId)) {
+          // The role already receives a hidden action receipt. Start a fresh
+          // baseline so its own switch is not reported as a later user switch.
+          setListeningTogetherChangeCount(0);
+          setListeningTogetherPreviousSong(null);
+        } else {
+          setListeningTogetherChangeCount(prev => prev + 1);
+          setListeningTogetherPreviousSong({
+            id: previousSong.id,
+            name: previousSong.name,
+            artists: previousSong.artists,
+          });
+        }
       }
     }
     previousSongRef.current = current;
@@ -1152,8 +1166,12 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       leaveListeningTogether: (cid: string) => {
       removeListeningPartner(cid);
       },
-      nextSong: () => {
+      nextSong: (cid: string) => {
+        pendingCharacterTrackChangeRef.current = { charId: cid };
         const target = nextSong();
+        if (!target || target.id === current?.id) {
+          pendingCharacterTrackChangeRef.current = null;
+        }
         return target ? { songName: target.name, artists: target.artists } : null;
       },
       setPlayMode: (mode) => {
@@ -1194,9 +1212,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             localLyrics: picked.localLyrics,
             lyricLineTimings: picked.lyricLineTimings,
           };
+          pendingCharacterTrackChangeRef.current = { charId: cid };
           await playSong(song, { alsoSetQueue: true });
+          if (song.id === current?.id) {
+            pendingCharacterTrackChangeRef.current = null;
+          }
           return { songName: picked.name, artists: picked.artists };
         } catch {
+          pendingCharacterTrackChangeRef.current = null;
           return null;
         }
       },

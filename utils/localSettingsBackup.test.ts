@@ -131,6 +131,7 @@ describe('localSettingsBackup', () => {
         expect(shouldBackupLocalStorageKey('sully_music_cfg_v1')).toBe(true);
         expect(shouldBackupLocalStorageKey('sully_music_state_v1')).toBe(true);
         expect(shouldBackupLocalStorageKey('sully_music_local_album_v1')).toBe(true);
+        expect(shouldBackupLocalStorageKey('music_together_wake_schedules_v1')).toBe(true);
 
         localStorage.setItem('sully_music_state_v1', JSON.stringify({
             queue: [{ id: 7, name: 'Track' }],
@@ -154,6 +155,23 @@ describe('localSettingsBackup', () => {
                 currentSongId: 7,
             },
         });
+    });
+
+    it('round-trips together-listening wake schedules with portable music state', () => {
+        const schedule = {
+            'char-1': {
+                charId: 'char-1',
+                nextWakeAt: Date.now() + 5 * 60 * 1000,
+                intervalMs: 5 * 60 * 1000,
+            },
+        };
+        localStorage.setItem('music_together_wake_schedules_v1', JSON.stringify(schedule));
+
+        const snapshot = exportLocalStorageSettings();
+        localStorage.clear();
+        importLocalStorageSettings(snapshot);
+
+        expect(JSON.parse(localStorage.getItem('music_together_wake_schedules_v1') || '{}')).toEqual(schedule);
     });
 
     it('stamps an actively listening-together snapshot at export time', () => {

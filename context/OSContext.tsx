@@ -37,7 +37,12 @@ import { CHAT_GEN_EVENTS, setChatViewSnapshot } from '../utils/chatGenEvents';
 import { buildChatRequestPayload } from '../utils/chatRequestPayload';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { extractHtmlBlocks } from '../utils/htmlPrompt';
-import { loadMusicHooks, loadMusicPlaybackSnapshot, MUSIC_TOGETHER_LEFT_EVENT } from './MusicContext';
+import {
+  loadMusicHooks,
+  loadMusicPlaybackSnapshot,
+  MUSIC_TOGETHER_LEFT_EVENT,
+  MUSIC_TOGETHER_RESTORED_EVENT,
+} from './MusicContext';
 import { buildMusicInviteHint, buildMusicWakeHint, buildMusicWakePickableSongs, formatMusicWakePickableSongs, rememberMusicWakePickableSongs, type MusicTrackChangeDetail, type MusicTrackInfo } from '../utils/musicTrackChange';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { setTtsProvider, setVoicePromptOverrides } from '../utils/ttsProvider';
@@ -2517,8 +2522,13 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           const charId = (event as CustomEvent<{ charId?: string }>).detail?.charId;
           if (charId) clearMusicWake(charId);
       };
+      const onMusicTogetherRestored = (event: Event) => {
+          const charIds = (event as CustomEvent<{ charIds?: string[] }>).detail?.charIds || [];
+          MusicTogetherWake.reconcile(charIds);
+      };
       window.addEventListener('music-invite-request', onMusicInviteRequest);
       window.addEventListener(MUSIC_TOGETHER_LEFT_EVENT, onMusicTogetherLeft);
+      window.addEventListener(MUSIC_TOGETHER_RESTORED_EVENT, onMusicTogetherRestored);
 
       // 「彼方」自主登入 —— 独立调度，复用同一批 refs 拿最新状态
       const runVR = async (charId: string, room?: string, letterId?: string) => {
@@ -2623,6 +2633,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           WorldScheduler.onTrigger(() => {});
           window.removeEventListener('music-invite-request', onMusicInviteRequest);
           window.removeEventListener(MUSIC_TOGETHER_LEFT_EVENT, onMusicTogetherLeft);
+          window.removeEventListener(MUSIC_TOGETHER_RESTORED_EVENT, onMusicTogetherRestored);
           window.removeEventListener('world-reroll-request', onRerollRequest as EventListener);
       };
   // eslint-disable-next-line react-hooks/exhaustive-deps

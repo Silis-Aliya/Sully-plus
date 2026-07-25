@@ -44,7 +44,7 @@ export interface MusicActionHooks {
     isListeningTogether?: (charId: string) => boolean;
     joinListeningTogether: (charId: string, inviter?: 'user' | 'character') => void;
     leaveListeningTogether?: (charId: string) => void;
-    nextSong?: () => { songName: string; artists: string } | null | void;
+    nextSong?: (charId: string) => { songName: string; artists: string } | null | void;
     setPlayMode?: (mode: 'loop' | 'shuffle' | 'single') => void;
     pickSong?: (index: number, charId: string) => Promise<{ songName: string; artists: string } | null>;
     playSharedSong?: (song: MusicActionSnapshot) => Promise<void>;
@@ -349,7 +349,7 @@ export const ChatParser = {
                 }
             } else if (targetMatch?.[1] === 'next_song') {
                 const before = musicHooks.getListeningSnapshot();
-                const next = musicHooks.nextSong?.() || null;
+                const next = musicHooks.nextSong?.(charId) || null;
                 if (!next) {
                     await saveMusicActionReceipt(
                         charId,

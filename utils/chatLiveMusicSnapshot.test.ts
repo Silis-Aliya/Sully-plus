@@ -5,8 +5,12 @@ describe('chat live music snapshot wiring', () => {
     const chatSource = readFileSync(new URL('../hooks/useChatAI.ts', import.meta.url), 'utf8');
     const musicSource = readFileSync(new URL('../context/MusicContext.tsx', import.meta.url), 'utf8');
 
-    it('derives chat music context from one current playback snapshot', () => {
-        expect(chatSource).toContain('const liveMusicSnapshot = loadMusicPlaybackSnapshot() || {');
+    it('overrides cached music state with the live Chat values', () => {
+        expect(chatSource).toContain('const cachedMusicSnapshot = loadMusicPlaybackSnapshot();');
+        expect(chatSource).toContain('const liveMusicSnapshot = {');
+        expect(chatSource).toContain('...cachedMusicSnapshot');
+        expect(chatSource).toContain('current: music.current');
+        expect(chatSource).toContain('listeningTogetherWith: music.listeningTogetherWith');
         expect(chatSource).toContain('musicSnapshot: liveMusicSnapshot');
         expect(chatSource).not.toContain('const isMusicTogetherForChar = music.listeningTogetherWith.includes(char.id)');
     });

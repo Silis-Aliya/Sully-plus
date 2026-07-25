@@ -454,7 +454,7 @@ const MusicApp: React.FC = () => {
       <BokehBg />
       <MizuHeader
         title="未来音楽"
-        onClose={closeApp}
+        onClose={() => setView('profile')}
         right={
           <div className="flex items-center gap-1">
             <button
