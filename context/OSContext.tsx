@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { APIConfig, AppID, OSTheme, VirtualTime, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile, CloudBackupProvider } from '../types';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { APIConfig, AppID, OSTheme, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile, CloudBackupProvider } from '../types';
 import { DB } from '../utils/db';
 import { modelRejectsSamplingParams, stripSamplingParams, isSamplingParamError } from '../utils/samplingParamCompat';
 import { extractImagesInPlace, deepCloneForExport } from '../utils/backupExport';
@@ -62,6 +62,8 @@ import { exportLuckinLocal } from '../utils/luckinMcpClient';
 import { exportMcdLocal } from '../utils/mcdMcpClient';
 import { exportDesktopSkinLocal } from '../utils/desktopSkinBackup';
 import { assertSupportedSullyBackup } from '../utils/backupImportPolicy';
+import { markMusicMigrationEnded } from '../utils/musicMigrationNotice';
+import { ClockProvider } from './ClockContext';
 
 type ProactiveRunReason =
   | { kind: 'music-track-change'; detail: MusicTrackChangeDetail }
@@ -323,7 +325,6 @@ interface OSContextType {
   closeApp: () => void;
   theme: OSTheme;
   updateTheme: (updates: Partial<OSTheme>) => Promise<void>;
-  virtualTime: VirtualTime;
   apiConfig: APIConfig;
   updateApiConfig: (updates: Partial<APIConfig>) => void;
   isLocked: boolean;
@@ -470,6 +471,105 @@ interface OSContextType {
   openDateWithChar: (charId: string) => void;
   consumeDateAutoStart: () => void;
 }
+
+type NavigationContextType = Pick<OSContextType,
+  | 'activeApp' | 'openApp' | 'closeApp' | 'isLocked' | 'unlock'
+  | 'registerBackHandler' | 'handleBack'
+  | 'suspendedCall' | 'suspendCall' | 'resumeCall' | 'clearSuspendedCall'
+  | 'dateAutoStartCharId' | 'openDateWithChar' | 'consumeDateAutoStart'
+>;
+
+type CharacterDataContextType = Pick<OSContextType,
+  | 'isDataLoaded' | 'characters' | 'activeCharacterId' | 'addCharacter'
+  | 'updateCharacter' | 'deleteCharacter' | 'setActiveCharacterId'
+  | 'characterGroups' | 'createCharacterGroup' | 'renameCharacterGroup' | 'deleteCharacterGroup'
+  | 'worldbooks' | 'addWorldbook' | 'updateWorldbook' | 'deleteWorldbook'
+  | 'novels' | 'addNovel' | 'updateNovel' | 'deleteNovel'
+  | 'songs' | 'addSong' | 'updateSong' | 'deleteSong'
+  | 'groups' | 'createGroup' | 'updateGroup' | 'deleteGroup'
+  | 'userProfile' | 'updateUserProfile'
+>;
+
+type NotificationContextType = Pick<OSContextType,
+  | 'toasts' | 'addToast' | 'errorDialog' | 'showError' | 'dismissError'
+  | 'lastMsgTimestamp' | 'unreadMessages' | 'clearUnread'
+  | 'workbenchUnread' | 'clearWorkbenchUnread' | 'proactiveComposingChars'
+  | 'systemLogs' | 'clearLogs'
+>;
+
+type AlertContextType = Pick<OSContextType,
+  | 'toasts' | 'addToast' | 'errorDialog' | 'showError' | 'dismissError'
+>;
+
+type MessageActivityContextType = Pick<OSContextType,
+  | 'lastMsgTimestamp' | 'unreadMessages' | 'clearUnread'
+  | 'workbenchUnread' | 'clearWorkbenchUnread' | 'proactiveComposingChars'
+>;
+
+type SystemLogContextType = Pick<OSContextType, 'systemLogs' | 'clearLogs'>;
+
+type BackupContextType = Pick<OSContextType,
+  | 'cloudBackupConfig' | 'updateCloudBackupConfig'
+  | 'cloudBackupToWebDAV' | 'cloudRestoreFromWebDAV' | 'listCloudBackups'
+  | 'quickSyncUploadDelta' | 'quickSyncPullDelta'
+  | 'exportSystem' | 'importSystem' | 'resetSystem'
+  | 'sysOperation' | 'dismissSysOperation'
+>;
+
+type AppearanceContextType = Pick<OSContextType,
+  | 'theme' | 'updateTheme' | 'customThemes' | 'addCustomTheme' | 'removeCustomTheme'
+  | 'appearancePresets' | 'saveAppearancePreset' | 'applyAppearancePreset'
+  | 'deleteAppearancePreset' | 'renameAppearancePreset'
+  | 'exportAppearancePreset' | 'importAppearancePreset'
+  | 'customIcons' | 'setCustomIcon' | 'resetAppearance'
+>;
+
+type SystemConfigContextType = Pick<OSContextType,
+  | 'apiConfig' | 'updateApiConfig' | 'availableModels' | 'setAvailableModels'
+  | 'apiPresets' | 'addApiPreset' | 'removeApiPreset'
+  | 'realtimeConfig' | 'updateRealtimeConfig'
+  | 'memoryPalaceConfig' | 'updateMemoryPalaceConfig'
+  | 'syncEmotionApiToAllCharacters'
+  | 'remoteVectorConfig' | 'updateRemoteVectorConfig'
+>;
+
+const NavigationContext = createContext<NavigationContextType | undefined>(undefined);
+const CharacterDataContext = createContext<CharacterDataContextType | undefined>(undefined);
+const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
+const AlertContext = createContext<AlertContextType | undefined>(undefined);
+const MessageActivityContext = createContext<MessageActivityContextType | undefined>(undefined);
+const SystemLogContext = createContext<SystemLogContextType | undefined>(undefined);
+const BackupContext = createContext<BackupContextType | undefined>(undefined);
+const AppearanceContext = createContext<AppearanceContextType | undefined>(undefined);
+const SystemConfigContext = createContext<SystemConfigContextType | undefined>(undefined);
+
+const useRequiredDomain = <T,>(context: React.Context<T | undefined>, name: string): T => {
+  const value = useContext(context);
+  if (!value) throw new Error(`${name} must be used within OSProvider`);
+  return value;
+};
+
+export const useNavigation = () => useRequiredDomain(NavigationContext, 'useNavigation');
+export const useCharacterData = () => useRequiredDomain(CharacterDataContext, 'useCharacterData');
+export const useNotifications = () => useRequiredDomain(NotificationContext, 'useNotifications');
+export const useAlerts = () => useRequiredDomain(AlertContext, 'useAlerts');
+export const useMessageActivity = () => useRequiredDomain(MessageActivityContext, 'useMessageActivity');
+export const useSystemLogs = () => useRequiredDomain(SystemLogContext, 'useSystemLogs');
+export const useBackup = () => useRequiredDomain(BackupContext, 'useBackup');
+export const useAppearance = () => useRequiredDomain(AppearanceContext, 'useAppearance');
+export const useSystemConfig = () => useRequiredDomain(SystemConfigContext, 'useSystemConfig');
+
+const useStableActions = <T extends Record<string, (...args: any[]) => any>>(actions: T): T => {
+  const actionsRef = useRef(actions);
+  actionsRef.current = actions;
+  return useMemo(() => {
+    const stable: Record<string, (...args: any[]) => any> = {};
+    for (const key of Object.keys(actionsRef.current)) {
+      stable[key] = (...args: any[]) => actionsRef.current[key](...args);
+    }
+    return stable as T;
+  }, []);
+};
 
 const PREVIOUS_DEFAULT_WALLPAPER = [
   'radial-gradient(120% 85% at 12% 0%, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0) 58%)',
@@ -832,26 +932,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const [apiConfig, setApiConfig] = useState<APIConfig>(defaultApiConfig);
   const [isLocked, setIsLocked] = useState(true);
   
-  const getRealTime = (): VirtualTime => {
-      const now = new Date();
-      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-      return {
-          hours: now.getHours(),
-          minutes: now.getMinutes(),
-          day: days[now.getDay()]
-      };
-  };
-
-  const [virtualTime, setVirtualTime] = useState<VirtualTime>(getRealTime());
-  
-  // Real-time Clock Sync
-  useEffect(() => {
-      const timer = setInterval(() => {
-          setVirtualTime(getRealTime());
-      }, 1000);
-      return () => clearInterval(timer);
-  }, []);
-
   // 启动后台扫描一次，把还停留在老 number[] 形态的向量记录升级到 Uint8Array
   // 紧凑存储。完全无损，不影响召回质量。重度用户磁盘可省 ~12×（500MB → 40MB
   // 量级）。fire-and-forget，不阻塞 UI；只在确实有数据被升级时弹一次 toast
@@ -2050,9 +2130,6 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   && (now.getTime() - lastRealMsgRaw.timestamp) < DATE_AFTERGLOW_MS;
 
               const musicSnapshotForHint = loadMusicPlaybackSnapshot();
-              const musicChangeSummary = musicSnapshotForHint?.listeningTogetherChangeCount
-                  ? `用户切过 ${musicSnapshotForHint.listeningTogetherChangeCount} 首歌；上一首是《${musicSnapshotForHint.listeningTogetherPreviousSong?.name || '未知'}》— ${musicSnapshotForHint.listeningTogetherPreviousSong?.artists || '未知'}，当前是《${musicSnapshotForHint.current?.name || '未知'}》— ${musicSnapshotForHint.current?.artists || '未知'}。`
-                  : undefined;
               const musicWakePickableSongs = reason?.kind === 'music-wake'
                   ? buildMusicWakePickableSongs({
                       charSongs: (char.musicProfile?.playlists || []).flatMap(pl => pl.songs || []),
@@ -2076,7 +2153,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                           } : null,
                           togetherDuration: formatMusicMs(Date.now() - (musicSnapshotForHint?.listeningTogetherStartedAt || Date.now())),
                           progress: `${formatMusicMs((musicSnapshotForHint?.progress || 0) * 1000)} / ${formatMusicMs((musicSnapshotForHint?.duration || 0) * 1000)}`,
-                          changeSummary: musicChangeSummary,
+                          selectedByCharacter:
+                              musicSnapshotForHint?.characterSelectedSongByCharId?.[charId]?.id
+                              === musicSnapshotForHint?.current?.id,
                           pickableSongs: formatMusicWakePickableSongs(musicWakePickableSongs),
                       })
                       : justMetOffline
@@ -2900,6 +2979,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       const providerConfig = getCloudBackupConfigForProvider('webdav');
       const { listBackups, downloadBackup } = await import('../utils/webdavClient');
       try {
+          const togetherCharIdsBeforeSync = loadMusicPlaybackSnapshot()?.listeningTogetherWith || [];
           setSysOperation({ status: 'processing', message: 'Finding quick sync delta...', progress: 0 });
           const files = await listBackups(providerConfig);
           const latest = files.find(f => f.name === QUICK_SYNC_LATEST_NAME)
@@ -2917,6 +2997,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               const pct = total > 0 ? Math.round((done / total) * 100) : 100;
               setSysOperation(prev => ({ ...prev, message: `正在写入增量 ${done}/${total}（${pct}%）`, progress: 55 + pct * 0.4 }));
           });
+          markMusicMigrationEnded(togetherCharIdsBeforeSync);
+          loadMusicHooks()?.resetTogetherForDataMigration?.();
+          MusicTogetherWake.clearAll();
           setSysOperation({ status: 'idle', message: '', progress: 100 });
           addToast(`快速同步已应用（${changed} 项变化）`, 'success');
       } catch (e: any) {
@@ -4023,6 +4106,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   };
 
   const importSystem = async (fileOrJson: File | string): Promise<void> => {
+      const togetherCharIdsBeforeImport = loadMusicPlaybackSnapshot()?.listeningTogetherWith || [];
       const sourceName = typeof fileOrJson === 'string' ? 'json' : fileOrJson.name;
       const sourceSize = typeof fileOrJson === 'string'
           ? (typeof Blob !== 'undefined' ? new Blob([fileOrJson]).size : fileOrJson.length)
@@ -4455,6 +4539,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (books.length > 0) setWorldbooks(books);
           if (novelList.length > 0) setNovels(novelList);
           if (songList.length > 0) setSongs(songList);
+
+          markMusicMigrationEnded(togetherCharIdsBeforeImport);
+          loadMusicHooks()?.resetTogetherForDataMigration?.();
+          MusicTogetherWake.clearAll();
           
           setSysOperation({ status: 'idle', message: '', progress: 100 });
           clearImportInProgress();
@@ -4548,13 +4636,231 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [cloudBackupConfig.webdavUrl, cloudBackupConfig.username, cloudBackupConfig.password, sysOperation.status]);
 
+  const navigationActions = useStableActions({
+    openApp,
+    closeApp,
+    unlock,
+    handleBack,
+    suspendCall,
+    resumeCall,
+    clearSuspendedCall,
+    openDateWithChar,
+    consumeDateAutoStart,
+  });
+  const characterDataActions = useStableActions({
+    addCharacter,
+    updateCharacter,
+    deleteCharacter,
+    createCharacterGroup,
+    renameCharacterGroup,
+    deleteCharacterGroup,
+    addWorldbook,
+    updateWorldbook,
+    deleteWorldbook,
+    addNovel,
+    updateNovel,
+    deleteNovel,
+    addSong,
+    updateSong,
+    deleteSong,
+    createGroup,
+    updateGroup,
+    deleteGroup,
+    updateUserProfile,
+  });
+  const notificationActions = useStableActions({
+    addToast,
+    showError,
+    dismissError,
+    clearLogs,
+  });
+  const backupActions = useStableActions({
+    updateCloudBackupConfig,
+    cloudBackupToWebDAV,
+    cloudRestoreFromWebDAV,
+    listCloudBackups,
+    quickSyncUploadDelta,
+    quickSyncPullDelta,
+    exportSystem,
+    importSystem,
+    resetSystem,
+    dismissSysOperation,
+  });
+  const appearanceActions = useStableActions({
+    updateTheme,
+    addCustomTheme,
+    removeCustomTheme,
+    saveAppearancePreset,
+    applyAppearancePreset,
+    deleteAppearancePreset,
+    renameAppearancePreset,
+    exportAppearancePreset,
+    importAppearancePreset,
+    setCustomIcon,
+    resetAppearance,
+  });
+  const systemConfigActions = useStableActions({
+    updateApiConfig,
+    addApiPreset,
+    removeApiPreset,
+    updateRealtimeConfig,
+    updateMemoryPalaceConfig,
+    syncEmotionApiToAllCharacters,
+    updateRemoteVectorConfig,
+  });
+
+  const navigationValue = useMemo<NavigationContextType>(() => ({
+    activeApp,
+    openApp: navigationActions.openApp,
+    closeApp: navigationActions.closeApp,
+    isLocked,
+    unlock: navigationActions.unlock,
+    registerBackHandler,
+    handleBack: navigationActions.handleBack,
+    suspendedCall,
+    suspendCall: navigationActions.suspendCall,
+    resumeCall: navigationActions.resumeCall,
+    clearSuspendedCall: navigationActions.clearSuspendedCall,
+    dateAutoStartCharId,
+    openDateWithChar: navigationActions.openDateWithChar,
+    consumeDateAutoStart: navigationActions.consumeDateAutoStart,
+  }), [activeApp, navigationActions, isLocked, registerBackHandler, suspendedCall, dateAutoStartCharId]);
+
+  const characterDataValue = useMemo<CharacterDataContextType>(() => ({
+    isDataLoaded,
+    characters,
+    activeCharacterId,
+    addCharacter: characterDataActions.addCharacter,
+    updateCharacter: characterDataActions.updateCharacter,
+    deleteCharacter: characterDataActions.deleteCharacter,
+    setActiveCharacterId,
+    characterGroups,
+    createCharacterGroup: characterDataActions.createCharacterGroup,
+    renameCharacterGroup: characterDataActions.renameCharacterGroup,
+    deleteCharacterGroup: characterDataActions.deleteCharacterGroup,
+    worldbooks,
+    addWorldbook: characterDataActions.addWorldbook,
+    updateWorldbook: characterDataActions.updateWorldbook,
+    deleteWorldbook: characterDataActions.deleteWorldbook,
+    novels,
+    addNovel: characterDataActions.addNovel,
+    updateNovel: characterDataActions.updateNovel,
+    deleteNovel: characterDataActions.deleteNovel,
+    songs,
+    addSong: characterDataActions.addSong,
+    updateSong: characterDataActions.updateSong,
+    deleteSong: characterDataActions.deleteSong,
+    groups,
+    createGroup: characterDataActions.createGroup,
+    updateGroup: characterDataActions.updateGroup,
+    deleteGroup: characterDataActions.deleteGroup,
+    userProfile,
+    updateUserProfile: characterDataActions.updateUserProfile,
+  }), [isDataLoaded, characters, activeCharacterId, setActiveCharacterId, characterGroups, worldbooks, novels, songs, groups, userProfile, characterDataActions]);
+
+  const notificationValue = useMemo<NotificationContextType>(() => ({
+    toasts,
+    addToast: notificationActions.addToast,
+    errorDialog,
+    showError: notificationActions.showError,
+    dismissError: notificationActions.dismissError,
+    lastMsgTimestamp,
+    unreadMessages,
+    clearUnread,
+    workbenchUnread,
+    clearWorkbenchUnread,
+    proactiveComposingChars,
+    systemLogs,
+    clearLogs: notificationActions.clearLogs,
+  }), [
+    toasts, errorDialog, lastMsgTimestamp, unreadMessages, clearUnread,
+    workbenchUnread, clearWorkbenchUnread, proactiveComposingChars, systemLogs, notificationActions,
+  ]);
+
+  const alertValue = useMemo<AlertContextType>(() => ({
+    toasts,
+    addToast: notificationActions.addToast,
+    errorDialog,
+    showError: notificationActions.showError,
+    dismissError: notificationActions.dismissError,
+  }), [toasts, errorDialog, notificationActions]);
+
+  const messageActivityValue = useMemo<MessageActivityContextType>(() => ({
+    lastMsgTimestamp,
+    unreadMessages,
+    clearUnread,
+    workbenchUnread,
+    clearWorkbenchUnread,
+    proactiveComposingChars,
+  }), [
+    lastMsgTimestamp, unreadMessages, clearUnread,
+    workbenchUnread, clearWorkbenchUnread, proactiveComposingChars,
+  ]);
+
+  const systemLogValue = useMemo<SystemLogContextType>(() => ({
+    systemLogs,
+    clearLogs: notificationActions.clearLogs,
+  }), [systemLogs, notificationActions]);
+
+  const backupValue = useMemo<BackupContextType>(() => ({
+    cloudBackupConfig,
+    updateCloudBackupConfig: backupActions.updateCloudBackupConfig,
+    cloudBackupToWebDAV: backupActions.cloudBackupToWebDAV,
+    cloudRestoreFromWebDAV: backupActions.cloudRestoreFromWebDAV,
+    listCloudBackups: backupActions.listCloudBackups,
+    quickSyncUploadDelta: backupActions.quickSyncUploadDelta,
+    quickSyncPullDelta: backupActions.quickSyncPullDelta,
+    exportSystem: backupActions.exportSystem,
+    importSystem: backupActions.importSystem,
+    resetSystem: backupActions.resetSystem,
+    sysOperation,
+    dismissSysOperation: backupActions.dismissSysOperation,
+  }), [cloudBackupConfig, sysOperation, backupActions]);
+
+  const appearanceValue = useMemo<AppearanceContextType>(() => ({
+    theme,
+    updateTheme: appearanceActions.updateTheme,
+    customThemes,
+    addCustomTheme: appearanceActions.addCustomTheme,
+    removeCustomTheme: appearanceActions.removeCustomTheme,
+    appearancePresets,
+    saveAppearancePreset: appearanceActions.saveAppearancePreset,
+    applyAppearancePreset: appearanceActions.applyAppearancePreset,
+    deleteAppearancePreset: appearanceActions.deleteAppearancePreset,
+    renameAppearancePreset: appearanceActions.renameAppearancePreset,
+    exportAppearancePreset: appearanceActions.exportAppearancePreset,
+    importAppearancePreset: appearanceActions.importAppearancePreset,
+    customIcons,
+    setCustomIcon: appearanceActions.setCustomIcon,
+    resetAppearance: appearanceActions.resetAppearance,
+  }), [theme, customThemes, appearancePresets, customIcons, appearanceActions]);
+
+  const systemConfigValue = useMemo<SystemConfigContextType>(() => ({
+    apiConfig,
+    updateApiConfig: systemConfigActions.updateApiConfig,
+    availableModels,
+    setAvailableModels,
+    apiPresets,
+    addApiPreset: systemConfigActions.addApiPreset,
+    removeApiPreset: systemConfigActions.removeApiPreset,
+    realtimeConfig,
+    updateRealtimeConfig: systemConfigActions.updateRealtimeConfig,
+    memoryPalaceConfig,
+    updateMemoryPalaceConfig: systemConfigActions.updateMemoryPalaceConfig,
+    syncEmotionApiToAllCharacters: systemConfigActions.syncEmotionApiToAllCharacters,
+    remoteVectorConfig,
+    updateRemoteVectorConfig: systemConfigActions.updateRemoteVectorConfig,
+  }), [
+    apiConfig, availableModels, setAvailableModels, apiPresets, realtimeConfig,
+    memoryPalaceConfig, remoteVectorConfig, systemConfigActions,
+  ]);
+
   const value: OSContextType = {
     activeApp,
     openApp,
     closeApp,
     theme,
     updateTheme,
-    virtualTime,
     apiConfig,
     updateApiConfig,
     isLocked,
@@ -4651,7 +4957,25 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
   return (
     <OSContext.Provider value={value}>
-      {children}
+      <NavigationContext.Provider value={navigationValue}>
+        <CharacterDataContext.Provider value={characterDataValue}>
+          <NotificationContext.Provider value={notificationValue}>
+            <AlertContext.Provider value={alertValue}>
+              <MessageActivityContext.Provider value={messageActivityValue}>
+                <SystemLogContext.Provider value={systemLogValue}>
+                  <BackupContext.Provider value={backupValue}>
+                    <AppearanceContext.Provider value={appearanceValue}>
+                      <SystemConfigContext.Provider value={systemConfigValue}>
+                        <ClockProvider>{children}</ClockProvider>
+                      </SystemConfigContext.Provider>
+                    </AppearanceContext.Provider>
+                  </BackupContext.Provider>
+                </SystemLogContext.Provider>
+              </MessageActivityContext.Provider>
+            </AlertContext.Provider>
+          </NotificationContext.Provider>
+        </CharacterDataContext.Provider>
+      </NavigationContext.Provider>
     </OSContext.Provider>
   );
 };

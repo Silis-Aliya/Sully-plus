@@ -26,6 +26,28 @@ Current known baseline:
 - Vercel should auto-deploy from `master` after the push; verify the deployment dashboard before treating production as updated.
 ```
 
+## 2026-07-26 Clock Context Performance Split
+
+- Moved the UI clock out of the large `OSContext` into `ClockContext`, so clock ticks no longer broadcast updates to every `useOS()` consumer.
+- Clock updates align to minute boundaries because the UI displays no seconds. Returning to a visible or focused page immediately resynchronizes the clock before scheduling the next minute.
+- Updated all clock consumers to use `useClock`; scheduled-message scanning, music playback, together-listening, and prompt timestamps are unchanged.
+- Music progress now updates React only while the page is visible and at least one progress UI is mounted. Audio playback continues independently; opening a progress UI or returning to the foreground immediately reads the real audio position.
+- Non-React music snapshots read `audio.currentTime` and derive the active lyric at request time, so chat and together-listening wakes still receive live progress while UI rendering is paused.
+- The Music App together-duration display also stops ticking while hidden and catches up immediately when visible.
+- Split the remaining high-impact OS state into stable `Navigation`, `CharacterData`, `Notification`, `Backup`, `Appearance`, and `SystemConfig` contexts. Stable action tables prevent unrelated provider values from changing when `OSProvider` renders.
+- The always-mounted phone shell, launcher and desktop variants, status bar, player overlays, Chat, and Settings now subscribe only to their required domains. The aggregate `useOS` hook remains as a compatibility path for lower-frequency screens.
+- Architecture tests prevent those high-impact surfaces from falling back to the aggregate context during future upstream merges.
+- Verification: 147 test files / 1284 tests passed; production build passed.
+
+## 2026-07-26 Together-Listening Migration Boundary
+
+- Full backup and QuickSync keep durable music state (queue, selected song, play mode) but no longer migrate the live together-listening session or wake schedules.
+- Export strips `togetherSession`; import also strips it from legacy backups. Wake schedules are excluded from portable local settings.
+- After a successful full import or QuickSync pull, the target device exits its current together session, clears transient track attribution, and cancels all together-listening wakes.
+- The roles who were listening on the target device receive one non-visible, session-only system state on their next generation: the previous together session ended because of data migration. It is not saved as a chat message and clears after the next assistant reply.
+- Chat history, music shares, invitations, action receipts, character playlists, and generated music remain portable.
+- Verification: 145 test files / 1278 tests passed; production build passed.
+
 ## Merge Attention: Fork Decisions and Card Placement
 
 - Confirmed fork decisions override conflicting upstream behavior. Do not restore an upstream rule merely because an old upstream test, comment, or implementation still expects it.

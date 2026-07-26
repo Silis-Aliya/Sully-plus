@@ -166,11 +166,45 @@ export interface MusicPlaybackSnapshot {
   listeningTogetherStartedAt: number | null;
   listeningTogetherChangeCount: number;
   listeningTogetherPreviousSong: { id: number; name: string; artists: string } | null;
+  characterSelectedSongByCharId: Record<string, { id: number; name: string; artists: string }>;
   cfg: MusicCfg;
   recentTrackChange?: RecentTrackChange | null;
 }
+
+const findActiveLyricIndex = (lyric: LyricLine[], progress: number): number => {
+  if (!lyric.length) return -1;
+  let index = 0;
+  for (let i = 0; i < lyric.length; i++) {
+    if (lyric[i].t <= progress) index = i;
+    else break;
+  }
+  return index;
+};
+
 let __musicPlaybackSnapshot: MusicPlaybackSnapshot | null = null;
-export const loadMusicPlaybackSnapshot = (): MusicPlaybackSnapshot | null => __musicPlaybackSnapshot;
+let __musicAudioElement: HTMLAudioElement | null = null;
+let __musicProgressSubscriberCount = 0;
+let __syncMusicProgressUi: (() => void) | null = null;
+
+export const loadMusicPlaybackSnapshot = (): MusicPlaybackSnapshot | null => {
+  if (!__musicPlaybackSnapshot) return null;
+  const audio = __musicAudioElement;
+  if (!audio) return __musicPlaybackSnapshot;
+
+  const liveProgress = Number.isFinite(audio.currentTime)
+    ? audio.currentTime
+    : __musicPlaybackSnapshot.progress;
+  const liveDuration = Number.isFinite(audio.duration) && audio.duration > 0
+    ? audio.duration
+    : __musicPlaybackSnapshot.duration;
+  __musicPlaybackSnapshot = {
+    ...__musicPlaybackSnapshot,
+    progress: liveProgress,
+    duration: liveDuration,
+    activeLyricIdx: findActiveLyricIndex(__musicPlaybackSnapshot.lyric, liveProgress),
+  };
+  return __musicPlaybackSnapshot;
+};
 const patchMusicPlaybackSnapshot = (patch: Partial<MusicPlaybackSnapshot>) => {
   if (!__musicPlaybackSnapshot) return;
   __musicPlaybackSnapshot = { ...__musicPlaybackSnapshot, ...patch };
@@ -185,6 +219,7 @@ interface PersistedMusicTogetherSession {
   startedAt: number;
   updatedAt: number;
   currentSongId?: number;
+  characterSelectedSongByCharId?: Record<string, { id: number; name: string; artists: string }>;
 }
 
 const normalizeMusicTogetherSession = (
@@ -210,8 +245,17 @@ const normalizeMusicTogetherSession = (
     || (Number.isFinite(expectedSongId) && expectedSongId !== current.id)
   ) return null;
   const inviterByCharId: Record<string, 'user' | 'character'> = {};
+  const characterSelectedSongByCharId: Record<string, { id: number; name: string; artists: string }> = {};
   for (const charId of charIds) {
     inviterByCharId[charId] = parsed?.inviterByCharId?.[charId] === 'character' ? 'character' : 'user';
+    const selected = parsed?.characterSelectedSongByCharId?.[charId];
+    if (selected && Number.isFinite(Number(selected.id)) && selected.name && selected.artists) {
+      characterSelectedSongByCharId[charId] = {
+        id: Number(selected.id),
+        name: String(selected.name),
+        artists: String(selected.artists),
+      };
+    }
   }
   return {
     charIds,
@@ -219,6 +263,7 @@ const normalizeMusicTogetherSession = (
     startedAt: Number.isFinite(startedAt) && startedAt > 0 ? startedAt : updatedAt,
     updatedAt,
     currentSongId: current.id,
+    characterSelectedSongByCharId,
   };
 };
 
@@ -551,12 +596,21 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // 歌词
   const [lyric, setLyric] = useState<LyricLine[]>([]);
   const [tlyric, setTlyric] = useState<LyricLine[]>([]);
-  const activeLyricIdx = useMemo(() => {
-    if (!lyric.length) return -1;
-    let i = 0;
-    for (let k = 0; k < lyric.length; k++) if (lyric[k].t <= progress) i = k; else break;
-    return i;
-  }, [lyric, progress]);
+  const activeLyricIdx = useMemo(
+    () => findActiveLyricIndex(lyric, progress),
+    [lyric, progress],
+  );
+
+  const syncProgressUi = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const nextProgress = Number.isFinite(audio.currentTime) ? audio.currentTime : 0;
+    const nextDuration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+    setProgress(previous => previous === nextProgress ? previous : nextProgress);
+    if (nextDuration > 0) {
+      setDuration(previous => previous === nextDuration ? previous : nextDuration);
+    }
+  }, []);
 
   // toast 转发
   const toastHandlerRef = useRef<(msg: string, type?: 'info' | 'success' | 'error') => void>(() => {});
@@ -655,6 +709,9 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [listeningTogetherInviterByCharId, setListeningTogetherInviterByCharId] = useState<Record<string, 'user' | 'character'>>(
     () => initialTogetherSession?.inviterByCharId || {},
   );
+  const [characterSelectedSongByCharId, setCharacterSelectedSongByCharId] = useState<
+    Record<string, { id: number; name: string; artists: string }>
+  >(() => initialTogetherSession?.characterSelectedSongByCharId || {});
   const [listeningTogetherStartedAt, setListeningTogetherStartedAt] = useState<number | null>(
     () => initialTogetherSession?.startedAt || null,
   );
@@ -680,6 +737,12 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setListeningTogetherInviterByCharId(prev => prev[charId] === inviter ? prev : { ...prev, [charId]: inviter });
   }, []);
   const removeListeningPartner = useCallback((charId: string) => {
+    setCharacterSelectedSongByCharId(prev => {
+      if (!(charId in prev)) return prev;
+      const next = { ...prev };
+      delete next[charId];
+      return next;
+    });
     setListeningTogetherInviterByCharId(prev => {
       if (!(charId in prev)) return prev;
       const next = { ...prev };
@@ -704,6 +767,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
   const clearListeningPartners = useCallback(() => {
     setListeningTogetherInviterByCharId({});
+    setCharacterSelectedSongByCharId({});
     setListeningTogetherStartedAt(null);
     setListeningTogetherChangeCount(0);
     setListeningTogetherPreviousSong(null);
@@ -726,9 +790,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         startedAt: listeningTogetherStartedAt,
         updatedAt: Date.now(),
         currentSongId: current?.id,
+        characterSelectedSongByCharId,
       } satisfies PersistedMusicTogetherSession));
     } catch {}
-  }, [current?.id, listeningTogetherWith, listeningTogetherInviterByCharId, listeningTogetherStartedAt]);
+  }, [characterSelectedSongByCharId, current?.id, listeningTogetherWith, listeningTogetherInviterByCharId, listeningTogetherStartedAt]);
 
   useEffect(() => {
     const inviterByCharId: Record<string, 'user' | 'character'> = {};
@@ -742,11 +807,13 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           startedAt: listeningTogetherStartedAt,
           updatedAt: Date.now(),
           currentSongId: current.id,
+          characterSelectedSongByCharId,
         } satisfies PersistedMusicTogetherSession
       : null;
     saveState(queue, idx, playMode, togetherSession);
   }, [
     current,
+    characterSelectedSongByCharId,
     idx,
     listeningTogetherInviterByCharId,
     listeningTogetherStartedAt,
@@ -860,12 +927,20 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           charIds: [...wasListening],
           at: Date.now(),
         });
-        if (characterChange && wasListening.includes(characterChange.charId)) {
+        if (characterChange && current && wasListening.includes(characterChange.charId)) {
+          setCharacterSelectedSongByCharId({
+            [characterChange.charId]: {
+              id: current.id,
+              name: current.name,
+              artists: current.artists,
+            },
+          });
           // The role already receives a hidden action receipt. Start a fresh
           // baseline so its own switch is not reported as a later user switch.
           setListeningTogetherChangeCount(0);
           setListeningTogetherPreviousSong(null);
         } else {
+          setCharacterSelectedSongByCharId({});
           setListeningTogetherChangeCount(prev => prev + 1);
           setListeningTogetherPreviousSong({
             id: previousSong.id,
@@ -891,11 +966,20 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     a.preload = 'metadata';
     // 注意: 不要设置 crossOrigin — NetEase CDN 没有 CORS 头，会变成静默加载失败
     audioRef.current = a;
+    __musicAudioElement = a;
 
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
-    const onTime = () => setProgress(a.currentTime);
+    const onTime = () => {
+      if (document.visibilityState !== 'visible' || __musicProgressSubscriberCount === 0) return;
+      setProgress(a.currentTime);
+    };
     const onMeta = () => setDuration(a.duration || 0);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && __musicProgressSubscriberCount > 0) {
+        syncProgressUi();
+      }
+    };
     // 播放出错 → 清掉 playing 状态 + 清掉"一起听"伙伴（防止 UI 卡在残留状态）
     const onErr = () => {
       setPlaying(false);
@@ -911,6 +995,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     a.addEventListener('loadedmetadata', onMeta);
     a.addEventListener('error', onErr);
     a.addEventListener('ended', onEnd);
+    document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
       a.removeEventListener('play', onPlay);
@@ -919,10 +1004,12 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       a.removeEventListener('loadedmetadata', onMeta);
       a.removeEventListener('error', onErr);
       a.removeEventListener('ended', onEnd);
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (__musicAudioElement === a) __musicAudioElement = null;
       try { a.pause(); a.src = ''; } catch {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [syncProgressUi]);
 
   // 播放单曲
   const playSong = useCallback(async (song: Song, opts: { alsoSetQueue?: boolean; replaceQueue?: Song[]; startIdx?: number } = {}) => {
@@ -1130,7 +1217,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const seek = useCallback((pct: number) => {
     const a = audioRef.current; if (!a || !duration) return;
     a.currentTime = Math.max(0, Math.min(duration, duration * pct));
-  }, [duration]);
+    if (document.visibilityState === 'visible' && __musicProgressSubscriberCount > 0) {
+      syncProgressUi();
+    }
+  }, [duration, syncProgressUi]);
 
   // Media Session handlers (锁屏播放/暂停/上下首)
   useEffect(() => {
@@ -1182,16 +1272,24 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       listeningTogetherStartedAt,
       listeningTogetherChangeCount,
       listeningTogetherPreviousSong,
+      characterSelectedSongByCharId,
       cfg,
       recentTrackChange,
     };
-  }, [current, queue, idx, playing, progress, duration, lyric, activeLyricIdx, listeningTogetherWith, listeningTogetherInviterByCharId, listeningTogetherStartedAt, listeningTogetherChangeCount, listeningTogetherPreviousSong, cfg, recentTrackChange]);
+  }, [current, queue, idx, playing, progress, duration, lyric, activeLyricIdx, listeningTogetherWith, listeningTogetherInviterByCharId, listeningTogetherStartedAt, listeningTogetherChangeCount, listeningTogetherPreviousSong, characterSelectedSongByCharId, cfg, recentTrackChange]);
 
   useLayoutEffect(() => {
     return () => {
       __musicPlaybackSnapshot = null;
     };
   }, []);
+
+  useLayoutEffect(() => {
+    __syncMusicProgressUi = syncProgressUi;
+    return () => {
+      if (__syncMusicProgressUi === syncProgressUi) __syncMusicProgressUi = null;
+    };
+  }, [syncProgressUi]);
 
   // 把整组 musicHooks 写到模块级 slot — useChatAI 和 instant push activeMsgRuntime 都从这里取.
   // current / addListeningPartner 变化时刷新闭包, 保证读到的是最新 React state.
@@ -1227,11 +1325,28 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       removeListeningPartner(cid);
       },
       acknowledgeTogetherChanges,
+      resetTogetherForDataMigration: () => {
+        patchMusicPlaybackSnapshot({
+          listeningTogetherWith: [],
+          listeningTogetherInviterByCharId: {},
+          listeningTogetherStartedAt: null,
+          listeningTogetherChangeCount: 0,
+          listeningTogetherPreviousSong: null,
+          characterSelectedSongByCharId: {},
+        });
+        clearListeningPartners();
+      },
       nextSong: (cid: string) => {
         pendingCharacterTrackChangeRef.current = { charId: cid };
         const target = nextSong();
         if (!target || target.id === current?.id) {
           pendingCharacterTrackChangeRef.current = null;
+        }
+        if (target) {
+          const selected = { id: target.id, name: target.name, artists: target.artists };
+          const nextSelected = { [cid]: selected };
+          setCharacterSelectedSongByCharId(nextSelected);
+          patchMusicPlaybackSnapshot({ characterSelectedSongByCharId: nextSelected });
         }
         return target ? { songName: target.name, artists: target.artists } : null;
       },
@@ -1278,6 +1393,10 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (song.id === current?.id) {
             pendingCharacterTrackChangeRef.current = null;
           }
+          const selected = { id: song.id, name: song.name, artists: song.artists };
+          const nextSelected = { [cid]: selected };
+          setCharacterSelectedSongByCharId(nextSelected);
+          patchMusicPlaybackSnapshot({ characterSelectedSongByCharId: nextSelected });
           return { songName: picked.name, artists: picked.artists };
         } catch {
           pendingCharacterTrackChangeRef.current = null;
@@ -1430,6 +1549,13 @@ export const useMusic = (): MusicContextType => {
 
 export const useMusicProgress = (): MusicProgressContextType => {
   const ctx = useContext(MusicProgressContext);
+  useEffect(() => {
+    __musicProgressSubscriberCount += 1;
+    __syncMusicProgressUi?.();
+    return () => {
+      __musicProgressSubscriberCount = Math.max(0, __musicProgressSubscriberCount - 1);
+    };
+  }, []);
   if (!ctx) throw new Error('useMusicProgress must be used within MusicProvider');
   return ctx;
 };

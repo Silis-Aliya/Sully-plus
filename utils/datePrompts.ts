@@ -40,7 +40,7 @@ export const DATE_VOICE_GUIDE = `4. **语音情绪（跟立绘分开）**: \`[em
 
 /**
  * 注入 prompt 的当前时间，直接取真实系统时间（完整日期 + 星期 + 时分）。
- * 不要从 OSContext 的 virtualTime 取——那个名字唬人，实际也是每秒同步的真实
+ * 不要从 ClockContext 的 virtualTime 取——它是面向界面显示、按分钟同步的真实
  * 时间，但只有"星期 + 时:分"，缺日期，而且没必要让 prompt 构建依赖 React 状态。
  */
 const getRealTimeStr = (tz?: string): string => {

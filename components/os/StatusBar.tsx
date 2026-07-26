@@ -1,6 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
-import { useOS } from '../../context/OSContext';
+import { useAppearance, useSystemLogs } from '../../context/OSContext';
+import { useClock } from '../../context/ClockContext';
 import Modal from './Modal';
 import { isStatusBarHidden } from '../../utils/iosStandalone';
 
@@ -17,7 +18,9 @@ interface NavigatorWithBattery extends Navigator {
 }
 
 const StatusBar: React.FC = () => {
-  const { virtualTime, theme, systemLogs, clearLogs } = useOS();
+  const { theme } = useAppearance();
+  const { systemLogs, clearLogs } = useSystemLogs();
+  const virtualTime = useClock();
   const [batteryLevel, setBatteryLevel] = useState<number>(100);
   const [isCharging, setIsCharging] = useState<boolean>(false);
   const [showLogModal, setShowLogModal] = useState(false);

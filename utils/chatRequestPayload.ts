@@ -28,13 +28,13 @@ import { isPromptBuildSkipped, isSystemMessageMergeEnabled } from './devDebug';
 import { mergeSystemMessages } from './systemMessageMerge';
 import { injectWorldbookDepthEntries, resolveWorldbookEntries } from './worldbook';
 import { normalizeTranslationLangLabel } from './translationLang';
+import { shouldInjectMusicMigrationEnded } from './musicMigrationNotice';
 
 export interface UserListeningContext {
     songName: string;
     artists: string;
     lyricWindow: string[];
     activeIdx: number;
-    changeSummary?: string;
 }
 
 export interface BuildChatPayloadInput {
@@ -122,7 +122,7 @@ export function deriveListeningFromSnapshot(
     charId: string,
 ): { userListeningContext: UserListeningContext | null; isListeningTogether: boolean; musicCfg?: MusicCfg } {
     if (!snap) return { userListeningContext: null, isListeningTogether: false };
-    const { current, playing, lyric, activeLyricIdx, listeningTogetherWith, cfg, listeningTogetherChangeCount, listeningTogetherPreviousSong } = snap;
+    const { current, lyric, activeLyricIdx, listeningTogetherWith, cfg } = snap;
     const isListeningTogether = listeningTogetherWith.includes(charId);
     if (!isListeningTogether) {
         return { userListeningContext: null, isListeningTogether: false, musicCfg: cfg };
@@ -140,9 +140,6 @@ export function deriveListeningFromSnapshot(
                 artists: current.artists,
                 lyricWindow: window,
                 activeIdx,
-                changeSummary: listeningTogetherChangeCount > 0
-                    ? `从一起听开始后，用户切过 ${listeningTogetherChangeCount} 首歌；上一首是《${listeningTogetherPreviousSong?.name || '未知'}》— ${listeningTogetherPreviousSong?.artists || '未知'}，当前是《${current.name}》— ${current.artists}。`
-                    : undefined,
             };
         } else {
             // The song must remain visible during intros, pauses, and lyric-loading
@@ -152,9 +149,6 @@ export function deriveListeningFromSnapshot(
                 artists: current.artists,
                 lyricWindow: [],
                 activeIdx: -1,
-                changeSummary: listeningTogetherChangeCount > 0
-                    ? `从一起听开始后，用户切过 ${listeningTogetherChangeCount} 首歌；上一首是《${listeningTogetherPreviousSong?.name || '未知'}》— ${listeningTogetherPreviousSong?.artists || '未知'}，当前是《${current.name}》— ${current.artists}。`
-                    : undefined,
             };
         }
     }
@@ -428,12 +422,21 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         { role: 'system', content: volatileTail },
     ];
     if (isListeningTogether && userListeningContext?.songName) {
-        const changeLine = userListeningContext.changeSummary
-            ? `\n${userListeningContext.changeSummary}`
+        const selectedByCharacter = input.musicSnapshot?.characterSelectedSongByCharId?.[char.id];
+        const characterSelectionLine = selectedByCharacter?.id === input.musicSnapshot?.current?.id
+            ? `\n《${userListeningContext.songName}》是你上次主动切换或点播的。`
             : '';
         fullMessages.push({
             role: 'user',
-            content: `[系统状态（非用户发言）：你仍在和${userProfile?.name || '对方'}一起听。当前歌曲：《${userListeningContext.songName}》— ${userListeningContext.artists}。${changeLine}]`,
+            content: `[系统状态（非用户发言）：你仍在和${userProfile?.name || '对方'}一起听。当前歌曲：《${userListeningContext.songName}》— ${userListeningContext.artists}。${characterSelectionLine}]`,
+        });
+    }
+    if (shouldInjectMusicMigrationEnded(char.id, historyMsgs)) {
+        fullMessages.push({
+            role: 'system',
+            content: `[系统状态（非用户发言）：
+之前的一起听会话已因数据迁移结束，目前不在一起听模式。
+]`,
         });
     }
     if (bilingualActive) {

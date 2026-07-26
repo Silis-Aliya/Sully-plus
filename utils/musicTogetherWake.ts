@@ -131,6 +131,11 @@ export const MusicTogetherWake = {
     }
   },
 
+  clearAll() {
+    saveSchedules({});
+    detachListeners();
+  },
+
   resume() {
     if (Object.keys(loadSchedules()).length === 0) return;
     attachListeners();

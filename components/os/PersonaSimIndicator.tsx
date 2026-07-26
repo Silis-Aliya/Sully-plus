@@ -1,5 +1,5 @@
 import React from 'react';
-import { useOS } from '../../context/OSContext';
+import { useNavigation } from '../../context/OSContext';
 import { AppID } from '../../types';
 import { usePersonaSim, personaSimStore } from '../../utils/personaSimStore';
 import { Sparkle, CaretRight } from '@phosphor-icons/react';
@@ -7,7 +7,7 @@ import { Sparkle, CaretRight } from '@phosphor-icons/react';
 // 全局「人格模拟」生成指示条 —— 挂在 PhoneShell，随处可见，点击深链回到演出。
 const PersonaSimIndicator: React.FC = () => {
     const sim = usePersonaSim();
-    const { openApp } = useOS();
+    const { openApp } = useNavigation();
 
     if (sim.status !== 'loading' && sim.status !== 'ready') return null;
 

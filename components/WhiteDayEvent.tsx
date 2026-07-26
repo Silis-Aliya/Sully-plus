@@ -13,6 +13,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
+import { useClock } from '../context/ClockContext';
 import { DB } from '../utils/db';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
@@ -481,7 +482,8 @@ interface WhiteDaySessionProps {
 }
 
 export const WhiteDaySession: React.FC<WhiteDaySessionProps> = ({ charId, onClose }) => {
-    const { characters, activeCharacterId, apiConfig, userProfile, addToast, virtualTime, updateCharacter } = useOS();
+    const { characters, activeCharacterId, apiConfig, userProfile, addToast, updateCharacter } = useOS();
+    const virtualTime = useClock();
 
     const [selectedCharId, setSelectedCharId] = useState<string>(charId || activeCharacterId || '');
 

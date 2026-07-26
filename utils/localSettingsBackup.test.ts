@@ -127,11 +127,11 @@ describe('localSettingsBackup', () => {
         expect(snapshot).toEqual({ 'chat_translate_enabled_char-1': 'true' });
     });
 
-    it('backs up the complete music runtime and configuration state', () => {
+    it('backs up durable music state without the live together session', () => {
         expect(shouldBackupLocalStorageKey('sully_music_cfg_v1')).toBe(true);
         expect(shouldBackupLocalStorageKey('sully_music_state_v1')).toBe(true);
         expect(shouldBackupLocalStorageKey('sully_music_local_album_v1')).toBe(true);
-        expect(shouldBackupLocalStorageKey('music_together_wake_schedules_v1')).toBe(true);
+        expect(shouldBackupLocalStorageKey('music_together_wake_schedules_v1')).toBe(false);
 
         localStorage.setItem('sully_music_state_v1', JSON.stringify({
             queue: [{ id: 7, name: 'Track' }],
@@ -150,14 +150,11 @@ describe('localSettingsBackup', () => {
         expect(JSON.parse(snapshot?.sully_music_state_v1 || '{}')).toMatchObject({
             idx: 0,
             playMode: 'shuffle',
-            togetherSession: {
-                charIds: ['char-1'],
-                currentSongId: 7,
-            },
+            togetherSession: null,
         });
     });
 
-    it('round-trips together-listening wake schedules with portable music state', () => {
+    it('does not export together-listening wake schedules', () => {
         const schedule = {
             'char-1': {
                 charId: 'char-1',
@@ -168,13 +165,11 @@ describe('localSettingsBackup', () => {
         localStorage.setItem('music_together_wake_schedules_v1', JSON.stringify(schedule));
 
         const snapshot = exportLocalStorageSettings();
-        localStorage.clear();
-        importLocalStorageSettings(snapshot);
 
-        expect(JSON.parse(localStorage.getItem('music_together_wake_schedules_v1') || '{}')).toEqual(schedule);
+        expect(snapshot).not.toHaveProperty('music_together_wake_schedules_v1');
     });
 
-    it('stamps an actively listening-together snapshot at export time', () => {
+    it('strips together sessions from new and legacy imports', () => {
         localStorage.setItem('sully_music_state_v1', JSON.stringify({
             queue: [{ id: 7 }],
             idx: 0,
@@ -187,13 +182,22 @@ describe('localSettingsBackup', () => {
                 currentSongId: 7,
             },
         }));
-        sessionStorage.setItem('sully.music.together.session', JSON.stringify({ charIds: ['char-1'] }));
-
-        const before = Date.now();
         const snapshot = exportLocalStorageSettings();
         const exported = JSON.parse(snapshot?.sully_music_state_v1 || '{}');
+        expect(exported.togetherSession).toBeNull();
 
-        expect(exported.togetherSession.updatedAt).toBeGreaterThanOrEqual(before);
-        expect(JSON.parse(localStorage.getItem('sully_music_state_v1') || '{}').togetherSession.updatedAt).toBe(100);
+        importLocalStorageSettings({
+            sully_music_state_v1: JSON.stringify({
+                queue: [{ id: 8 }],
+                idx: 0,
+                playMode: 'single',
+                togetherSession: { charIds: ['legacy-char'], currentSongId: 8 },
+            }),
+        });
+        expect(JSON.parse(localStorage.getItem('sully_music_state_v1') || '{}')).toMatchObject({
+            idx: 0,
+            playMode: 'single',
+            togetherSession: null,
+        });
     });
 });

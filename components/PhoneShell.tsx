@@ -2,7 +2,15 @@
 
 
 import React, { useState, useEffect, useMemo, lazy, Suspense } from 'react';
-import { IMPORT_IN_PROGRESS_KEY, useOS } from '../context/OSContext';
+import {
+  IMPORT_IN_PROGRESS_KEY,
+  useAlerts,
+  useAppearance,
+  useCharacterData,
+  useMessageActivity,
+  useNavigation,
+} from '../context/OSContext';
+import { useClock } from '../context/ClockContext';
 import StatusBar from './os/StatusBar';
 import Launcher from '../apps/Launcher';
 
@@ -478,8 +486,70 @@ const AppLoadingFallback: React.FC<{ onReturn?: () => void }> = ({ onReturn }) =
   );
 };
 
+const AppViewport = React.memo(() => {
+  const { activeApp, closeApp } = useNavigation();
+  const { activeCharacterId } = useCharacterData();
+  const apps: Partial<Record<AppID, React.ReactNode>> = {
+    [AppID.Settings]: <Settings />, [AppID.Character]: <Character />, [AppID.Chat]: <Chat />,
+    [AppID.GroupChat]: <GroupChat />, [AppID.ThemeMaker]: <ThemeMaker />, [AppID.Appearance]: <Appearance />,
+    [AppID.Gallery]: <Gallery />, [AppID.Date]: <DateApp />, [AppID.User]: <UserApp />,
+    [AppID.Journal]: <JournalApp />, [AppID.Schedule]: <ScheduleApp />, [AppID.Room]: <RoomApp />,
+    [AppID.CheckPhone]: <CheckPhone />, [AppID.Social]: <SocialApp />, [AppID.Study]: <StudyApp />,
+    [AppID.FAQ]: <FAQApp />, [AppID.Game]: <GameApp />, [AppID.Worldbook]: <WorldbookApp />,
+    [AppID.Novel]: <NovelApp />, [AppID.Bank]: <BankApp />, [AppID.XhsStock]: <XhsStockApp />,
+    [AppID.XhsFreeRoam]: <XhsFreeRoamApp />, [AppID.Browser]: <BrowserApp />,
+    [AppID.Songwriting]: <SongwritingApp />, [AppID.Music]: <MusicApp />, [AppID.Call]: <CallApp />,
+    [AppID.VoiceDesigner]: <VoiceDesignerApp />, [AppID.Guidebook]: <GuidebookApp />,
+    [AppID.LifeSim]: <LifeSimApp />, [AppID.MemoryPalace]: <MemoryPalaceApp />,
+    [AppID.Handbook]: <HandbookApp />, [AppID.QQBridge]: <QQBridge />, [AppID.HotNews]: <HotNewsApp />,
+    [AppID.SpecialMoments]: <SpecialMomentsApp />, [AppID.VRWorld]: <VRWorldApp />,
+    [AppID.Workbench]: <WorkbenchApp />, [AppID.WorldHome]: <WorldHomeApp />,
+    [AppID.CharCreatorDev]: <CharCreatorDevApp />, [AppID.Launcher]: <Launcher />,
+  };
+  const app = apps[activeApp] || <Launcher />;
+
+  return (
+    <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>
+      <Suspense fallback={<AppLoadingFallback onReturn={closeApp} />}>
+        <div key={activeApp} className="w-full h-full" style={{ animation: 'appEnterFade 200ms ease-out both' }}>
+          <style>{`@keyframes appEnterFade{from{opacity:0}to{opacity:1}}`}</style>
+          {app}
+        </div>
+      </Suspense>
+    </AppErrorBoundary>
+  );
+});
+
+const GlobalAlerts = React.memo(() => {
+  const { toasts, errorDialog, dismissError } = useAlerts();
+  return (
+    <>
+      <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
+        {toasts.map(toast => (
+          <div key={toast.id} className="animate-fade-in bg-white/95 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl border border-black/5 flex items-center gap-3 max-w-[85%] ring-1 ring-white/20">
+            {toast.type === 'success' && <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />}
+            {toast.type === 'error' && <div className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />}
+            {toast.type === 'info' && <div className="w-2.5 h-2.5 rounded-full bg-primary shrink-0" />}
+            <span className="text-xs font-bold text-slate-800 truncate leading-none">{toast.message}</span>
+          </div>
+        ))}
+      </div>
+      <ErrorDialog
+        isOpen={!!errorDialog}
+        title={errorDialog?.title ?? ''}
+        details={errorDialog?.details ?? ''}
+        onClose={dismissError}
+      />
+    </>
+  );
+});
+
 const PhoneShell: React.FC = () => {
-  const { theme, isLocked, unlock, activeApp, closeApp, openApp, virtualTime, isDataLoaded, toasts, unreadMessages, characters, handleBack, suspendedCall, resumeCall, activeCharacterId, errorDialog, dismissError } = useOS();
+  const { theme } = useAppearance();
+  const { isLocked, unlock, activeApp, closeApp, openApp, handleBack, suspendedCall, resumeCall } = useNavigation();
+  const { isDataLoaded, characters } = useCharacterData();
+  const { unreadMessages } = useMessageActivity();
+  const virtualTime = useClock();
   const useIOSStandaloneLayout = isIOSStandaloneWebApp();
 
   // 顶部时钟/电量条是否隐藏（外观「隐藏顶部时间栏」开关 + 平台默认：iOS 全屏 PWA 系统已有状态栏，默认隐藏避免双显）。
@@ -798,51 +868,6 @@ const PhoneShell: React.FC = () => {
     );
   }
 
-  const renderApp = () => {
-    switch (activeApp) {
-      case AppID.Settings: return <Settings />;
-      case AppID.Character: return <Character />;
-      case AppID.Chat: return <Chat />;
-      case AppID.GroupChat: return <GroupChat />; 
-      case AppID.ThemeMaker: return <ThemeMaker />;
-      case AppID.Appearance: return <Appearance />;
-      case AppID.Gallery: return <Gallery />;
-      case AppID.Date: return <DateApp />; 
-      case AppID.User: return <UserApp />;
-      case AppID.Journal: return <JournalApp />; 
-      case AppID.Schedule: return <ScheduleApp />;
-      case AppID.Room: return <RoomApp />; 
-      case AppID.CheckPhone: return <CheckPhone />;
-      case AppID.Social: return <SocialApp />;
-      case AppID.Study: return <StudyApp />; 
-      case AppID.FAQ: return <FAQApp />; 
-      case AppID.Game: return <GameApp />; 
-      case AppID.Worldbook: return <WorldbookApp />;
-      case AppID.Novel: return <NovelApp />; 
-      case AppID.Bank: return <BankApp />;
-      case AppID.XhsStock: return <XhsStockApp />;
-      case AppID.XhsFreeRoam: return <XhsFreeRoamApp />;
-      case AppID.Browser: return <BrowserApp />;
-      case AppID.Songwriting: return <SongwritingApp />;
-      case AppID.Music: return <MusicApp />;
-      case AppID.Call: return <CallApp />;
-      case AppID.VoiceDesigner: return <VoiceDesignerApp />;
-      case AppID.Guidebook: return <GuidebookApp />;
-      case AppID.LifeSim: return <LifeSimApp />;
-      case AppID.MemoryPalace: return <MemoryPalaceApp />;
-      case AppID.Handbook: return <HandbookApp />;
-      case AppID.QQBridge: return <QQBridge />;
-      case AppID.HotNews: return <HotNewsApp />;
-      case AppID.SpecialMoments: return <SpecialMomentsApp />;
-      case AppID.VRWorld: return <VRWorldApp />;
-      case AppID.Workbench: return <WorkbenchApp />;
-      case AppID.WorldHome: return <WorldHomeApp />;
-      case AppID.CharCreatorDev: return <CharCreatorDevApp />;
-      case AppID.Launcher:
-      default: return <Launcher />;
-    }
-  };
-
   // 安全区策略（方案 B）：自理名单里的 App 已全屏铺底、自己给控件让位，外壳不再加 padding；
   // 其余尚未迁移、靠外壳兜底的 App，仍由外壳用单一来源变量 --safe-* 统一让出安全区，避免顶栏怼进状态栏。
   // 自理名单见 utils/safeAreaApps.ts（迁移一个 App = 把它加进名单 + 顶栏用 --chrome-top 自己让位）。
@@ -882,19 +907,14 @@ const PhoneShell: React.FC = () => {
       >
           {/* App Container */}
           <div className="flex-1 relative overflow-hidden" style={{ contain: useIOSStandaloneLayout ? undefined : 'layout style paint' }}>
-            <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>
-              <Suspense fallback={<AppLoadingFallback onReturn={closeApp} />}>
+            <div className="w-full h-full">
                 {/* 统一「淡入」过渡：每次切换 App 时 key 变化 → 重新挂载并淡入，
                     让所有 App 都像个人档案那样「渐变进去」，而非瞬间咚一下。
                     关键：只动 opacity、不做 scale/translate —— 否则会把整棵（常含大量头像图片的）
                     App 子树栅格化进 transform 图层，角色列表类 App 首帧会卡顿一下（停顿一秒）。
                     时长也压短，进重 App 时不至于多等。 */}
-                <div key={activeApp} className="w-full h-full" style={{ animation: 'appEnterFade 200ms ease-out both' }}>
-                  <style>{`@keyframes appEnterFade{from{opacity:0}to{opacity:1}}`}</style>
-                  {renderApp()}
-                </div>
-              </Suspense>
-            </AppErrorBoundary>
+                <AppViewport />
+            </div>
           </div>
 
           {/* Overlays: Status Bar (Top) —— 常驻渲染：时钟/电量条由开关+平台默认决定显隐（StatusBar 内部 isStatusBarHidden），
@@ -923,26 +943,10 @@ const PhoneShell: React.FC = () => {
           <DreamSimIndicator />
 
           {/* Overlays: Toasts (Top) */}
-          <div className="absolute top-12 left-0 w-full flex flex-col items-center gap-2 pointer-events-none z-[60]">
-              {toasts.map(toast => (
-                 <div key={toast.id} className="animate-fade-in bg-white/95 backdrop-blur-xl px-4 py-3 rounded-2xl shadow-xl border border-black/5 flex items-center gap-3 max-w-[85%] ring-1 ring-white/20">
-                     {toast.type === 'success' && <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0"></div>}
-                     {toast.type === 'error' && <div className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0"></div>}
-                     {toast.type === 'info' && <div className="w-2.5 h-2.5 rounded-full bg-primary shrink-0"></div>}
-                     <span className="text-xs font-bold text-slate-800 truncate leading-none">{toast.message}</span>
-                 </div>
-              ))}
-           </div>
+          <GlobalAlerts />
        </div>
 
        {/* Global error dialog (长报错走它, 替代单行 toast) */}
-       <ErrorDialog
-         isOpen={!!errorDialog}
-         title={errorDialog?.title ?? ''}
-         details={errorDialog?.details ?? ''}
-         onClose={dismissError}
-       />
-
        {/* First-time disclaimer popup */}
        {showDisclaimer && <DisclaimerPopup onAccept={handleAcceptDisclaimer} />}
 

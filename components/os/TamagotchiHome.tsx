@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
-import { useOS } from '../../context/OSContext';
+import {
+    useCharacterData,
+    useAlerts,
+    useMessageActivity,
+    useNavigation,
+    useSystemConfig,
+} from '../../context/OSContext';
+import { useClock } from '../../context/ClockContext';
 import { INSTALLED_APPS } from '../../constants';
 import { createPortal } from 'react-dom';
 import { AppID, CharacterProfile, RoomItem, DailySchedule, ScheduleSlot } from '../../types';
@@ -852,7 +859,12 @@ const findCurrentSlot = (schedule: DailySchedule | null): { cur: ScheduleSlot | 
 
 // ─── 主组件 ───────────────────────────────────────────────────
 const TamagotchiHome: React.FC = () => {
-    const { openApp, characters, activeCharacterId, setActiveCharacterId, virtualTime, unreadMessages, isDataLoaded, lastMsgTimestamp, addToast, userProfile, apiConfig } = useOS();
+    const { openApp } = useNavigation();
+    const { characters, activeCharacterId, setActiveCharacterId, isDataLoaded, userProfile } = useCharacterData();
+    const { addToast } = useAlerts();
+    const { unreadMessages, lastMsgTimestamp } = useMessageActivity();
+    const { apiConfig } = useSystemConfig();
+    const virtualTime = useClock();
     const localDateKey = useLocalDateKey();
     const char: CharacterProfile | null = useMemo(
         () => characters.find(c => c.id === activeCharacterId) || characters[0] || null,
@@ -863,7 +875,7 @@ const TamagotchiHome: React.FC = () => {
     const [drawerOpen, setDrawerOpen] = useState(false);
     // 今日日程（当前日程卡 + 心声兜底）：一天一份，进屏取一次
     const [schedule, setSchedule] = useState<DailySchedule | null>(null);
-    // 一句心声：localStorage 读取放进 state，避免 virtualTime 每秒 re-render 都同步读盘
+    // 一句心声：localStorage 读取放进 state，避免时钟刷新时同步读盘。
     const [heartLine, setHeartLine] = useState('');
     // 家具就地交互：走过去(nudge) + 念反应(say) + 观察旁白（seq 事件驱动，无常驻动画）
     const [nudge, setNudge] = useState<{ x: number; y: number; seq: number }>({ x: 48, y: 80, seq: 0 });

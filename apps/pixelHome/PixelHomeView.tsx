@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useOS } from '../../context/OSContext';
+import { useAlerts, useCharacterData, useSystemConfig } from '../../context/OSContext';
 import type { PixelHomeState, PixelHomeViewMode, PixelAsset, PlacedFurniture } from './types';
 import type { MemoryRoom } from '../../utils/memoryPalace/types';
 import { getOrCreateHomeState, PixelLayoutDB, PixelAssetDB } from './pixelHomeDb';
@@ -38,7 +38,9 @@ interface Props {
 }
 
 const PixelHomeView: React.FC<Props> = ({ charId, charName, charAvatar, userName, onBack }) => {
-  const { addToast, apiConfig, characters, userProfile, remoteVectorConfig } = useOS();
+  const { characters, userProfile } = useCharacterData();
+  const { addToast } = useAlerts();
+  const { apiConfig, remoteVectorConfig } = useSystemConfig();
   const char = characters.find(c => c.id === charId);
   const [viewMode, setViewMode] = useState<PixelHomeViewMode>('map');
   const [homeState, setHomeState] = useState<PixelHomeState | null>(null);

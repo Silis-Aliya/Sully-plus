@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useOS } from '../../context/OSContext';
+import { useCharacterData, useMessageActivity, useNavigation } from '../../context/OSContext';
+import { useClock } from '../../context/ClockContext';
 import { Icons, INSTALLED_APPS } from '../../constants';
 import { AppID, CharacterProfile } from '../../types';
 import { DB } from '../../utils/db';
@@ -192,7 +193,10 @@ const SectionLabel: React.FC<{ cn: string; en: string }> = ({ cn, en }) => (
 );
 
 const MobileGameHome: React.FC = () => {
-    const { openApp, characters, activeCharacterId, virtualTime, unreadMessages, isDataLoaded, lastMsgTimestamp } = useOS();
+    const { openApp } = useNavigation();
+    const { characters, activeCharacterId, isDataLoaded } = useCharacterData();
+    const { unreadMessages, lastMsgTimestamp } = useMessageActivity();
+    const virtualTime = useClock();
 
     const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(null);
     const [lastMessage, setLastMessage] = useState<string>('');

@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useOS } from '../context/OSContext';
+import {
+    useAppearance,
+    useAlerts,
+    useCharacterData,
+    useMessageActivity,
+    useNavigation,
+    useSystemConfig,
+} from '../context/OSContext';
 import { DB } from '../utils/db';
 import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
 import { processImage } from '../utils/file';
@@ -70,7 +77,20 @@ type InstantToolUiStatus = {
 };
 
 const Chat: React.FC = () => {
-    const { characters, activeCharacterId, setActiveCharacterId, updateCharacter, apiConfig, apiPresets, addApiPreset, closeApp, customThemes, removeCustomTheme, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, syncEmotionApiToAllCharacters, theme: osTheme, proactiveComposingChars, openDateWithChar } = useOS();
+    const {
+        characters, activeCharacterId, setActiveCharacterId, updateCharacter,
+        userProfile, groups, characterGroups,
+    } = useCharacterData();
+    const { closeApp, openDateWithChar } = useNavigation();
+    const { addToast, showError } = useAlerts();
+    const {
+        lastMsgTimestamp, clearUnread, unreadMessages, proactiveComposingChars,
+    } = useMessageActivity();
+    const { customThemes, removeCustomTheme, theme: osTheme } = useAppearance();
+    const {
+        apiConfig, apiPresets, addApiPreset, realtimeConfig,
+        memoryPalaceConfig, syncEmotionApiToAllCharacters,
+    } = useSystemConfig();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
     const localDateKey = useLocalDateKey();
 

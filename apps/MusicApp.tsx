@@ -205,9 +205,23 @@ const MusicApp: React.FC = () => {
 
   useEffect(() => {
     if (!listeningTogetherStartedAt) return;
-    setTogetherNow(Date.now());
-    const timer = window.setInterval(() => setTogetherNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
+    let timer: number | null = null;
+
+    const scheduleVisibleTick = () => {
+      if (timer != null) window.clearTimeout(timer);
+      timer = null;
+      if (document.visibilityState !== 'visible') return;
+      setTogetherNow(Date.now());
+      const delay = 1000 - (Date.now() % 1000);
+      timer = window.setTimeout(scheduleVisibleTick, Math.max(100, delay));
+    };
+
+    scheduleVisibleTick();
+    document.addEventListener('visibilitychange', scheduleVisibleTick);
+    return () => {
+      if (timer != null) window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', scheduleVisibleTick);
+    };
   }, [listeningTogetherStartedAt]);
 
   const toggleInviteTarget = useCallback((charId: string) => {

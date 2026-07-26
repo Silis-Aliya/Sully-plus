@@ -12,6 +12,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
+import { useClock } from '../context/ClockContext';
 import { DB } from '../utils/db';
 import { ContextBuilder } from '../utils/context';
 import { safeResponseJson } from '../utils/safeApi';
@@ -336,7 +337,8 @@ interface ValentineSessionProps {
 }
 
 export const ValentineSession: React.FC<ValentineSessionProps> = ({ charId, onClose }) => {
-    const { characters, activeCharacterId, apiConfig, userProfile, addToast, virtualTime, updateCharacter } = useOS();
+    const { characters, activeCharacterId, apiConfig, userProfile, addToast, updateCharacter } = useOS();
+    const virtualTime = useClock();
 
     // 角色选择
     const [selectedCharId, setSelectedCharId] = useState<string>(charId || activeCharacterId || '');

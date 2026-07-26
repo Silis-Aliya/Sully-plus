@@ -1,6 +1,6 @@
 ﻿
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { useOS } from '../context/OSContext';
+import { useAlerts, useBackup, useCharacterData, useNavigation, useSystemConfig } from '../context/OSContext';
 import { Capacitor } from '@capacitor/core';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
@@ -106,7 +106,7 @@ const SettingsSection: React.FC<{
  * 以 function-calling 注入，详见 docs/mcp-client.md。
  */
 const McpServersCard: React.FC<{ addToast: (msg: string, type?: any) => void }> = ({ addToast }) => {
-    const { characters, groups } = useOS();
+    const { characters, groups } = useCharacterData();
     const [servers, setServers] = useState<McpServerConfig[]>(() => loadMcpServers());
     const [expandedId, setExpandedId] = useState<string | null>(null);
     const [testingId, setTestingId] = useState<string | null>(null);
@@ -346,16 +346,20 @@ const McpServersCard: React.FC<{ addToast: (msg: string, type?: any) => void }> 
 
 const Settings: React.FC = () => {
   const {
-      apiConfig, updateApiConfig, closeApp, availableModels, setAvailableModels,
-      exportSystem, importSystem, addToast, showError, resetSystem,
+      apiConfig, updateApiConfig, availableModels, setAvailableModels,
       apiPresets, addApiPreset, removeApiPreset,
-      sysOperation, // Get progress state
       realtimeConfig, updateRealtimeConfig, // 实时感知配置
+  } = useSystemConfig();
+  const { closeApp } = useNavigation();
+  const { addToast, showError } = useAlerts();
+  const {
+      exportSystem, importSystem, resetSystem,
+      sysOperation,
       cloudBackupConfig, updateCloudBackupConfig,
       cloudBackupToWebDAV, cloudRestoreFromWebDAV, listCloudBackups,
       quickSyncUploadDelta, quickSyncPullDelta,
       dismissSysOperation,
-  } = useOS();
+  } = useBackup();
   
   const [localKey, setLocalKey] = useState(apiConfig.apiKey);
   const [localUrl, setLocalUrl] = useState(apiConfig.baseUrl);

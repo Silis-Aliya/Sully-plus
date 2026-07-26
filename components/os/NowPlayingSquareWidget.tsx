@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { Play, Pause, SkipBack, SkipForward } from '@phosphor-icons/react';
-import { isPaperWallpaper, useOS } from '../../context/OSContext';
+import { isPaperWallpaper, useAppearance, useNavigation } from '../../context/OSContext';
 import { useMusic, useMusicProgress } from '../../context/MusicContext';
 import { AppID } from '../../types';
 
@@ -21,7 +21,8 @@ const formatTime = (sec: number) => {
 };
 
 const NowPlayingSquareWidget: React.FC<{ contentColor: string }> = ({ contentColor }) => {
-  const { openApp, theme } = useOS();
+  const { openApp } = useNavigation();
+  const { theme } = useAppearance();
   const { current, playing, togglePlay, nextSong, prevSong } = useMusic();
   const { progress, duration } = useMusicProgress();
   const acnh = theme.skin === 'animalcrossing'; // 动森：奶油卡片 + 薄荷进度

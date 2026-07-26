@@ -2,7 +2,7 @@
 import React from 'react';
 import { AppConfig } from '../../types';
 import { Icons } from '../../constants';
-import { isPaperWallpaper, useOS } from '../../context/OSContext';
+import { isPaperWallpaper, useAppearance } from '../../context/OSContext';
 import { useBlobRefUrl } from '../../utils/blobRef';
 import { getAcnhIcon } from './acnhIcons';
 import { preloadApp } from './appPreload';
@@ -24,7 +24,7 @@ const NOOK_TILE_COLORS: Record<string, string> = {
 };
 
 const AppIcon: React.FC<AppIconProps> = React.memo(({ app, onClick, size = 'md', hideLabel = false, variant = 'default' }) => {
-  const { customIcons, theme } = useOS();
+  const { customIcons, theme } = useAppearance();
   const IconComponent = Icons[app.icon] || Icons.Settings;
   const customIconUrl = useBlobRefUrl(customIcons[app.id]);
   const isNook = theme.skin === 'animalcrossing';

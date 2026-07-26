@@ -1,5 +1,12 @@
 import React, { useMemo, useEffect, useLayoutEffect, useState, useRef, useCallback } from 'react';
-import { isPaperWallpaper, useOS } from '../context/OSContext';
+import {
+  isPaperWallpaper,
+  useAppearance,
+  useCharacterData,
+  useMessageActivity,
+  useNavigation,
+} from '../context/OSContext';
+import { useClock } from '../context/ClockContext';
 import { INSTALLED_APPS, DOCK_APPS } from '../constants';
 import { isDevDebugAvailable, subscribeDevDebugAvailability } from '../utils/devDebug';
 import AppIcon from '../components/os/AppIcon';
@@ -16,7 +23,8 @@ import { useLocalDateKey } from '../hooks/useLocalDateKey';
 
 // 1. Clock Component (Consumes virtualTime)
 const DesktopClock = React.memo(() => {
-    const { virtualTime, theme } = useOS();
+    const { theme } = useAppearance();
+    const virtualTime = useClock();
     const contentColor = theme.contentColor || '#ffffff';
     const paper = theme.skin !== 'animalcrossing' && theme.skin !== 'mobilegame' && theme.skin !== 'tamagotchi' && isPaperWallpaper(theme.wallpaper);
 
@@ -119,7 +127,7 @@ const CharacterWidget = React.memo(({
     contentColor: string,
     paper?: boolean,
 }) => {
-    const { theme } = useOS();
+    const { theme } = useAppearance();
     const acnh = theme.skin === 'animalcrossing'; // 动森彩蛋：会"说话"的村民卡
 
     // 动森：村民头像 + AC 对话气泡（显示最近消息，点开聊天）
@@ -303,7 +311,7 @@ const DesktopSquareImage = React.memo(({ image, contentColor, onClick, acnh = fa
     onClick: () => void,
     acnh?: boolean,
 }) => {
-    const { theme } = useOS();
+    const { theme } = useAppearance();
     const paper = theme.skin !== 'animalcrossing' && theme.skin !== 'mobilegame' && theme.skin !== 'tamagotchi' && isPaperWallpaper(theme.wallpaper);
     return (
         <div
@@ -480,7 +488,10 @@ let _lastPageIndex = 0;
 // --- Main Launcher ---
 
 const Launcher: React.FC = () => {
-  const { openApp, characters, activeCharacterId, theme, updateTheme, lastMsgTimestamp, isDataLoaded, unreadMessages, workbenchUnread } = useOS();
+  const { openApp } = useNavigation();
+  const { characters, activeCharacterId, isDataLoaded } = useCharacterData();
+  const { theme, updateTheme } = useAppearance();
+  const { lastMsgTimestamp, unreadMessages, workbenchUnread } = useMessageActivity();
   const localDateKey = useLocalDateKey();
 
   // Local state for widget data to prevent context trashing

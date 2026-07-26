@@ -8,7 +8,7 @@
  */
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Pause, SkipForward, SkipBack, CaretDown, X } from '@phosphor-icons/react';
-import { useOS } from '../../context/OSContext';
+import { useNavigation } from '../../context/OSContext';
 import { useMusic, useMusicProgress } from '../../context/MusicContext';
 import { AppID } from '../../types';
 import { isIOSStandaloneWebApp, readSafeAreaInsets } from '../../utils/iosStandalone';
@@ -94,7 +94,7 @@ const ExpandedProgressBar: React.FC = () => {
 };
 
 const GlobalMiniPlayer: React.FC = () => {
-  const { activeApp, openApp } = useOS();
+  const { activeApp, openApp } = useNavigation();
   const { current, playing, togglePlay, nextSong, prevSong } = useMusic();
 
   const [expanded, setExpanded] = useState(false); // 默认折叠

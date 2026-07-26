@@ -149,15 +149,15 @@ export function buildMusicWakeHint(input: {
     song?: MusicTrackInfo | null;
     togetherDuration: string;
     progress: string;
-    changeSummary?: string;
+    selectedByCharacter?: boolean;
     pickableSongs?: string;
 }): string {
     const songLine = input.song
         ? `当前歌曲：《${input.song.name}》— ${input.song.artists}`
         : '当前歌曲：暂无';
-    const changeLine = input.changeSummary?.trim()
-        ? input.changeSummary.trim()
-        : '暂无';
+    const selectionLine = input.selectedByCharacter && input.song
+        ? `\n《${input.song.name}》是你上次主动切换或点播的。`
+        : '';
     const pickableSongs = input.pickableSongs?.trim()
         ? input.pickableSongs.trim()
         : '';
@@ -166,8 +166,7 @@ export function buildMusicWakeHint(input: {
 
 ${songLine}
 已一起听：${input.togetherDuration}
-播放进度：${input.progress}
-上次唤醒后的变化：${changeLine}
+播放进度：${input.progress}${selectionLine}
 
 结合你的性格、与${input.userName}的关系、歌曲氛围和当前心情，自然决定此刻要做什么。
 

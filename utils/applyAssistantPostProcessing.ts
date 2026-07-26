@@ -248,7 +248,8 @@ export interface PostProcessMusicHooks {
     joinListeningTogether: (charId: string, inviter?: 'user' | 'character') => void;
     leaveListeningTogether?: (charId: string) => void;
     acknowledgeTogetherChanges?: (count: number) => void;
-    nextSong?: () => { songName: string; artists: string } | null | void;
+    resetTogetherForDataMigration?: () => void;
+    nextSong?: (charId: string) => { songName: string; artists: string } | null | void;
     setPlayMode?: (mode: 'loop' | 'shuffle' | 'single') => void;
     pickSong?: (index: number, charId: string) => Promise<{ songName: string; artists: string } | null>;
     playSharedSong?: (song: any) => Promise<void>;

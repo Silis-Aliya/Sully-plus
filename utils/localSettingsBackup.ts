@@ -69,7 +69,6 @@ export const BACKUP_LOCAL_STORAGE_EXACT_KEYS: readonly string[] = [
     'sully_music_cfg_v1',
     'sully_music_state_v1',
     'sully_music_local_album_v1',
-    'music_together_wake_schedules_v1',
 ] as const;
 
 export const LOCAL_SETTINGS_IMPORTED_EVENT = 'sully-local-settings-imported';
@@ -87,8 +86,17 @@ const BACKUP_LOCAL_STORAGE_PREFIXES: readonly string[] = [
 const MAX_VALUE_BYTES = 512 * 1024;
 const MAX_MUSIC_VALUE_BYTES = 5 * 1024 * 1024;
 const MUSIC_STATE_KEY = 'sully_music_state_v1';
-const MUSIC_TOGETHER_SESSION_KEY = 'sully.music.together.session';
 const MUSIC_BACKUP_KEYS = new Set(['sully_music_cfg_v1', MUSIC_STATE_KEY, 'sully_music_local_album_v1']);
+
+const stripMusicTogetherSession = (value: string): string => {
+    try {
+        const state = JSON.parse(value);
+        if (!state || typeof state !== 'object') return value;
+        return JSON.stringify({ ...state, togetherSession: null });
+    } catch {
+        return value;
+    }
+};
 
 const maxValueBytesForKey = (key: string): number =>
     MUSIC_BACKUP_KEYS.has(key) ? MAX_MUSIC_VALUE_BYTES : MAX_VALUE_BYTES;
@@ -114,21 +122,7 @@ export const exportLocalStorageSettings = (): Record<string, string> | undefined
             if (!key || !shouldBackupLocalStorageKey(key)) continue;
             let value = localStorage.getItem(key);
             if (typeof value !== 'string') continue;
-            if (
-                key === MUSIC_STATE_KEY
-                && typeof sessionStorage !== 'undefined'
-                && sessionStorage.getItem(MUSIC_TOGETHER_SESSION_KEY)
-            ) {
-                try {
-                    const state = JSON.parse(value);
-                    if (state?.togetherSession) {
-                        state.togetherSession.updatedAt = Date.now();
-                        value = JSON.stringify(state);
-                    }
-                } catch {
-                    /* malformed music state is left untouched for normal import validation */
-                }
-            }
+            if (key === MUSIC_STATE_KEY) value = stripMusicTogetherSession(value);
             if (byteLength(value) > maxValueBytesForKey(key)) continue;
             out[key] = value;
         }
@@ -149,7 +143,7 @@ export const importLocalStorageSettings = (data: Record<string, string> | null |
             if (!shouldBackupLocalStorageKey(key)) continue;
             if (typeof value !== 'string') continue;
             if (byteLength(value) > maxValueBytesForKey(key)) continue;
-            localStorage.setItem(key, value);
+            localStorage.setItem(key, key === MUSIC_STATE_KEY ? stripMusicTogetherSession(value) : value);
             importedKeys.push(key);
         }
         if (importedKeys.length > 0 && typeof window !== 'undefined') {

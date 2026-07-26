@@ -594,11 +594,6 @@ export const ContextBuilder = {
             }
 
             // 歌单命中提示（按 songName 粗匹，避免在 context.ts 里引 MusicContext）
-            const musicChangeSummary = (userListening as any).changeSummary;
-            if (typeof musicChangeSummary === 'string' && musicChangeSummary.trim()) {
-                lines.push(musicChangeSummary.trim());
-            }
-
             const profile = char.musicProfile;
             if (profile) {
                 const hitPl = profile.playlists.find(pl =>
