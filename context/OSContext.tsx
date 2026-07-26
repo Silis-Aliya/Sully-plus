@@ -2168,6 +2168,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   method: 'POST', headers,
                   body: JSON.stringify(reqBody)
               }, 2, 0, { appName: '消息', charId, charName: char.name, purpose: '主动消息' });
+              if (reason?.kind === 'music-wake') {
+                  loadMusicHooks()?.acknowledgeTogetherChanges?.(
+                      musicSnapshotForHint?.listeningTogetherChangeCount || 0,
+                  );
+              }
 
               // 5. Process & save response
               if (reason?.kind === 'music-track-change'

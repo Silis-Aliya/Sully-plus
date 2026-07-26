@@ -247,6 +247,7 @@ export interface PostProcessMusicHooks {
     isListeningTogether?: (charId: string) => boolean;
     joinListeningTogether: (charId: string, inviter?: 'user' | 'character') => void;
     leaveListeningTogether?: (charId: string) => void;
+    acknowledgeTogetherChanges?: (count: number) => void;
     nextSong?: () => { songName: string; artists: string } | null | void;
     setPlayMode?: (mode: 'loop' | 'shuffle' | 'single') => void;
     pickSong?: (index: number, charId: string) => Promise<{ songName: string; artists: string } | null>;
@@ -255,7 +256,7 @@ export interface PostProcessMusicHooks {
         charId: string,
         song: any,
         target?: any,
-    ) => Promise<{ playlistTitle: string; created: boolean } | null>;
+    ) => Promise<{ playlistTitle: string; created: boolean; alreadyExists?: boolean } | null>;
 }
 
 export interface PostProcessHooks {

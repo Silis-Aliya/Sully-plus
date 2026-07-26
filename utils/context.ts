@@ -586,7 +586,7 @@ export const ContextBuilder = {
                 }
             }
             if (userListening.lyricWindow.length > 0) {
-                lines.push(`当前播放到（>> 标记正在播放这一行）:`);
+                lines.push(`当前播放到（>> 标记正在播放这一行）：`);
                 userListening.lyricWindow.forEach((l, i) => {
                     if (i === userListening.activeIdx) lines.push(`  >> ${l}`);
                     else lines.push(`  … ${l}`);
@@ -607,7 +607,7 @@ export const ContextBuilder = {
                     lines.push(`（这首歌也在你的歌单《${hitPl.title}》里）`);
                 }
             }
-            lines.push(`（你只是自然地知道 ${userName || '对方'} 此刻在听这首——像共处一室时隐约听见的背景音。不用每次都评论歌名、歌词或风格，多数时候安静地陪着就好；只有真的被某句打动、或对方主动聊起时，再自然地接上。）`);
+            lines.push(`（你自然地知道 ${userName || '对方'} 此刻正在听什么，也能感知播放器切歌后的当前歌曲。这些是你们正在共同经历的实时状态，不需要每次主动报出歌名、歌词或风格。多数时候可以自然地继续对话或安静陪伴；当对方问起歌曲、聊到歌词，或你确实被某句触动时，再结合当前歌曲自然回应。）`);
             lines.push('');
         }
 

@@ -419,14 +419,11 @@ interface MusicContextType {
 
   // 播放状态
   playing: boolean;
-  progress: number;
-  duration: number;
   loadingSong: boolean;
 
   // 歌词
   lyric: LyricLine[];
   tlyric: LyricLine[];
-  activeLyricIdx: number;
 
   // 用户
   profile: NeteaseProfile | null;
@@ -471,6 +468,12 @@ interface MusicContextType {
 }
 
 const MusicContext = createContext<MusicContextType | undefined>(undefined);
+interface MusicProgressContextType {
+  progress: number;
+  duration: number;
+  activeLyricIdx: number;
+}
+const MusicProgressContext = createContext<MusicProgressContextType | undefined>(undefined);
 
 /* ───────────── Provider ───────────── */
 export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -828,6 +831,19 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const previousSongRef = useRef<Song | null>(null);
   const [listeningTogetherChangeCount, setListeningTogetherChangeCount] = useState(0);
   const [listeningTogetherPreviousSong, setListeningTogetherPreviousSong] = useState<{ id: number; name: string; artists: string } | null>(null);
+  const acknowledgeTogetherChanges = useCallback((count: number) => {
+    if (!Number.isFinite(count) || count <= 0) return;
+    const snapshot = loadMusicPlaybackSnapshot();
+    const next = Math.max(0, (snapshot?.listeningTogetherChangeCount || 0) - Math.floor(count));
+    setListeningTogetherChangeCount(next);
+    if (next === 0) setListeningTogetherPreviousSong(null);
+    patchMusicPlaybackSnapshot({
+      listeningTogetherChangeCount: next,
+      listeningTogetherPreviousSong: next === 0
+        ? null
+        : snapshot?.listeningTogetherPreviousSong || null,
+    });
+  }, []);
   const listeningTogetherRef = useRef(listeningTogetherWith);
   listeningTogetherRef.current = listeningTogetherWith;
   const pendingCharacterTrackChangeRef = useRef<{ charId: string } | null>(null);
@@ -1210,6 +1226,7 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       leaveListeningTogether: (cid: string) => {
       removeListeningPartner(cid);
       },
+      acknowledgeTogetherChanges,
       nextSong: (cid: string) => {
         pendingCharacterTrackChangeRef.current = { charId: cid };
         const target = nextSong();
@@ -1296,6 +1313,14 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           const now = Date.now();
           let playlists = profile.playlists.slice();
+          const existingPlaylist = playlists.find(pl => pl.songs.some(existing => existing.id === song.id));
+          if (existingPlaylist) {
+            return {
+              playlistTitle: existingPlaylist.title,
+              created: false,
+              alreadyExists: true,
+            };
+          }
           let chosenIdx = -1;
           let created = false;
 
@@ -1357,13 +1382,13 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
       },
     };
-  }, [current, addListeningPartner, removeListeningPartner, listeningTogetherWith, nextSong, playSong]);
+  }, [current, addListeningPartner, removeListeningPartner, acknowledgeTogetherChanges, listeningTogetherWith, nextSong, playSong]);
 
-  const value: MusicContextType = {
+  const value = useMemo<MusicContextType>(() => ({
     cfg, setCfg,
     queue, setQueue, idx, current,
-    playing, progress, duration, loadingSong,
-    lyric, tlyric, activeLyricIdx,
+    playing, loadingSong,
+    lyric, tlyric,
     profile, refreshProfile,
     playSong, togglePlay, nextSong, prevSong, seek,
     playMode, setPlayMode,
@@ -1373,13 +1398,38 @@ export const MusicProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     toast, setToastHandler,
     localAlbumSongs, addLocalSong, removeLocalSong,
     regeneratingId, regeneratingStatus, markRegenerating,
-  };
+  }), [
+    cfg, setCfg, queue, idx, current, playing, loadingSong, lyric, tlyric,
+    profile, refreshProfile, playSong, togglePlay, nextSong, prevSong, seek,
+    playMode, liked, toggleLike, listeningTogetherWith,
+    listeningTogetherInviterByCharId, listeningTogetherStartedAt,
+    addListeningPartner, removeListeningPartner, clearListeningPartners,
+    recentTrackChange, toast, setToastHandler, localAlbumSongs, addLocalSong,
+    removeLocalSong, regeneratingId, regeneratingStatus, markRegenerating,
+  ]);
+  const progressValue = useMemo<MusicProgressContextType>(() => ({
+    progress,
+    duration,
+    activeLyricIdx,
+  }), [progress, duration, activeLyricIdx]);
 
-  return <MusicContext.Provider value={value}>{children}</MusicContext.Provider>;
+  return (
+    <MusicContext.Provider value={value}>
+      <MusicProgressContext.Provider value={progressValue}>
+        {children}
+      </MusicProgressContext.Provider>
+    </MusicContext.Provider>
+  );
 };
 
 export const useMusic = (): MusicContextType => {
   const ctx = useContext(MusicContext);
   if (!ctx) throw new Error('useMusic must be used within MusicProvider');
+  return ctx;
+};
+
+export const useMusicProgress = (): MusicProgressContextType => {
+  const ctx = useContext(MusicProgressContext);
+  if (!ctx) throw new Error('useMusicProgress must be used within MusicProvider');
   return ctx;
 };

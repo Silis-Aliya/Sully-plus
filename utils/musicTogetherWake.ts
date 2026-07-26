@@ -7,7 +7,6 @@ export interface MusicTogetherWakeSchedule {
 type ScheduleMap = Record<string, MusicTogetherWakeSchedule>;
 
 const STORAGE_KEY = 'music_together_wake_schedules_v1';
-const MAIN_THREAD_CHECK_INTERVAL = 20_000;
 const MAX_OVERDUE_MS = 10 * 60 * 1000;
 
 function loadSchedules(): ScheduleMap {
@@ -30,7 +29,6 @@ function saveSchedules(schedules: ScheduleMap) {
 }
 
 let triggerCallback: ((charId: string, schedule: MusicTogetherWakeSchedule) => void | Promise<void>) | null = null;
-let mainThreadTimer: ReturnType<typeof setInterval> | null = null;
 let preciseTimer: ReturnType<typeof setTimeout> | null = null;
 let visibilityListener: (() => void) | null = null;
 let focusListener: (() => void) | null = null;
@@ -79,24 +77,12 @@ function handleFocus() {
   checkOverdueSchedules();
 }
 
-function startMainThreadTimer() {
-  if (mainThreadTimer) return;
-  mainThreadTimer = setInterval(checkOverdueSchedules, MAIN_THREAD_CHECK_INTERVAL);
-}
-
-function stopMainThreadTimer() {
-  if (!mainThreadTimer) return;
-  clearInterval(mainThreadTimer);
-  mainThreadTimer = null;
-}
-
 function attachListeners() {
   detachListeners();
   visibilityListener = handleVisibility;
   focusListener = handleFocus;
   document.addEventListener('visibilitychange', visibilityListener);
   window.addEventListener('focus', focusListener);
-  startMainThreadTimer();
   schedulePreciseTimer();
 }
 
@@ -109,7 +95,6 @@ function detachListeners() {
     window.removeEventListener('focus', focusListener);
     focusListener = null;
   }
-  stopMainThreadTimer();
   if (preciseTimer) {
     clearTimeout(preciseTimer);
     preciseTimer = null;

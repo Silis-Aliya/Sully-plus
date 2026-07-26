@@ -56,7 +56,7 @@ export interface MusicActionHooks {
         charId: string,
         song: CharPlaylistSong,
         target?: AddSongTarget,
-    ) => Promise<{ playlistTitle: string; created: boolean } | null>;
+    ) => Promise<{ playlistTitle: string; created: boolean; alreadyExists?: boolean } | null>;
 }
 
 const musicSnapshotFromSong = (song: any): MusicActionSnapshot | null => {
@@ -445,8 +445,9 @@ export const ChatParser = {
             const sharedSnap = await getCurrentTurnSharedMusicSnapshot(charId, 'user');
             const snap = sharedSnap || musicHooks.getListeningSnapshot();
             if (snap) {
-                let addedToPlaylistTitle: string | undefined;
-                let playlistCreated = false;
+            let addedToPlaylistTitle: string | undefined;
+            let playlistCreated = false;
+            let songAlreadyCollected = false;
                 if (wantsJoin && !alreadyListeningTogether) {
                     musicHooks.joinListeningTogether(charId);
                 }
@@ -472,12 +473,19 @@ export const ChatParser = {
                         };
                         const added = await musicHooks.addSongToCharPlaylist(charId, playlistSong, target);
                         if (added) {
-                            addedToPlaylistTitle = added.playlistTitle;
-                            playlistCreated = added.created;
+                            songAlreadyCollected = !!added.alreadyExists;
+                            if (!songAlreadyCollected) {
+                                addedToPlaylistTitle = added.playlistTitle;
+                                playlistCreated = added.created;
+                            }
                         }
                     } catch { /* 忽略 */ }
                 }
-                if (!(alreadyListeningTogether && !wantsAdd)) {
+                if (songAlreadyCollected && wantsJoin && !alreadyListeningTogether) {
+                    intent = 'join';
+                }
+                const duplicateAddOnly = songAlreadyCollected && (!wantsJoin || alreadyListeningTogether);
+                if (!(alreadyListeningTogether && !wantsAdd) && !duplicateAddOnly) {
                 await DB.saveMessage({
                     charId,
                     role: 'assistant',

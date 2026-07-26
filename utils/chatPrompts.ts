@@ -447,6 +447,7 @@ export const ChatPrompts = {
                 userListeningContext || null,
                 charListening,
                 isListeningTogether,
+                _recentTrackSwitch as { songName: string; artists: string } | null | undefined,
             );
             if (musicBlock) {
                 volatileState += `\n${musicBlock}\n`;

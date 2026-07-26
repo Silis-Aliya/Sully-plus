@@ -9,7 +9,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Pause, SkipForward, SkipBack, CaretDown, X } from '@phosphor-icons/react';
 import { useOS } from '../../context/OSContext';
-import { useMusic } from '../../context/MusicContext';
+import { useMusic, useMusicProgress } from '../../context/MusicContext';
 import { AppID } from '../../types';
 import { isIOSStandaloneWebApp, readSafeAreaInsets } from '../../utils/iosStandalone';
 import {
@@ -82,9 +82,20 @@ const computeInsets = (parent: HTMLElement): { insetTop: number; insetBottom: nu
   });
 };
 
+const ExpandedProgressBar: React.FC = () => {
+  const { progress, duration } = useMusicProgress();
+  const pct = duration > 0 ? (progress / duration) * 100 : 0;
+  return (
+    <div
+      className="absolute left-0 bottom-0 h-[2px] bg-gradient-to-r from-sky-400 to-indigo-400 transition-all duration-150"
+      style={{ width: `${pct}%` }}
+    />
+  );
+};
+
 const GlobalMiniPlayer: React.FC = () => {
   const { activeApp, openApp } = useOS();
-  const { current, playing, togglePlay, nextSong, prevSong, progress, duration } = useMusic();
+  const { current, playing, togglePlay, nextSong, prevSong } = useMusic();
 
   const [expanded, setExpanded] = useState(false); // 默认折叠
   const [pos, setPos] = useState<Pos>(() => readPos()); // null = 默认右下
@@ -297,8 +308,6 @@ const GlobalMiniPlayer: React.FC = () => {
   if (activeApp === AppID.Call) return null;     // 通话中不打扰
   if (hidden) return null;
 
-  const pct = duration > 0 ? (progress / duration) * 100 : 0;
-
   // 折叠态：小圆球（可拖动、长按隐藏、单击打开整页歌词）
   if (!expanded) {
     const positional: React.CSSProperties = pos
@@ -340,12 +349,6 @@ const GlobalMiniPlayer: React.FC = () => {
               : <Play size={14} weight="fill" color="#fff" />}
           </div>
           {/* 进度细条 */}
-          <div className="absolute left-0 bottom-0 w-full h-[2px] bg-white/20 pointer-events-none">
-            <div
-              className="h-full bg-gradient-to-r from-sky-400 to-indigo-400 transition-all duration-150"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
         </button>
       </div>
     );
@@ -439,8 +442,7 @@ const GlobalMiniPlayer: React.FC = () => {
         </div>
 
         {/* 底部细进度条 */}
-        <div className="absolute left-0 bottom-0 h-[2px] bg-gradient-to-r from-sky-400 to-indigo-400 transition-all duration-150"
-          style={{ width: `${pct}%` }} />
+        <ExpandedProgressBar />
       </div>
     </div>
   );

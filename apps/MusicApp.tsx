@@ -1,7 +1,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../context/OSContext';
-import { useMusic, musicApi, normalizeCookie, toHttps, Song, MUSIC_TOGETHER_LEFT_EVENT } from '../context/MusicContext';
+import { useMusic, useMusicProgress, musicApi, normalizeCookie, toHttps, Song, MUSIC_TOGETHER_LEFT_EVENT } from '../context/MusicContext';
 import { getProxyWorkerUrl } from '../utils/proxyWorker';
 import { DB } from '../utils/db';
 import { Check, Gear, Headphones, User as UserIcon, Crosshair, Play as PlayIcon, Pause as PauseIcon } from '@phosphor-icons/react';
@@ -28,6 +28,21 @@ const OPEN_PLAYER_REQUEST_KEY = 'sully.music.openPlayer.request';
 const OPEN_PLAYER_RETURN_APP_KEY = 'sully.music.openPlayer.returnApp';
 const avatarIsImage = (avatar?: string) => !!avatar && (avatar.startsWith('data:') || avatar.startsWith('http'));
 const avatarLabel = (avatar?: string, name?: string) => avatar && avatar.length <= 4 ? avatar : (name || '?').slice(0, 1);
+const hasPendingPlayerRequest = () => {
+  try {
+    return sessionStorage.getItem(OPEN_PLAYER_REQUEST_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+const readPendingPlayerReturnApp = (): AppID => {
+  try {
+    const stored = sessionStorage.getItem(OPEN_PLAYER_RETURN_APP_KEY) as AppID | null;
+    return stored && stored !== AppID.Music ? stored : AppID.Launcher;
+  } catch {
+    return AppID.Launcher;
+  }
+};
 const fmtTogetherDuration = (ms: number) => {
   const total = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(total / 3600);
@@ -43,8 +58,8 @@ const MusicApp: React.FC = () => {
   const { closeApp, openApp, addToast, characters, userProfile } = useOS();
   const {
     cfg, setCfg,
-    current, playing, progress, duration, loadingSong,
-    lyric, tlyric, activeLyricIdx,
+    current, playing, loadingSong,
+    lyric, tlyric,
     profile, playSong, togglePlay, nextSong, prevSong, seek,
     liked, toggleLike, setToastHandler,
     listeningTogetherWith, listeningTogetherInviterByCharId, listeningTogetherStartedAt, removeListeningPartner,
@@ -52,6 +67,7 @@ const MusicApp: React.FC = () => {
     playMode, setPlayMode,
     regeneratingId, regeneratingStatus,
   } = useMusic();
+  const { progress, duration, activeLyricIdx } = useMusicProgress();
   const isCurrentRegenerating = !!current && current.id === regeneratingId;
   // 把对轴入口和单曲循环按钮移到 SubActions 里，避免散乱
   // 下载本地生成的歌曲到本地文件系统
@@ -149,7 +165,8 @@ const MusicApp: React.FC = () => {
   // 把 OS toast 注入到 Music Context（这样全局播放报错也能弹 toast）
   useEffect(() => { setToastHandler(addToast); }, [addToast, setToastHandler]);
 
-  const [view, setView] = useState<View>('profile');
+  const initialPlayerRequestRef = useRef(hasPendingPlayerRequest());
+  const [view, setView] = useState<View>(() => initialPlayerRequestRef.current && current ? 'player' : 'profile');
   // ── 手动对轴 modal state ──
   const [showLyricSync, setShowLyricSync] = useState(false);
   const [syncDraft, setSyncDraft] = useState<number[]>([]);
@@ -164,8 +181,10 @@ const MusicApp: React.FC = () => {
   const [shareSelectedIds, setShareSelectedIds] = useState<Set<string>>(new Set());
   const [togetherNow, setTogetherNow] = useState(Date.now());
   const lyricBoxRef = useRef<HTMLDivElement | null>(null);
-  const floatingReturnAppRef = useRef<AppID | null>(null);
-  const floatingPlayerEntryRef = useRef(false);
+  const floatingReturnAppRef = useRef<AppID | null>(
+    initialPlayerRequestRef.current && current ? readPendingPlayerReturnApp() : null,
+  );
+  const floatingPlayerEntryRef = useRef(initialPlayerRequestRef.current && !!current);
   const playerReturnViewRef = useRef<Exclude<View, 'player'>>('profile');
   const userExitTogetherIdsRef = useRef<Set<string>>(new Set());
 

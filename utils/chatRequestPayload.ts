@@ -128,9 +128,9 @@ export function deriveListeningFromSnapshot(
         return { userListeningContext: null, isListeningTogether: false, musicCfg: cfg };
     }
     let userListeningContext: UserListeningContext | null = null;
-    if (current && lyric.length > 0) {
+    if (current) {
         const idx = activeLyricIdx;
-        if (idx >= 0) {
+        if (lyric.length > 0 && idx >= 0) {
             const from = Math.max(0, idx - 2);
             const to = Math.min(lyric.length, idx + 2 + 1);
             const window = lyric.slice(from, to).map((l: LyricLine) => l.text);
@@ -144,17 +144,19 @@ export function deriveListeningFromSnapshot(
                     ? `从一起听开始后，用户切过 ${listeningTogetherChangeCount} 首歌；上一首是《${listeningTogetherPreviousSong?.name || '未知'}》— ${listeningTogetherPreviousSong?.artists || '未知'}，当前是《${current.name}》— ${current.artists}。`
                     : undefined,
             };
+        } else {
+            // The song must remain visible during intros, pauses, and lyric-loading
+            // gaps even when no lyric line is active yet.
+            userListeningContext = {
+                songName: current.name,
+                artists: current.artists,
+                lyricWindow: [],
+                activeIdx: -1,
+                changeSummary: listeningTogetherChangeCount > 0
+                    ? `从一起听开始后，用户切过 ${listeningTogetherChangeCount} 首歌；上一首是《${listeningTogetherPreviousSong?.name || '未知'}》— ${listeningTogetherPreviousSong?.artists || '未知'}，当前是《${current.name}》— ${current.artists}。`
+                    : undefined,
+            };
         }
-    } else if (current) {
-        userListeningContext = {
-            songName: current.name,
-            artists: current.artists,
-            lyricWindow: [],
-            activeIdx: -1,
-            changeSummary: listeningTogetherChangeCount > 0
-                ? `从一起听开始后，用户切过 ${listeningTogetherChangeCount} 首歌；上一首是《${listeningTogetherPreviousSong?.name || '未知'}》— ${listeningTogetherPreviousSong?.artists || '未知'}，当前是《${current.name}》— ${current.artists}。`
-                : undefined,
-        };
     }
     return { userListeningContext, isListeningTogether, musicCfg: cfg };
 }
@@ -425,6 +427,15 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         ...messagesWithWorldbookDepth,
         { role: 'system', content: volatileTail },
     ];
+    if (isListeningTogether && userListeningContext?.songName) {
+        const changeLine = userListeningContext.changeSummary
+            ? `\n${userListeningContext.changeSummary}`
+            : '';
+        fullMessages.push({
+            role: 'user',
+            content: `[系统状态（非用户发言）：你仍在和${userProfile?.name || '对方'}一起听。当前歌曲：《${userListeningContext.songName}》— ${userListeningContext.artists}。${changeLine}]`,
+        });
+    }
     if (bilingualActive) {
         fullMessages.push({
             role: 'system',

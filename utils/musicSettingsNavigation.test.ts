@@ -19,4 +19,10 @@ describe('Music settings navigation', () => {
         expect(source.match(/setView\('profile'\)/g)?.length).toBeGreaterThanOrEqual(2);
         expect(source).not.toContain("openInternalSettings('search')");
     });
+
+    it('uses a pending Now Playing request for the first rendered view', () => {
+        expect(source).toContain('const initialPlayerRequestRef = useRef(hasPendingPlayerRequest());');
+        expect(source).toContain("initialPlayerRequestRef.current && current ? 'player' : 'profile'");
+        expect(source).toContain('initialPlayerRequestRef.current && current ? readPendingPlayerReturnApp() : null');
+    });
 });
