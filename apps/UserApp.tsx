@@ -194,7 +194,7 @@ const UserApp: React.FC = () => {
                     baselineCount: baselineStatus.count,
                 },
             });
-            setDeleteStatus(`声纹已删除：${voicePrintId}`);
+            setDeleteStatus('');
             setVerifyStatus('');
             addToast('声纹已删除，本地 VoicePrintId 已清空', 'success');
         } catch (err: any) {
