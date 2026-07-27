@@ -136,7 +136,8 @@ function formatVoiceProfile(value: unknown): string {
     const result = value as Record<string, unknown>;
     const gender = result.gender === 'female' ? '偏女声' : result.gender === 'male' ? '偏男声' : '';
     const age = result.age === 'child' ? '少年/儿童听感' : result.age === 'middle' ? '中青年听感' : result.age === 'old' ? '年长听感' : '';
-    return [gender, age].filter(Boolean).join('，');
+    const profile = [gender, age].filter(Boolean).join('，');
+    return profile ? `声音${profile}` : '';
 }
 
 function buildVoiceHistoryContent(m: Message, timeStr: string, userName?: string): string {
@@ -156,9 +157,9 @@ function buildVoiceHistoryContent(m: Message, timeStr: string, userName?: string
         const toneParts = [
             emotion ? `情绪=${emotion}` : '',
             confidence ? `可信度=${confidence}` : '',
-            hint ? `提示=${hint}` : '',
-            cloudVoiceProfile ? `声音画像=${cloudVoiceProfile}` : '',
-            speakerVerification ? `身份=${speakerVerification}` : '',
+            hint,
+            speakerVerification,
+            cloudVoiceProfile,
         ].filter(Boolean);
         return [
             `${timeStr} [聊天语音] ${speaker}：${transcript || '（未识别到文字）'}`,
@@ -175,10 +176,10 @@ function buildVoiceHistoryContent(m: Message, timeStr: string, userName?: string
     const signals = [
         emotion ? `情绪=${emotion}` : '',
         confidence ? `可信度=${confidence}` : '',
-        hint ? `提示=${hint}` : '',
+        hint,
         relative ? `相对个人基线=${relative}` : '',
-        cloudVoiceProfile ? `声音画像=${cloudVoiceProfile}` : '',
-        speakerVerification ? `身份=${speakerVerification}` : '',
+        speakerVerification,
+        cloudVoiceProfile,
         baseline ? `基线进度=${baseline}` : '',
     ].filter(Boolean);
     if (signals.length) {
