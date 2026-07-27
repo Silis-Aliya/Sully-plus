@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "npm run build:workers && vite build",
     "preview": "vite preview",
+    "deploy:main-worker": "wrangler deploy -c worker/wrangler.toml",
     "workbench:bridge": "node scripts/workbench-cli-bridge.mjs",
     "workbench:bridge:startup": "powershell -ExecutionPolicy Bypass -File scripts/install-workbench-bridge-startup.ps1",
     "cap:sync": "cap sync",

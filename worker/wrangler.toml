@@ -1,0 +1,26 @@
+name = "sullyos-main-proxy"
+main = "index.js"
+compatibility_date = "2026-07-27"
+
+# Main SullyOS proxy Worker.
+# Deploy this Worker from the `worker/` directory, or run:
+#   pnpm deploy:main-worker
+#
+# Secrets must be configured in Cloudflare Dashboard or with wrangler secret put.
+# Never commit real SecretId / SecretKey / APIKey / APISecret values.
+#
+# Required for Tencent speaker verification:
+#   wrangler secret put TENCENT_SECRET_ID
+#   wrangler secret put TENCENT_SECRET_KEY
+#
+# Required for XFYUN voice profile:
+#   wrangler secret put XFYUN_API_KEY
+#   wrangler secret put XFYUN_API_SECRET
+#
+# Optional:
+#   wrangler secret put XFYUN_APP_ID
+#   wrangler secret put TENCENT_VOICE_PRINT_ID
+#   wrangler secret put TENCENT_VOICE_GROUP_ID
+
+[vars]
+TENCENT_ASR_REGION = "ap-guangzhou"
