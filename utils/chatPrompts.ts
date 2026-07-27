@@ -124,12 +124,19 @@ function formatSpeakerVerification(value: unknown, userName?: string): string {
     if (!value || typeof value !== 'object') return '';
     const result = value as Record<string, unknown>;
     const status = String(result.status || '').trim();
-    const score = typeof result.score === 'number' ? `，分数=${Math.round(result.score * 10) / 10}` : '';
     const name = userName?.trim() || '用户';
     if (status === 'matched') return '';
-    if (status === 'unmatched') return `当前可能不是（${name}）${score}`;
-    if (status === 'uncertain') return `不确定是不是（${name}）${score}`;
+    if (status === 'unmatched') return `当前可能不是（${name}）`;
+    if (status === 'uncertain') return `不确定是不是（${name}）`;
     return '';
+}
+
+function formatVoiceProfile(value: unknown): string {
+    if (!value || typeof value !== 'object') return '';
+    const result = value as Record<string, unknown>;
+    const gender = result.gender === 'female' ? '偏女声' : result.gender === 'male' ? '偏男声' : '';
+    const age = result.age === 'child' ? '少年/儿童听感' : result.age === 'middle' ? '中青年听感' : result.age === 'old' ? '年长听感' : '';
+    return [gender, age].filter(Boolean).join('，');
 }
 
 function buildVoiceHistoryContent(m: Message, timeStr: string, userName?: string): string {
@@ -143,12 +150,14 @@ function buildVoiceHistoryContent(m: Message, timeStr: string, userName?: string
     const toneProvider = formatVoiceSignal(voice.toneProvider ?? meta.toneProvider);
     const hasToneNarration = toneProvider.startsWith('groq:');
     const speakerVerification = formatSpeakerVerification(voice.speakerVerification ?? meta.speakerVerification, userName);
+    const cloudVoiceProfile = formatVoiceProfile(voice.voiceProfile ?? meta.voiceProfile);
 
     if (hasToneNarration) {
         const toneParts = [
             emotion ? `情绪=${emotion}` : '',
             confidence ? `可信度=${confidence}` : '',
             hint ? `提示=${hint}` : '',
+            cloudVoiceProfile ? `声音画像=${cloudVoiceProfile}` : '',
             speakerVerification ? `身份=${speakerVerification}` : '',
         ].filter(Boolean);
         return [
@@ -168,6 +177,7 @@ function buildVoiceHistoryContent(m: Message, timeStr: string, userName?: string
         confidence ? `可信度=${confidence}` : '',
         hint ? `提示=${hint}` : '',
         relative ? `相对个人基线=${relative}` : '',
+        cloudVoiceProfile ? `声音画像=${cloudVoiceProfile}` : '',
         speakerVerification ? `身份=${speakerVerification}` : '',
         baseline ? `基线进度=${baseline}` : '',
     ].filter(Boolean);
