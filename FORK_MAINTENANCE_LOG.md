@@ -28,6 +28,84 @@ Current known baseline:
 - Pre-context-split recovery tag: `backup/pre-context-split` at `e968fc3`. This tag includes the earlier fork features but predates the 2026-07-26 OS context split.
 ```
 
+## 2026-07-27 Repository Map And Push Rules
+
+This section supersedes the stale repository/baseline bullets inside the copied Next-Window Prompt above. Do not edit that prompt block without first showing the full revised prompt to the user for confirmation.
+
+### Remotes And Ownership
+
+- `upstream` = `https://github.com/qegj567-cloud/SullyOS.git`
+  - Original SullyOS project. Read/fetch only for this fork workflow.
+  - Merge from `upstream/master` into the private working line only after checking conflicts and preserving fork behavior.
+- `origin` = `https://github.com/Silis-Aliya/Sully-plus.git`
+  - Private owner repo for active SullyOS-plus development.
+  - Contains the voice/Ears Lite work and the owner's private default Worker address unless intentionally changed.
+  - Use this as the normal development target for private features and Vercel/private deployment work.
+- `public-fork` = `https://github.com/Silis-Aliya/SullyOS.git`
+  - Public fork. GitHub currently reports this repository moved to `https://github.com/Silis-Aliya/sully-change.git`; pushes to `public-fork` are accepted but may redirect.
+  - Public code must not expose the owner's private Worker URL.
+  - Public default proxy worker must remain `https://sullymeow.ccwu.cc` or another explicit public/placeholder address.
+- `vercel-target` = `https://github.com/Silis-Aliya/sully-change.git`
+  - Vercel production target. Treat as production, not a scratch remote.
+
+### Baseline Heads Before This Maintenance Note
+
+- Private Plus voice-feature baseline: `origin/master` at `aea2ed3` (`fix: simplify abnormal voice history wording`).
+- Public fork baseline after hiding the private Worker default: `public-fork/master` at `ecd2dd8` (`chore: restore public default proxy worker`).
+- The public fork is intentionally one commit ahead of Plus only to remove the owner's private Worker default.
+- Local branch `codex/merge-upstream-20260721` may point at the public-only commit after a public push. Before continuing private Plus work, reset/switch back to `origin/master` or make a private branch from `origin/master` so the public Worker-default commit is not accidentally pushed to Plus.
+
+### Worker Address Rule
+
+- Private Plus may use the owner's private Cloudflare Worker configured locally or in the private repo.
+- Public fork must not contain the owner's private Worker host.
+- Before any public push, run:
+  - `rg -n "workers\\.dev|DEFAULT_PROXY_WORKER" utils worker docs FORK_MAINTENANCE_LOG.md`
+  - Inspect the matches manually and confirm only public placeholders, original public defaults, or generic examples remain.
+- The key file is `utils/proxyWorker.ts`, especially `DEFAULT_PROXY_WORKER`.
+
+### Normal Future Flow
+
+- Private feature/change:
+  - Start from `origin/master`.
+  - Implement, run focused tests plus `pnpm build`.
+  - Push with `git push origin HEAD:master`.
+- Public fork update:
+  - Start from the desired private release commit.
+  - Ensure `utils/proxyWorker.ts` uses the public default Worker.
+  - Search for private Worker URL leaks.
+  - Run `pnpm build`.
+  - Push with `git push public-fork HEAD:master`.
+- Vercel production update:
+  - Only after the user explicitly wants production/Vercel updated.
+  - Use the verified target commit and push `git push vercel-target HEAD:master`.
+  - Verify deployment separately before calling it live.
+
+### Upstream Merge Check On 2026-07-27
+
+- Refreshed remotes with `git fetch --all --prune`.
+- `upstream/master` advanced from `7602a5b` to `3e5bd60`.
+- New upstream topics include character timezone fixes, schedule card clock, Check Phone record detail view, custom CSS secret-scan false-positive fix, and XHS free comments defaults/recovery.
+- A direct merge from `upstream/master` into `origin/master` is not clean. `git merge-tree` reports changed-in-both conflicts in:
+  - `apps/Chat.tsx`
+  - `apps/Launcher.tsx`
+  - `apps/music/CharVisitPage.tsx`
+  - `apps/Settings.tsx`
+  - `components/os/TamagotchiHome.tsx`
+  - `context/OSContext.tsx`
+  - `types.ts`
+  - `utils/applyAssistantPostProcessing.ts`
+  - `utils/chatParser.ts`
+  - `utils/chatPrompts.ts`
+  - `utils/context.ts`
+  - `utils/datePrompts.ts`
+  - `utils/db.ts`
+  - `utils/realtimeContext.ts`
+  - `worker/index.js`
+- Conclusion: upstream can likely be merged into Sully-plus, but it needs a deliberate conflict-resolution pass. Do not auto-merge into `origin/master` or production.
+- Preserve the fork's voice/Ears Lite pipeline while resolving `apps/Chat.tsx`, `utils/chatPrompts.ts`, `utils/context.ts`, `types.ts`, `apps/Settings.tsx`, `apps/UserApp.tsx`, `utils/voiceCloud.ts`, and `worker/index.js`.
+- After resolving, run at minimum `pnpm build`; if time permits also run focused tests for `proxyWorker`, schedule/timezone, Chat prompt serialization, and Worker voice routes.
+
 ## 2026-07-26 Verified Production Release And Recovery Point
 
 - Published verified release `4949d6b` to both `origin/codex/merge-upstream-20260721` and `Silis-Aliya/sully-change` `master`.
