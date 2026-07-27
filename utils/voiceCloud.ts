@@ -46,6 +46,19 @@ export interface VoiceCloudReviewDecision {
   reasons: string[];
 }
 
+export const XFYUN_PROFILE_MAX_DURATION_SEC = 10;
+
+export function shouldRunXfyunVoiceProfile(options: {
+  cloudShouldReview: boolean;
+  speakerStatus?: string;
+  hasAppId: boolean;
+  durationSec: number;
+}): boolean {
+  if (!options.hasAppId) return false;
+  if (options.durationSec > XFYUN_PROFILE_MAX_DURATION_SEC) return false;
+  return options.cloudShouldReview || options.speakerStatus === 'unmatched';
+}
+
 const readRelativeNumber = (relative: Record<string, unknown>, key: string): number | null => {
   const raw = relative[key];
   const value = typeof raw === 'number' ? raw : Number(raw);

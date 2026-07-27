@@ -68,7 +68,7 @@ import {
     type ContextRangeMode,
 } from '../utils/chatContextRange';
 import { analyzeVoiceWithEarsLite, judgeVoiceToneWithGroq, transcribeWithGroq } from '../utils/earsLite';
-import { decideVoiceCloudReview, prepareVoiceCloudAudio, profileVoiceWithXfyun, verifyTencentSpeaker } from '../utils/voiceCloud';
+import { decideVoiceCloudReview, prepareVoiceCloudAudio, profileVoiceWithXfyun, shouldRunXfyunVoiceProfile, verifyTencentSpeaker } from '../utils/voiceCloud';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 type InstantToolUiStatus = {
@@ -1221,20 +1221,33 @@ const Chat: React.FC = () => {
             let voiceProfile: any = undefined;
             const cloudReview = decideVoiceCloudReview(lite);
             const needsTencent = cloudReview.shouldReview && !!apiConfig.ears?.tencentVoicePrintId;
-            const needsXfyun = cloudReview.shouldReview && !!apiConfig.ears?.xfyunAppId && durationSec <= 10;
-            if (needsTencent || needsXfyun) {
+            const hasXfyunAppId = !!apiConfig.ears?.xfyunAppId;
+            const mayNeedXfyun = hasXfyunAppId && durationSec <= 10;
+            if (needsTencent || mayNeedXfyun) {
                 try {
                     const prepared = await prepareVoiceCloudAudio(blob);
-                    const jobs: Promise<void>[] = [];
                     if (needsTencent) {
-                        jobs.push(verifyTencentSpeaker(prepared, apiConfig.ears!.tencentVoicePrintId!)
-                            .then(result => { speakerVerification = result; }));
+                        try {
+                            speakerVerification = await verifyTencentSpeaker(prepared, apiConfig.ears!.tencentVoicePrintId!);
+                        } catch (cloudErr: any) {
+                            console.warn('[ears-lite] Tencent speaker verification failed:', cloudErr);
+                            addToast(`腾讯云声纹验证失败，已继续发送：${cloudErr?.message || '未知错误'}`, 'error');
+                        }
                     }
+                    const needsXfyun = shouldRunXfyunVoiceProfile({
+                        cloudShouldReview: cloudReview.shouldReview,
+                        speakerStatus: speakerVerification?.status,
+                        hasAppId: hasXfyunAppId,
+                        durationSec,
+                    });
                     if (needsXfyun) {
-                        jobs.push(profileVoiceWithXfyun(prepared, apiConfig.ears?.xfyunAppId)
-                            .then(result => { voiceProfile = result; }));
+                        try {
+                            voiceProfile = await profileVoiceWithXfyun(prepared, apiConfig.ears?.xfyunAppId);
+                        } catch (cloudErr: any) {
+                            console.warn('[ears-lite] Xfyun voice profile failed:', cloudErr);
+                            addToast(`讯飞声音画像失败，已继续发送：${cloudErr?.message || '未知错误'}`, 'error');
+                        }
                     }
-                    await Promise.all(jobs);
                 } catch (cloudErr: any) {
                     console.warn('[ears-lite] cloud voice analysis failed:', cloudErr);
                     addToast(`云端声音识别失败，已继续发送：${cloudErr?.message || '未知错误'}`, 'error');
