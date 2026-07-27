@@ -2386,11 +2386,24 @@ const Settings: React.FC = () => {
                             <label className="text-[10px] font-bold text-indigo-700 uppercase tracking-widest">腾讯云说话人识别</label>
                             <span className="text-[9px] font-bold text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded-full">增强：是不是你</span>
                         </div>
-                        <div className="grid grid-cols-1 gap-2">
-                            <input type="text" value={localEarsTencentVoicePrintId} onChange={(e) => setLocalEarsTencentVoicePrintId(e.target.value)} placeholder="机主 VoicePrintId（建声纹后回填）" className="w-full bg-white/70 border border-indigo-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
+                        <div className="rounded-xl bg-indigo-50/70 border border-indigo-100 px-3 py-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-widest">VoicePrintId</span>
+                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${localEarsTencentVoicePrintId.trim() ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                    {localEarsTencentVoicePrintId.trim() ? '已保存' : '未注册'}
+                                </span>
+                            </div>
+                            <p className="text-[10px] text-indigo-700/80 leading-relaxed mt-1">
+                                {localEarsTencentVoicePrintId.trim()
+                                    ? '已在本机保存声纹 ID；需要更换时去「个人档案 → 声音档案」重新注册声纹。'
+                                    : '不用在这里手填。去「个人档案 → 声音档案」点“注册声纹”，成功后会自动写入。'}
+                            </p>
+                            {localEarsTencentVoicePrintId.trim() && (
+                                <p className="mt-1 text-[10px] text-indigo-500 font-mono break-all">{localEarsTencentVoicePrintId}</p>
+                            )}
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed">
-                            用于 speaker verification：只有本地基线发现明显异常时，才判断 matched / unmatched / uncertain。SecretId / SecretKey 请放到主 Worker 环境变量 TENCENT_SECRET_ID / TENCENT_SECRET_KEY，前端只保存 VoicePrintId。
+                            用于 speaker verification：只有本地基线发现明显异常时，才判断 matched / unmatched / uncertain。SecretId / SecretKey 放主 Worker 环境变量；VoicePrintId 由「个人档案 → 声音档案」注册声纹后自动保存。
                         </p>
                         <button type="button" onClick={() => setEarsTencentGuideOpen(v => !v)} className="text-[11px] font-bold text-indigo-600 underline">
                             获取腾讯云教程 {earsTencentGuideOpen ? '▲' : '▼'}
@@ -2409,10 +2422,10 @@ const Settings: React.FC = () => {
                                     <b>最省事流程：</b><br/>
                                     1. 登录腾讯云，开通 <b>语音识别 ASR</b>，按页面要求完成实名/授权。官方声纹注册文档：<a href="https://cloud.tencent.com/document/product/1093/94483" target="_blank" rel="noopener noreferrer" className="underline font-bold text-indigo-700">VoicePrintEnroll</a>。<br/>
                                     2. 去 <b>访问管理 CAM → 访问密钥</b> 创建 SecretId / SecretKey。<b>不要填到前端</b>，放到主 Worker 环境变量：<span className="font-mono">TENCENT_SECRET_ID</span>、<span className="font-mono">TENCENT_SECRET_KEY</span>。<br/>
-                                    3. 给自己的声音建声纹后拿到 <b>VoicePrintId</b>，只把 VoicePrintId 填到这里并保存。之后只有本地 Ears Lite 判断“这条语音和平时差异明显”时，才走 Worker 调腾讯云验证是不是本人。
+                                    3. 回到 SullyOS 的 <b>个人档案 → 声音档案</b>，点“注册声纹”。注册成功后 VoicePrintId 会自动保存到这里。之后只有本地 Ears Lite 判断“这条语音和平时差异明显”时，才走 Worker 调腾讯云验证是不是本人。
                                 </p>
                                 <p className="text-indigo-700/80">
-                                    备注：当前 SullyOS 前端先支持“填 VoicePrintId 后验证”。声纹注册可先用腾讯云文档/API Explorer 或 Worker 的 <span className="font-mono">/voice/tencent/enroll</span> 端点完成，后续可以再补一个一键建声纹按钮。
+                                    备注：这里保留教程和状态，不再提供手填 Secret。腾讯云 Secret 放 Worker；声纹 ID 由前端录音注册后自动保存。
                                 </p>
                                 <button
                                     type="button"
@@ -2422,9 +2435,8 @@ const Settings: React.FC = () => {
                                             '1. 打开 https://console.cloud.tencent.com/asr 开通腾讯云语音识别 ASR，并按要求完成实名/授权。',
                                             '2. 打开 https://console.cloud.tencent.com/cam/capi 创建 SecretId / SecretKey。',
                                             '3. 把 SecretId / SecretKey 放到主 Worker 环境变量：TENCENT_SECRET_ID、TENCENT_SECRET_KEY，不要放到前端。',
-                                            '4. 按腾讯云 VoicePrintEnroll 文档或 Worker 的 /voice/tencent/enroll 端点给机主声音建声纹，拿到 VoicePrintId。',
-                                            '5. 回到 SullyOS 设置 → 语音识别，把 VoicePrintId 填到腾讯云说话人识别里并保存。',
-                                            '6. 之后只有本地 Ears Lite 判断语音异常时，SullyOS 才会通过 Worker 调腾讯云验证是不是本人。',
+                                            '4. 回到 SullyOS → 个人档案 → 声音档案，点“注册声纹”。成功后 VoicePrintId 会自动保存。',
+                                            '5. 之后只有本地 Ears Lite 判断语音异常时，SullyOS 才会通过 Worker 调腾讯云验证是不是本人。',
                                         ].join('\n');
                                         try {
                                             await navigator.clipboard.writeText(guide);
