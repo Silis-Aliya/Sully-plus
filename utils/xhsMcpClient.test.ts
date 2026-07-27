@@ -86,6 +86,22 @@ describe('XHS Lite response normalization', () => {
         ]);
     });
 });
+
+describe('normalizeNote title fallback', () => {
+    it('uses nested note_card.title as the normalized title', () => {
+        expect(normalizeNote({
+            note_id: 'note-1',
+            note_card: {
+                title: 'Human AI relationship facts',
+                desc: 'Body excerpt',
+            },
+        })).toMatchObject({
+            noteId: 'note-1',
+            title: 'Human AI relationship facts',
+            desc: 'Body excerpt',
+        });
+    });
+});
 describe('Spider v3 hidden client patch', () => {
     let values: Map<string, string>;
 
