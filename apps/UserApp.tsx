@@ -5,10 +5,10 @@ import { processImage } from '../utils/file';
 import LifeRecordPanel from '../components/lifeRecord/LifeRecordPanel';
 import PerCharAvatarPicker from '../components/user/PerCharAvatarPicker';
 import { EARS_LITE_BASELINE_TARGET, getEarsLiteBaselineStatus } from '../utils/earsLite';
-import { prepareVoiceCloudAudio, profileVoiceWithXfyun, verifyTencentSpeaker } from '../utils/voiceCloud';
+import { enrollTencentSpeaker, prepareVoiceCloudAudio, profileVoiceWithXfyun, verifyTencentSpeaker } from '../utils/voiceCloud';
 
 const UserApp: React.FC = () => {
-    const { closeApp, userProfile, updateUserProfile, addToast, apiConfig } = useOS();
+    const { closeApp, userProfile, updateUserProfile, addToast, apiConfig, updateApiConfig } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [tab, setTab] = useState<'profile' | 'life'>('profile');
     const [voiceBusy, setVoiceBusy] = useState(false);
@@ -132,6 +132,40 @@ const UserApp: React.FC = () => {
         } catch (err: any) {
             setVoiceStatus(err?.message || '身份验证失败');
             addToast(err?.message || '身份验证失败', 'error');
+        } finally {
+            setVoiceBusy(false);
+        }
+    };
+
+    const handleEnrollVoiceIdentity = async () => {
+        if (voiceBusy) return;
+        setVoiceBusy(true);
+        setVoiceStatus('正在录制声纹注册样本...');
+        try {
+            const blob = await recordVoiceProfileClip(6500);
+            setVoiceStatus('正在注册腾讯云声纹...');
+            const prepared = await prepareVoiceCloudAudio(blob);
+            const result = await enrollTencentSpeaker(prepared, userProfile.name || 'SullyOS User');
+            if (!result.voicePrintId) throw new Error('腾讯云没有返回 VoicePrintId，请换一段更清晰的声音再试');
+            updateApiConfig({
+                ears: {
+                    ...(apiConfig.ears || {}),
+                    tencentVoicePrintId: result.voicePrintId,
+                },
+            });
+            updateUserProfile({
+                voiceProfile: {
+                    ...(userProfile.voiceProfile || {}),
+                    baselineCount: baselineStatus.count,
+                    lastIdentityStatus: 'matched',
+                    lastIdentityAt: Date.now(),
+                },
+            });
+            setVoiceStatus(`声纹已注册：${result.voicePrintId}`);
+            addToast('声纹已注册，VoicePrintId 已自动保存', 'success');
+        } catch (err: any) {
+            setVoiceStatus(err?.message || '声纹注册失败');
+            addToast(err?.message || '声纹注册失败', 'error');
         } finally {
             setVoiceBusy(false);
         }
@@ -281,11 +315,24 @@ const UserApp: React.FC = () => {
                                 {typeof userProfile.voiceProfile.lastIdentityScore === 'number' ? ` · ${Math.round(userProfile.voiceProfile.lastIdentityScore * 10) / 10}` : ''}
                             </p>
                         )}
+                        {apiConfig.ears?.tencentVoicePrintId && (
+                            <p className="text-[10px] text-slate-400 font-mono break-all">
+                                VoicePrintId: {apiConfig.ears.tencentVoicePrintId}
+                            </p>
+                        )}
                     </div>
 
                     {voiceStatus && <p className="text-[11px] text-sky-600 leading-relaxed mt-2">{voiceStatus}</p>}
 
-                    <div className="grid grid-cols-2 gap-2 mt-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+                        <button
+                            type="button"
+                            onClick={handleEnrollVoiceIdentity}
+                            disabled={voiceBusy}
+                            className="py-2.5 rounded-2xl bg-indigo-500 text-white text-xs font-bold active:scale-95 disabled:opacity-60 disabled:active:scale-100 transition-all"
+                        >
+                            {voiceBusy ? '处理中...' : apiConfig.ears?.tencentVoicePrintId ? '重新注册声纹' : '注册声纹'}
+                        </button>
                         <button
                             type="button"
                             onClick={handleBuildVoiceProfile}

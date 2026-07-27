@@ -17,6 +17,14 @@ export interface TencentSpeakerVerificationResult {
   raw?: unknown;
 }
 
+export interface TencentSpeakerEnrollResult {
+  ok?: boolean;
+  voicePrintId?: string;
+  speakerNick?: string;
+  requestId?: string;
+  raw?: unknown;
+}
+
 export interface XfyunVoiceProfileResult {
   gender?: string;
   genderScores?: { female?: number; male?: number };
@@ -161,6 +169,18 @@ export async function verifyTencentSpeaker(
     voiceFormat: 1,
     sampleRate: prepared.sampleRate,
     voicePrintId,
+  });
+}
+
+export async function enrollTencentSpeaker(
+  prepared: PreparedVoiceCloudAudio,
+  speakerNick?: string,
+): Promise<TencentSpeakerEnrollResult> {
+  return postVoiceWorker<TencentSpeakerEnrollResult>('/voice/tencent/enroll', {
+    data: prepared.wavBase64,
+    voiceFormat: 1,
+    sampleRate: prepared.sampleRate,
+    speakerNick: speakerNick || undefined,
   });
 }
 
