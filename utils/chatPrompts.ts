@@ -125,7 +125,7 @@ function formatSpeakerVerification(value: unknown): string {
     const result = value as Record<string, unknown>;
     const status = String(result.status || '').trim();
     const score = typeof result.score === 'number' ? `，分数=${Math.round(result.score * 10) / 10}` : '';
-    if (status === 'matched') return `像机主本人${score}`;
+    if (status === 'matched') return '';
     if (status === 'unmatched') return `不像机主本人${score}`;
     if (status === 'uncertain') return `不确定是否机主${score}`;
     return '';
