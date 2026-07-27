@@ -117,6 +117,18 @@ This section supersedes the stale repository/baseline bullets inside the copied 
 - Preserve the fork's voice/Ears Lite pipeline while resolving `apps/Chat.tsx`, `utils/chatPrompts.ts`, `utils/context.ts`, `types.ts`, `apps/Settings.tsx`, `apps/UserApp.tsx`, `utils/voiceCloud.ts`, and `worker/index.js`.
 - After resolving, run at minimum `pnpm build`; if time permits also run focused tests for `proxyWorker`, schedule/timezone, Chat prompt serialization, and Worker voice routes.
 
+### Verified Plus/Vercel Release On 2026-07-27
+
+- Current release branch: `codex/merge-upstream-plus-maintenance`.
+- Merged `upstream/master` through `835a4d7` and preserved Plus fork behavior.
+- Included Ears Lite ASR language selection, flattened Settings voice-recognition section, Now Playing render isolation, and XHS `note_card.title` normalization so shared Rednote/XHS cards keep titles in character and push context.
+- Prompt change reviewed with the user before landing: XHS detail follow-up now has a `commentsUnavailable` branch that tells the character not to invent comments when only body/counters loaded.
+- Verification passed:
+  - `pnpm build`
+  - `pnpm vitest run utils/earsLite.test.ts utils/musicProgressVisibility.test.ts utils/musicSettingsNavigation.test.ts utils/musicRuntimeBackup.test.ts utils/applyAssistantPostProcessing.test.ts utils/datePromptsTimezone.test.ts utils/scheduleTimezone.e2e.test.ts utils/wallClockToTimestamp.test.ts utils/realtimeContext.specialDates.test.ts utils/scheduleTime.test.ts utils/timezone.test.ts`
+  - `pnpm vitest run utils/xhsMcpClient.test.ts utils/xhsShareLink.test.ts`
+- Before publishing to Vercel, merge `vercel-target/master` into this branch so the deployment repository's public/default-worker commits are preserved, then push with `git push vercel-target HEAD:master`.
+
 ## 2026-07-26 Verified Production Release And Recovery Point
 
 - Published verified release `4949d6b` to both `origin/codex/merge-upstream-20260721` and `Silis-Aliya/sully-change` `master`.
