@@ -25,6 +25,13 @@ export interface TencentSpeakerEnrollResult {
   raw?: unknown;
 }
 
+export interface TencentSpeakerDeleteResult {
+  ok?: boolean;
+  voicePrintId?: string;
+  requestId?: string;
+  raw?: unknown;
+}
+
 export interface XfyunVoiceProfileResult {
   gender?: string;
   genderScores?: { female?: number; male?: number };
@@ -181,6 +188,14 @@ export async function enrollTencentSpeaker(
     voiceFormat: 1,
     sampleRate: prepared.sampleRate,
     speakerNick: speakerNick || undefined,
+  });
+}
+
+export async function deleteTencentSpeaker(
+  voicePrintId: string,
+): Promise<TencentSpeakerDeleteResult> {
+  return postVoiceWorker<TencentSpeakerDeleteResult>('/voice/tencent/delete', {
+    voicePrintId,
   });
 }
 

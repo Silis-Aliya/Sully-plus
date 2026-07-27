@@ -1659,6 +1659,20 @@ export default {
         return jsonResponse({ error: 'Invalid JSON body' }, { status: 400, origin });
       }
       try {
+        if (url.pathname === '/voice/tencent/delete') {
+          const voicePrintId = body.voicePrintId || env?.TENCENT_VOICE_PRINT_ID;
+          if (!voicePrintId) return jsonResponse({ error: 'Missing VoicePrintId' }, { status: 400, origin });
+          const resp = await callTencentAsr('VoicePrintDelete', {
+            VoicePrintId: voicePrintId,
+            ...(body.groupId || env?.TENCENT_VOICE_GROUP_ID ? { GroupId: body.groupId || env.TENCENT_VOICE_GROUP_ID } : {}),
+          }, env);
+          return jsonResponse({
+            ok: true,
+            voicePrintId,
+            requestId: resp?.RequestId,
+            raw: resp?.Data,
+          }, { origin });
+        }
         if (!body.data || typeof body.data !== 'string') {
           return jsonResponse({ error: 'Missing base64 audio data' }, { status: 400, origin });
         }

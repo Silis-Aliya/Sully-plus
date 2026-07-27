@@ -5,7 +5,7 @@ import { processImage } from '../utils/file';
 import LifeRecordPanel from '../components/lifeRecord/LifeRecordPanel';
 import PerCharAvatarPicker from '../components/user/PerCharAvatarPicker';
 import { EARS_LITE_BASELINE_TARGET, getEarsLiteBaselineStatus } from '../utils/earsLite';
-import { enrollTencentSpeaker, prepareVoiceCloudAudio, profileVoiceWithXfyun, verifyTencentSpeaker } from '../utils/voiceCloud';
+import { deleteTencentSpeaker, enrollTencentSpeaker, prepareVoiceCloudAudio, profileVoiceWithXfyun, verifyTencentSpeaker } from '../utils/voiceCloud';
 
 const UserApp: React.FC = () => {
     const { closeApp, userProfile, updateUserProfile, addToast, apiConfig, updateApiConfig } = useOS();
@@ -14,9 +14,11 @@ const UserApp: React.FC = () => {
     const [enrollBusy, setEnrollBusy] = useState(false);
     const [profileBusy, setProfileBusy] = useState(false);
     const [verifyBusy, setVerifyBusy] = useState(false);
+    const [deleteBusy, setDeleteBusy] = useState(false);
     const [enrollStatus, setEnrollStatus] = useState('');
     const [profileStatus, setProfileStatus] = useState('');
     const [verifyStatus, setVerifyStatus] = useState('');
+    const [deleteStatus, setDeleteStatus] = useState('');
     const baselineStatus = getEarsLiteBaselineStatus();
 
     const recordVoiceProfileClip = async (durationMs = 6500): Promise<Blob> => {
@@ -164,6 +166,42 @@ const UserApp: React.FC = () => {
             addToast(err?.message || '声纹注册失败', 'error');
         } finally {
             setEnrollBusy(false);
+        }
+    };
+
+    const handleDeleteVoiceIdentity = async () => {
+        if (deleteBusy) return;
+        const voicePrintId = apiConfig.ears?.tencentVoicePrintId;
+        if (!voicePrintId) {
+            addToast('当前没有可删除的 VoicePrintId', 'error');
+            return;
+        }
+        if (!window.confirm('确定删除腾讯云里的声纹 ID 吗？删除后需要重新注册声纹才能验证身份。')) return;
+        setDeleteBusy(true);
+        setDeleteStatus('正在删除腾讯云声纹...');
+        try {
+            await deleteTencentSpeaker(voicePrintId);
+            updateApiConfig({
+                ears: {
+                    ...(apiConfig.ears || {}),
+                    tencentVoicePrintId: undefined,
+                },
+            });
+            const { lastIdentityStatus, lastIdentityScore, lastIdentityAt, ...voiceProfileRest } = userProfile.voiceProfile || {};
+            updateUserProfile({
+                voiceProfile: {
+                    ...voiceProfileRest,
+                    baselineCount: baselineStatus.count,
+                },
+            });
+            setDeleteStatus(`声纹已删除：${voicePrintId}`);
+            setVerifyStatus('');
+            addToast('声纹已删除，本地 VoicePrintId 已清空', 'success');
+        } catch (err: any) {
+            setDeleteStatus(err?.message || '声纹删除失败');
+            addToast(err?.message || '声纹删除失败', 'error');
+        } finally {
+            setDeleteBusy(false);
         }
     };
 
@@ -320,15 +358,16 @@ const UserApp: React.FC = () => {
                         )}
                     </div>
 
-                    {(enrollStatus || profileStatus || verifyStatus) && (
+                    {(enrollStatus || profileStatus || verifyStatus || deleteStatus) && (
                         <div className="mt-2 space-y-1">
                             {enrollStatus && <p className="text-[11px] text-indigo-600 leading-relaxed">{enrollStatus}</p>}
                             {profileStatus && <p className="text-[11px] text-sky-600 leading-relaxed">{profileStatus}</p>}
                             {verifyStatus && <p className="text-[11px] text-slate-500 leading-relaxed">{verifyStatus}</p>}
+                            {deleteStatus && <p className="text-[11px] text-rose-500 leading-relaxed">{deleteStatus}</p>}
                         </div>
                     )}
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 mt-3">
                         <button
                             type="button"
                             onClick={handleEnrollVoiceIdentity}
@@ -352,6 +391,14 @@ const UserApp: React.FC = () => {
                             className="py-2.5 rounded-2xl bg-white text-sky-600 border border-sky-100 text-xs font-bold active:scale-95 disabled:opacity-60 disabled:active:scale-100 transition-all"
                         >
                             {verifyBusy ? '处理中...' : '验证身份'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleDeleteVoiceIdentity}
+                            disabled={deleteBusy || !apiConfig.ears?.tencentVoicePrintId}
+                            className="py-2.5 rounded-2xl bg-white text-rose-500 border border-rose-100 text-xs font-bold active:scale-95 disabled:opacity-40 disabled:active:scale-100 transition-all"
+                        >
+                            {deleteBusy ? '处理中...' : '删除声纹'}
                         </button>
                     </div>
                     <p className="text-[10px] text-slate-400 leading-relaxed mt-3">
