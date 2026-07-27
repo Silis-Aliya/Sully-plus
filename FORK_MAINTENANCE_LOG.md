@@ -38,6 +38,10 @@ This section supersedes the stale repository/baseline bullets inside the copied 
 - The public fork is a frozen/current-version snapshot. Do not continue normal feature work there.
 - Future private features, voice work, upstream merge resolution, and Vercel/private deployment preparation should happen on `origin` (`Silis-Aliya/Sully-plus.git`) first.
 - Only touch `public-fork` for explicit snapshot/readme/security updates, and keep private Worker addresses out of that repository.
+- Local git is configured so normal pushes prefer Plus:
+  - `remote.pushDefault = origin`
+  - `branch.codex/plus-maintenance-doc.pushRemote = origin`
+- Use commit author `Silis-Aliya <3269831591@qq.com>` for Plus commits. Vercel Hobby + private repo blocks deployments when the commit author is mapped to an account without contributing access, as happened with the old `lanber1027 <lanber1027@outlook.com>` author.
 
 ### Remotes And Ownership
 
