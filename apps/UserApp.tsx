@@ -58,7 +58,7 @@ const UserApp: React.FC = () => {
     };
 
     const voiceProfileSummary = (profile?: typeof userProfile.voiceProfile) => {
-        if (!profile?.summary) return '还没有建立声音画像';
+        if (!profile?.summary) return '暂无';
         return profile.summary;
     };
 
@@ -285,10 +285,10 @@ const UserApp: React.FC = () => {
                 <div className="bg-white rounded-[1.75rem] shadow-[0_10px_30px_-12px_rgba(80,70,120,0.18)] border border-slate-100 p-5">
                     <div className="flex items-center justify-between gap-3 mb-3">
                         <div className="flex items-center gap-2">
-                            <span className="w-7 h-7 rounded-xl bg-sky-50 text-sky-500 flex items-center justify-center">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6.75 6.75 0 0 0 6.75-6.75V6.75a6.75 6.75 0 0 0-13.5 0V12A6.75 6.75 0 0 0 12 18.75Z" />
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 12a3.75 3.75 0 0 0 7.5 0M12 18.75v2.25" />
+                            <span className="w-7 h-7 rounded-xl bg-sky-50 text-sky-500 flex items-center justify-center overflow-visible">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4 overflow-visible">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 5.25a3 3 0 0 0-3 3v4.25a3 3 0 0 0 6 0V8.25a3 3 0 0 0-3-3Z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 11.75a5.25 5.25 0 0 0 10.5 0M12 17v2.25M9.75 19.25h4.5" />
                                 </svg>
                             </span>
                             <div>
@@ -308,7 +308,9 @@ const UserApp: React.FC = () => {
                                 <span className="text-[10px] text-slate-400">{new Date(userProfile.voiceProfile.updatedAt).toLocaleDateString()}</span>
                             )}
                         </div>
-                        <p className="text-sm text-slate-700 leading-relaxed">{voiceProfileSummary(userProfile.voiceProfile)}</p>
+                        <p className={`text-sm leading-relaxed ${userProfile.voiceProfile?.summary ? 'text-slate-700' : 'text-slate-300'}`}>
+                            {voiceProfileSummary(userProfile.voiceProfile)}
+                        </p>
                         {userProfile.voiceProfile?.lastIdentityStatus && (
                             <p className="text-[11px] text-slate-500">
                                 最近身份验证：{userProfile.voiceProfile.lastIdentityStatus === 'matched' ? '像机主本人' : userProfile.voiceProfile.lastIdentityStatus === 'unmatched' ? '不像机主本人' : '无法确定'}
