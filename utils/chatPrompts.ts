@@ -1,4 +1,4 @@
-
+﻿
 import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, DailySchedule } from '../types';
 import { ContextBuilder } from './context';
 import { DB } from './db';
@@ -120,14 +120,15 @@ function formatVoiceRelative(value: unknown): string {
     return parts.length ? parts.join('；') : '接近平时';
 }
 
-function formatSpeakerVerification(value: unknown): string {
+function formatSpeakerVerification(value: unknown, userName?: string): string {
     if (!value || typeof value !== 'object') return '';
     const result = value as Record<string, unknown>;
     const status = String(result.status || '').trim();
     const score = typeof result.score === 'number' ? `，分数=${Math.round(result.score * 10) / 10}` : '';
+    const name = userName?.trim() || '用户';
     if (status === 'matched') return '';
-    if (status === 'unmatched') return `不像机主本人${score}`;
-    if (status === 'uncertain') return `不确定是否机主${score}`;
+    if (status === 'unmatched') return `当前可能不是（${name}）${score}`;
+    if (status === 'uncertain') return `不确定是不是（${name}）${score}`;
     return '';
 }
 
@@ -141,7 +142,7 @@ function buildVoiceHistoryContent(m: Message, timeStr: string, userName?: string
     const hint = formatVoiceSignal(voice.hint ?? meta.hint);
     const toneProvider = formatVoiceSignal(voice.toneProvider ?? meta.toneProvider);
     const hasToneNarration = toneProvider.startsWith('groq:');
-    const speakerVerification = formatSpeakerVerification(voice.speakerVerification ?? meta.speakerVerification);
+    const speakerVerification = formatSpeakerVerification(voice.speakerVerification ?? meta.speakerVerification, userName);
 
     if (hasToneNarration) {
         const toneParts = [
