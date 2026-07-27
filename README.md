@@ -82,6 +82,16 @@ pnpm workbench:bridge:startup
 
 私有远程访问只建议使用绑定自己域名的 Cloudflare named tunnel；本 fork 不再依赖会生成随机公开地址的 Quick Tunnel。
 
+### 语音识别 / Ears Lite
+
+这支 fork 内置轻量语音识别链路，用于把聊天里的录音转成文字，并把基础声音特征留在本机：
+
+- 聊天录音会先走 Ears Lite：Groq Whisper 负责转写，Essentia.js 在浏览器本机提取轻量声音基线。
+- 设置页里有独立的“语音识别”大栏，声音基线、Groq Whisper、主 Worker 密钥、腾讯云说话人识别、讯飞声音特征识别分开配置，不再嵌套成一堆卡片。
+- Groq 转写支持语言选择：中文优先、English、自动。中文优先会显式传 `language=zh`，避免中文语音被 Whisper 偶发识别成其他语言；自动模式会省略 language 参数交给模型判断。
+- 腾讯云和讯飞配置保留为增强通道：腾讯云用于说话人/声纹判断，讯飞用于年龄、性别等听感特征抽样。
+- 语音 API Key、Worker 密钥、声纹 ID 等都属于私有配置，不应提交到公开仓库。
+
 ### 小红书 / XHS
 
 原聊天页已有小红书链接识别和卡片渲染。这支 fork 把相关能力补到 Code / Workbench：
