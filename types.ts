@@ -341,6 +341,7 @@ export interface APIConfig {
     groqApiKey?: string;
     groqBaseUrl?: string;
     groqAsrModel?: string;
+    groqAsrLanguage?: 'auto' | 'zh' | 'en';
     groqToneEnabled?: boolean;
     groqToneModel?: string;
     tencentSecretId?: string;

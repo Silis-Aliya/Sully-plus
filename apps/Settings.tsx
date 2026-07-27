@@ -387,6 +387,7 @@ const Settings: React.FC = () => {
   const [localEarsGroqKey, setLocalEarsGroqKey] = useState(apiConfig.ears?.groqApiKey || '');
   const [localEarsGroqBaseUrl, setLocalEarsGroqBaseUrl] = useState(apiConfig.ears?.groqBaseUrl || 'https://api.groq.com/openai/v1');
   const [localEarsGroqAsrModel, setLocalEarsGroqAsrModel] = useState(apiConfig.ears?.groqAsrModel || 'whisper-large-v3-turbo');
+  const [localEarsGroqAsrLanguage, setLocalEarsGroqAsrLanguage] = useState(apiConfig.ears?.groqAsrLanguage || 'zh');
   const [localEarsGroqToneEnabled, setLocalEarsGroqToneEnabled] = useState(!!apiConfig.ears?.groqToneEnabled);
   const [localEarsGroqToneModel, setLocalEarsGroqToneModel] = useState(apiConfig.ears?.groqToneModel || 'llama-3.3-70b-versatile');
   const [localEarsTencentSecretId, setLocalEarsTencentSecretId] = useState(apiConfig.ears?.tencentSecretId || '');
@@ -725,6 +726,7 @@ const Settings: React.FC = () => {
       setLocalEarsGroqKey(apiConfig.ears?.groqApiKey || '');
       setLocalEarsGroqBaseUrl(apiConfig.ears?.groqBaseUrl || 'https://api.groq.com/openai/v1');
       setLocalEarsGroqAsrModel(apiConfig.ears?.groqAsrModel || 'whisper-large-v3-turbo');
+      setLocalEarsGroqAsrLanguage(apiConfig.ears?.groqAsrLanguage || 'zh');
       setLocalEarsGroqToneEnabled(!!apiConfig.ears?.groqToneEnabled);
       setLocalEarsGroqToneModel(apiConfig.ears?.groqToneModel || 'llama-3.3-70b-versatile');
       setLocalEarsTencentSecretId(apiConfig.ears?.tencentSecretId || '');
@@ -794,6 +796,7 @@ const Settings: React.FC = () => {
         groqApiKey: localEarsGroqKey.trim() || undefined,
         groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
         groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
+        groqAsrLanguage: localEarsGroqAsrLanguage as 'auto' | 'zh' | 'en',
         groqToneEnabled: localEarsGroqToneEnabled,
         groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
         tencentSecretId: localEarsTencentSecretId.trim() || undefined,
@@ -815,6 +818,7 @@ const Settings: React.FC = () => {
         groqApiKey: localEarsGroqKey.trim() || undefined,
         groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
         groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
+        groqAsrLanguage: localEarsGroqAsrLanguage as 'auto' | 'zh' | 'en',
         groqToneEnabled: localEarsGroqToneEnabled,
         groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
         tencentSecretId: localEarsTencentSecretId.trim() || undefined,
@@ -943,6 +947,7 @@ const Settings: React.FC = () => {
         groqApiKey: localEarsGroqKey.trim() || undefined,
         groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
         groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
+        groqAsrLanguage: localEarsGroqAsrLanguage as 'auto' | 'zh' | 'en',
         groqToneEnabled: localEarsGroqToneEnabled,
         groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
         tencentSecretId: localEarsTencentSecretId.trim() || undefined,
@@ -978,6 +983,7 @@ const Settings: React.FC = () => {
         groqApiKey: localEarsGroqKey.trim() || undefined,
         groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
         groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
+        groqAsrLanguage: localEarsGroqAsrLanguage as 'auto' | 'zh' | 'en',
         groqToneEnabled: localEarsGroqToneEnabled,
         groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
         tencentSecretId: localEarsTencentSecretId.trim() || undefined,
@@ -2185,27 +2191,7 @@ const Settings: React.FC = () => {
             </p>
 
             <div className="space-y-4">
-                <div className="rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50/80 via-white/70 to-indigo-50/70 p-3 space-y-3">
-                    <div className="flex items-start gap-2">
-                        <div className="shrink-0 w-8 h-8 rounded-xl bg-sky-100 text-sky-600 flex items-center justify-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
-                                <path d="M8.25 4.5a3.75 3.75 0 0 1 7.5 0v6a3.75 3.75 0 0 1-7.5 0v-6Z" />
-                                <path d="M6 10.5a.75.75 0 0 1 1.5 0 4.5 4.5 0 1 0 9 0 .75.75 0 0 1 1.5 0 6.002 6.002 0 0 1-5.25 5.955v2.295h2.25a.75.75 0 0 1 0 1.5h-6a.75.75 0 0 1 0-1.5h2.25v-2.295A6.002 6.002 0 0 1 6 10.5Z" />
-                            </svg>
-                        </div>
-                        <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                                <h3 className="text-sm font-bold text-slate-700">语音识别 / Ears Lite</h3>
-                                <span className="text-[9px] font-bold text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded-full">录音转写</span>
-                                <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full">声纹</span>
-                            </div>
-                            <p className="text-[11px] text-slate-500 leading-relaxed mt-1">
-                                默认用 Groq + SullyOS 内置 Ears Lite：手机电脑都能直接录音转写，并用 Essentia.js 在本机做轻量声音特征。腾讯云/讯飞是后续声纹和画像增强。
-                            </p>
-                        </div>
-                    </div>
-
-                    <div className="rounded-xl bg-white/75 border border-emerald-100/80 p-3 space-y-2">
+                    <div className="border-t border-emerald-100 pt-3 space-y-2">
                         <div className="flex items-center justify-between gap-2">
                             <div>
                                 <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">声音基线</label>
@@ -2246,20 +2232,25 @@ const Settings: React.FC = () => {
                         </div>
                     </div>
 
-                    <div className="rounded-xl bg-white/70 border border-sky-100/80 p-3 space-y-2">
+                    <div className="border-t border-sky-100 pt-3 space-y-2">
                         <div className="flex items-center justify-between gap-2">
                             <label className="text-[10px] font-bold text-sky-700 uppercase tracking-widest">Groq Whisper</label>
                             <span className="text-[9px] font-bold text-white bg-sky-500 px-1.5 py-0.5 rounded-full">必填</span>
                         </div>
                         <input type="password" name="ears-groq-key" autoComplete="new-password" spellCheck={false} value={localEarsGroqKey} onChange={(e) => setLocalEarsGroqKey(e.target.value)} placeholder="Groq API Key（语音转写核心）" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                             <input type="text" value={localEarsGroqBaseUrl} onChange={(e) => setLocalEarsGroqBaseUrl(e.target.value)} placeholder="https://api.groq.com/openai/v1" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
                             <select value={localEarsGroqAsrModel} onChange={(e) => setLocalEarsGroqAsrModel(e.target.value)} className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all">
                                 <option value="whisper-large-v3-turbo">whisper-large-v3-turbo（推荐，便宜快）</option>
                                 <option value="whisper-large-v3">whisper-large-v3（质量更稳）</option>
                             </select>
+                            <select value={localEarsGroqAsrLanguage} onChange={(e) => setLocalEarsGroqAsrLanguage(e.target.value as 'auto' | 'zh' | 'en')} className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-700 focus:bg-white transition-all">
+                                <option value="zh">识别语言：中文优先</option>
+                                <option value="en">识别语言：English</option>
+                                <option value="auto">识别语言：自动</option>
+                            </select>
                         </div>
-                        <div className="rounded-xl bg-sky-50/70 border border-sky-100 p-3 space-y-2">
+                        <div className="border-t border-sky-100/70 pt-3 space-y-2">
                             <label className="flex items-center justify-between gap-3 text-[11px] font-bold text-sky-800">
                                 <span>
                                     Groq LLM 语气转述
@@ -2330,7 +2321,7 @@ const Settings: React.FC = () => {
                         )}
                     </div>
 
-                    <div className="rounded-xl bg-amber-50/80 border border-amber-100 p-3 space-y-2">
+                    <div className="border-t border-amber-100 pt-3 space-y-2">
                         <div className="flex items-start justify-between gap-3">
                             <div>
                                 <label className="text-[10px] font-bold text-amber-700 uppercase tracking-widest">主 Worker 密钥配置</label>
@@ -2340,7 +2331,7 @@ const Settings: React.FC = () => {
                             </div>
                             <span className="shrink-0 text-[9px] font-bold text-amber-700 bg-white/70 border border-amber-100 px-1.5 py-0.5 rounded-full">不是前端 Key</span>
                         </div>
-                        <div className="rounded-lg bg-white/75 border border-amber-100 p-2 text-[10px] text-amber-900 leading-relaxed">
+                        <div className="bg-amber-50/70 border border-amber-100 p-2 text-[10px] text-amber-900 leading-relaxed">
                             <p>当前主 Worker 地址：</p>
                             <p className="font-mono break-all text-amber-700">{getProxyWorkerUrl()}</p>
                             <p className="mt-1">
@@ -2381,12 +2372,12 @@ const Settings: React.FC = () => {
                         </button>
                     </div>
 
-                    <div className="rounded-xl bg-white/70 border border-indigo-100/80 p-3 space-y-2">
+                    <div className="border-t border-indigo-100 pt-3 space-y-2">
                         <div className="flex items-center justify-between gap-2">
                             <label className="text-[10px] font-bold text-indigo-700 uppercase tracking-widest">腾讯云说话人识别</label>
                             <span className="text-[9px] font-bold text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded-full">增强：是不是你</span>
                         </div>
-                        <div className="rounded-xl bg-indigo-50/70 border border-indigo-100 px-3 py-2.5">
+                        <div className="bg-indigo-50/70 border border-indigo-100 px-3 py-2.5">
                             <div className="flex items-center justify-between gap-2">
                                 <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-widest">VoicePrintId</span>
                                 <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${localEarsTencentVoicePrintId.trim() ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
@@ -2453,7 +2444,7 @@ const Settings: React.FC = () => {
                         )}
                     </div>
 
-                    <div className="rounded-xl bg-white/70 border border-violet-100/80 p-3 space-y-2">
+                    <div className="border-t border-violet-100 pt-3 space-y-2">
                         <div className="flex items-center justify-between gap-2">
                             <label className="text-[10px] font-bold text-violet-700 uppercase tracking-widest">讯飞声音特征识别</label>
                             <span className="text-[9px] font-bold text-violet-600 bg-violet-100 px-1.5 py-0.5 rounded-full">抽样：年龄/性别听感</span>
@@ -2519,7 +2510,6 @@ const Settings: React.FC = () => {
                     >
                         {earsStatusMsg || '保存'}
                     </button>
-                </div>
             </div>
         </SettingsSection>
 

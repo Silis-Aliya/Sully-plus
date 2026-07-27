@@ -352,17 +352,20 @@ export async function transcribeWithGroq(blob: Blob, config: {
   baseUrl?: string;
   model?: string;
   mimeType?: string;
+  language?: string;
 }): Promise<string> {
   const apiKey = (config.apiKey || '').trim();
   if (!apiKey) throw new Error('缺少 Groq API Key');
   const base = (config.baseUrl || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
   const model = (config.model || 'whisper-large-v3-turbo').trim();
+  const language = (config.language === undefined ? 'zh' : config.language).trim();
   const ext = (config.mimeType || blob.type).includes('mp4') ? 'm4a'
     : (config.mimeType || blob.type).includes('ogg') ? 'ogg'
     : 'webm';
   const form = new FormData();
   form.append('file', blob, `sully-voice.${ext}`);
   form.append('model', model);
+  if (language) form.append('language', language);
   const res = await fetch(`${base}/audio/transcriptions`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },

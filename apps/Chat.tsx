@@ -1188,6 +1188,9 @@ const Chat: React.FC = () => {
                     baseUrl: apiConfig.ears?.groqBaseUrl,
                     model: apiConfig.ears?.groqAsrModel,
                     mimeType,
+                    language: apiConfig.ears?.groqAsrLanguage === 'auto'
+                        ? ''
+                        : (apiConfig.ears?.groqAsrLanguage || 'zh'),
                 }),
             ]);
             let voiceTone = {
