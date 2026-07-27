@@ -18,13 +18,46 @@ Important rules:
 - Keep this file updated with what changed, risk points, and follow-up checks.
 
 Current known baseline:
-- upstream/master merged through a5e8230.
+- upstream/master checked through 7602a5b; the current fork is 64 commits ahead and 0 commits behind.
 - Current fork release branch is `codex/merge-upstream-20260721`.
-- Last verified full suite passed at 127 files / 1212 tests after the action-receipt, portable-sync, XHS Lite, and upstream compatibility fixes.
-- Last verified production build passed after the music sharing, together-listening, Code/XHS, backup, and upstream merge fixes.
+- Current verified release commit is `4949d6b`; `origin/codex/merge-upstream-20260721` and `Silis-Aliya/sully-change` `master` point to it.
+- Last verified full suite passed at 147 files / 1284 tests.
+- Last verified production build passed after the together-listening, migration, PersonaSim parsing, clock/music rendering, and OS context isolation changes.
 - The feature branch and Vercel production repository `Silis-Aliya/sully-change` `master` must point to the same verified release commit.
 - Vercel should auto-deploy from `master` after the push; verify the deployment dashboard before treating production as updated.
+- Pre-context-split recovery tag: `backup/pre-context-split` at `e968fc3`. This tag includes the earlier fork features but predates the 2026-07-26 OS context split.
 ```
+
+## 2026-07-26 Verified Production Release And Recovery Point
+
+- Published verified release `4949d6b` to both `origin/codex/merge-upstream-20260721` and `Silis-Aliya/sully-change` `master`.
+- Confirmed the production URL `https://sully-change.vercel.app` returned HTTP 200 after the `master` push.
+- Added annotated recovery tag `backup/pre-context-split` at `e968fc3` and pushed it to `Silis-Aliya/sully-change`.
+- The recovery tag is not the pure upstream version. It preserves the fork features present at that point, including the together-listening work, while providing a known state before the OS context performance split.
+- Do not publish `upstream/master` directly to Vercel. Merge upstream into `codex/merge-upstream-20260721`, preserve fork behavior, run the full suite/build, then publish the verified merge result with `git push vercel-target HEAD:master`.
+- If a domain-context regression is suspected, first switch only the affected component back to the retained aggregate `useOS()` compatibility hook. Do not roll back unrelated fork features or user data.
+
+### Features Included In `4949d6b`
+
+- Together-listening requests use the live playback snapshot at generation time, including the current track and available lyric window.
+- Character-triggered next-track and song-pick actions remember attribution only while that selected track remains current, preventing later replies from blaming the user for the character's own selection.
+- Full import and QuickSync end the device-local together-listening session after successful migration, clear related wake schedules and transient attribution, and inject one hidden migration-ended state for affected characters.
+- Portable music settings keep durable queue/current-track/play-mode data while excluding the live together session and together-wake schedule.
+- PersonaSim parsing moved into tested utilities and now repairs common trailing-comma/control-character JSON failures while normalizing missing nested arrays before rendering archived or newly generated scripts.
+- The UI clock moved from the aggregate OS context to a minute-aligned `ClockContext`.
+- Music progress React updates run only while visible progress UI consumers exist; prompt/snapshot readers still read the live audio position and derive the current lyric directly.
+- OS state was split into navigation, character data, alerts, message activity, system logs, backup, appearance, and system configuration domains. The aggregate `useOS()` remains available for compatibility and rollback diagnosis.
+- The active App outlet is isolated in `AppViewport`; Toast/error state is isolated in `GlobalAlerts`, so ordinary Toast and unread updates no longer force the active App subtree through the phone-shell render path.
+- Chat, Launcher, Settings, StatusBar, desktop variants, player overlays, and other high-frequency surfaces now use the narrower domain hooks.
+
+### Known Risks And Upstream Merge Rules
+
+- Upstream still uses one aggregate `OSContext`, updates its UI clock every second, and updates music progress on every audio `timeupdate`. Preserve the fork's clock/music/domain isolation when resolving upstream conflicts.
+- Upstream keeps the global `ErrorDialog` outside `sully-shell-content`. In `4949d6b`, `ErrorDialog` moved inside `GlobalAlerts`, which is rendered under an `overflow-hidden` shell. This is a fork-only UI risk on iOS/PWA safe-area layouts and should be corrected by moving only `ErrorDialog` back outside while leaving Toast isolation intact.
+- `AppViewport` currently reads `activeCharacterId` through the broad `CharacterDataContext`; worldbook/song/novel/user-profile changes can still rerender the outlet, although they do not remount it while `activeApp` is unchanged.
+- The legacy aggregate `NotificationContext` and `useOS()` remain intentionally. Do not remove them until remaining consumers are migrated and real render-behavior tests exist.
+- When upstream adds an OS field, land the business behavior in the aggregate context first, then expose it through a narrow domain only when the ownership and update frequency are clear.
+- Verification for this release: 147 test files / 1284 tests passed, production build passed, and `git diff --check` passed.
 
 ## 2026-07-26 Clock Context Performance Split
 

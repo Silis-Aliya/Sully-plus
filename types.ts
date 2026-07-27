@@ -337,6 +337,20 @@ export interface APIConfig {
     fishaudio?: string;
     dateVoice?: string;
   };
+  ears?: {
+    groqApiKey?: string;
+    groqBaseUrl?: string;
+    groqAsrModel?: string;
+    groqToneEnabled?: boolean;
+    groqToneModel?: string;
+    tencentSecretId?: string;
+    tencentSecretKey?: string;
+    tencentAppId?: string;
+    tencentVoicePrintId?: string;
+    xfyunAppId?: string;
+    xfyunApiKey?: string;
+    xfyunApiSecret?: string;
+  };
   // Replicate token (r8_xxx) for ACE-Step song generation in 写歌 App.
   aceStepApiKey?: string;
   model: string;
@@ -2576,6 +2590,7 @@ export interface UserProfile {
     name: string;
     avatar: string;
     bio: string;
+    voiceProfile?: UserVoiceProfile;
     /** 分角色聊天头像（档案 App 设置）：charId → 头像（http(s) URL 或 data:image）。
      *  私聊里「你」的头像取 perCharAvatars[charId] || avatar（上面的整体头像作宏观默认）；
      *  群聊/其他场合仍用整体头像。删角色留下的孤儿键无害，读取端永远按当前 charId 取。 */
@@ -2585,6 +2600,20 @@ export interface UserProfile {
      * enabled=false（登出）时，聊天里给角色的"用户在彼方"提示词随之消失。
      */
     vrState?: UserVRState;
+}
+
+export interface UserVoiceProfile {
+    updatedAt?: number;
+    baselineCount?: number;
+    summary?: string;
+    gender?: string;
+    age?: string;
+    genderScores?: { female?: number; male?: number };
+    ageScores?: { child?: number; middle?: number; old?: number };
+    lastIdentityStatus?: 'matched' | 'unmatched' | 'uncertain';
+    lastIdentityScore?: number;
+    lastIdentityAt?: number;
+    notes?: string[];
 }
 
 export interface UserVRState {

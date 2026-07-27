@@ -69,6 +69,7 @@ export const BACKUP_LOCAL_STORAGE_EXACT_KEYS: readonly string[] = [
     'sully_music_cfg_v1',
     'sully_music_state_v1',
     'sully_music_local_album_v1',
+    'sully_ears_lite_baseline_v1',
 ] as const;
 
 export const LOCAL_SETTINGS_IMPORTED_EVENT = 'sully-local-settings-imported';

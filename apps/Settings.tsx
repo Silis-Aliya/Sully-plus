@@ -29,6 +29,7 @@ import ApiCallLogModal from '../components/settings/ApiCallLogModal';
 import { DB } from '../utils/db';
 import type { CloudBackupProvider } from '../types';
 import { getBackupReminderState, setBackupReminderIntervalDays, daysSinceLastBackup, BACKUP_REMINDER_MIN_DAYS, BACKUP_REMINDER_MAX_DAYS } from '../utils/backupReminder';
+import { analyzeVoiceWithEarsLite, EARS_LITE_BASELINE_TARGET, getEarsLiteBaselineStatus, resetEarsLiteBaseline } from '../utils/earsLite';
 
 // hot_news（orz.ai）可选热榜平台。key 必须与 API 的 ?platform= 完全一致。
 const HOTNEWS_PLATFORM_OPTIONS: { key: string; label: string }[] = [
@@ -383,6 +384,25 @@ const Settings: React.FC = () => {
   const [localVoicePromptMinimax, setLocalVoicePromptMinimax] = useState(apiConfig.voicePrompts?.minimax || '');
   const [localVoicePromptFish, setLocalVoicePromptFish] = useState(apiConfig.voicePrompts?.fishaudio || '');
   const [localVoicePromptDate, setLocalVoicePromptDate] = useState(apiConfig.voicePrompts?.dateVoice || '');
+  const [localEarsGroqKey, setLocalEarsGroqKey] = useState(apiConfig.ears?.groqApiKey || '');
+  const [localEarsGroqBaseUrl, setLocalEarsGroqBaseUrl] = useState(apiConfig.ears?.groqBaseUrl || 'https://api.groq.com/openai/v1');
+  const [localEarsGroqAsrModel, setLocalEarsGroqAsrModel] = useState(apiConfig.ears?.groqAsrModel || 'whisper-large-v3-turbo');
+  const [localEarsGroqToneEnabled, setLocalEarsGroqToneEnabled] = useState(!!apiConfig.ears?.groqToneEnabled);
+  const [localEarsGroqToneModel, setLocalEarsGroqToneModel] = useState(apiConfig.ears?.groqToneModel || 'llama-3.3-70b-versatile');
+  const [localEarsTencentSecretId, setLocalEarsTencentSecretId] = useState(apiConfig.ears?.tencentSecretId || '');
+  const [localEarsTencentSecretKey, setLocalEarsTencentSecretKey] = useState(apiConfig.ears?.tencentSecretKey || '');
+  const [localEarsTencentAppId, setLocalEarsTencentAppId] = useState(apiConfig.ears?.tencentAppId || '');
+  const [localEarsTencentVoicePrintId, setLocalEarsTencentVoicePrintId] = useState(apiConfig.ears?.tencentVoicePrintId || '');
+  const [localEarsXfyunAppId, setLocalEarsXfyunAppId] = useState(apiConfig.ears?.xfyunAppId || '');
+  const [localEarsXfyunApiKey, setLocalEarsXfyunApiKey] = useState(apiConfig.ears?.xfyunApiKey || '');
+  const [localEarsXfyunApiSecret, setLocalEarsXfyunApiSecret] = useState(apiConfig.ears?.xfyunApiSecret || '');
+  const [earsGroqGuideOpen, setEarsGroqGuideOpen] = useState(false);
+  const [earsTencentGuideOpen, setEarsTencentGuideOpen] = useState(false);
+  const [earsXfyunGuideOpen, setEarsXfyunGuideOpen] = useState(false);
+  const [earsStatusMsg, setEarsStatusMsg] = useState('');
+  const [earsBaselineCount, setEarsBaselineCount] = useState(() => getEarsLiteBaselineStatus().count);
+  const [earsBaselineRunning, setEarsBaselineRunning] = useState(false);
+  const [earsBaselineMessage, setEarsBaselineMessage] = useState('');
   const [showVoicePrompts, setShowVoicePrompts] = useState(false);
   const [showAceStepGuide, setShowAceStepGuide] = useState(false);
   const [otherStatusMsg, setOtherStatusMsg] = useState('');
@@ -702,6 +722,18 @@ const Settings: React.FC = () => {
       setLocalVoicePromptMinimax(apiConfig.voicePrompts?.minimax || '');
       setLocalVoicePromptFish(apiConfig.voicePrompts?.fishaudio || '');
       setLocalVoicePromptDate(apiConfig.voicePrompts?.dateVoice || '');
+      setLocalEarsGroqKey(apiConfig.ears?.groqApiKey || '');
+      setLocalEarsGroqBaseUrl(apiConfig.ears?.groqBaseUrl || 'https://api.groq.com/openai/v1');
+      setLocalEarsGroqAsrModel(apiConfig.ears?.groqAsrModel || 'whisper-large-v3-turbo');
+      setLocalEarsGroqToneEnabled(!!apiConfig.ears?.groqToneEnabled);
+      setLocalEarsGroqToneModel(apiConfig.ears?.groqToneModel || 'llama-3.3-70b-versatile');
+      setLocalEarsTencentSecretId(apiConfig.ears?.tencentSecretId || '');
+      setLocalEarsTencentSecretKey(apiConfig.ears?.tencentSecretKey || '');
+      setLocalEarsTencentAppId(apiConfig.ears?.tencentAppId || '');
+      setLocalEarsTencentVoicePrintId(apiConfig.ears?.tencentVoicePrintId || '');
+      setLocalEarsXfyunAppId(apiConfig.ears?.xfyunAppId || '');
+      setLocalEarsXfyunApiKey(apiConfig.ears?.xfyunApiKey || '');
+      setLocalEarsXfyunApiSecret(apiConfig.ears?.xfyunApiSecret || '');
   }, [apiConfig]);
 
   const loadPreset = (preset: typeof apiPresets[0]) => {
@@ -758,9 +790,136 @@ const Settings: React.FC = () => {
         fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
         dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
       },
+      ears: {
+        groqApiKey: localEarsGroqKey.trim() || undefined,
+        groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
+        groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
+        groqToneEnabled: localEarsGroqToneEnabled,
+        groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
+        tencentSecretId: localEarsTencentSecretId.trim() || undefined,
+        tencentSecretKey: localEarsTencentSecretKey.trim() || undefined,
+        tencentAppId: localEarsTencentAppId.trim() || undefined,
+        tencentVoicePrintId: localEarsTencentVoicePrintId.trim() || undefined,
+        xfyunAppId: localEarsXfyunAppId.trim() || undefined,
+        xfyunApiKey: localEarsXfyunApiKey.trim() || undefined,
+        xfyunApiSecret: localEarsXfyunApiSecret.trim() || undefined,
+      },
     });
     setOtherStatusMsg('已保存');
     setTimeout(() => setOtherStatusMsg(''), 2000);
+  };
+
+  const handleSaveEarsApis = () => {
+    updateApiConfig({
+      ears: {
+        groqApiKey: localEarsGroqKey.trim() || undefined,
+        groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
+        groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
+        groqToneEnabled: localEarsGroqToneEnabled,
+        groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
+        tencentSecretId: localEarsTencentSecretId.trim() || undefined,
+        tencentSecretKey: localEarsTencentSecretKey.trim() || undefined,
+        tencentAppId: localEarsTencentAppId.trim() || undefined,
+        tencentVoicePrintId: localEarsTencentVoicePrintId.trim() || undefined,
+        xfyunAppId: localEarsXfyunAppId.trim() || undefined,
+        xfyunApiKey: localEarsXfyunApiKey.trim() || undefined,
+        xfyunApiSecret: localEarsXfyunApiSecret.trim() || undefined,
+      },
+    });
+    setEarsStatusMsg('已保存');
+    setTimeout(() => setEarsStatusMsg(''), 2000);
+  };
+
+  const refreshEarsBaselineStatus = () => {
+    setEarsBaselineCount(getEarsLiteBaselineStatus().count);
+  };
+
+  const recordEarsBaselineClip = async (durationMs = 2600): Promise<Blob> => {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      throw new Error('当前浏览器不支持录音');
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    try {
+      const mimeCandidates = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+        'audio/ogg;codecs=opus',
+      ];
+      const mimeType = mimeCandidates.find(type => {
+        try { return MediaRecorder.isTypeSupported(type); } catch { return false; }
+      }) || '';
+      return await new Promise<Blob>((resolve, reject) => {
+        const chunks: BlobPart[] = [];
+        let recorder: MediaRecorder;
+        try {
+          recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+        } catch (err) {
+          reject(err);
+          return;
+        }
+        const timer = window.setTimeout(() => {
+          try { if (recorder.state !== 'inactive') recorder.stop(); } catch {}
+        }, durationMs);
+        recorder.ondataavailable = event => {
+          if (event.data && event.data.size > 0) chunks.push(event.data);
+        };
+        recorder.onerror = () => {
+          window.clearTimeout(timer);
+          reject(new Error('录音失败'));
+        };
+        recorder.onstop = () => {
+          window.clearTimeout(timer);
+          const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
+          if (blob.size < 500) reject(new Error('录音太短或没有声音，请靠近麦克风再试'));
+          else resolve(blob);
+        };
+        recorder.start();
+      });
+    } finally {
+      stream.getTracks().forEach(track => track.stop());
+    }
+  };
+
+  const handleBuildEarsBaseline = async () => {
+    if (earsBaselineRunning) return;
+    setEarsBaselineRunning(true);
+    try {
+      let status = getEarsLiteBaselineStatus();
+      setEarsBaselineCount(status.count);
+      if (status.ready) {
+        setEarsBaselineMessage('声音基线已经完成');
+        addToast('声音基线已经完成', 'success');
+        return;
+      }
+      const remaining = Math.max(0, EARS_LITE_BASELINE_TARGET - status.count);
+      addToast(`开始建立声音基线，请自然说话 ${remaining} 段`, 'info');
+      for (let i = 0; i < remaining; i++) {
+        status = getEarsLiteBaselineStatus();
+        const nextIndex = Math.min(status.count + 1, EARS_LITE_BASELINE_TARGET);
+        setEarsBaselineMessage(`正在采样 ${nextIndex}/${EARS_LITE_BASELINE_TARGET}，请自然说话...`);
+        const blob = await recordEarsBaselineClip();
+        await analyzeVoiceWithEarsLite(blob);
+        refreshEarsBaselineStatus();
+        await new Promise(resolve => window.setTimeout(resolve, 450));
+      }
+      setEarsBaselineMessage('声音基线已完成');
+      addToast('声音基线已完成', 'success');
+    } catch (err: any) {
+      const message = err?.message || '声音基线建立失败';
+      setEarsBaselineMessage(message);
+      addToast(message, 'error');
+    } finally {
+      setEarsBaselineRunning(false);
+      refreshEarsBaselineStatus();
+    }
+  };
+
+  const handleResetEarsBaseline = () => {
+    resetEarsLiteBaseline();
+    refreshEarsBaselineStatus();
+    setEarsBaselineMessage('已清空声音基线');
+    addToast('已清空声音基线', 'success');
   };
 
   // 选「谁来做语音生成」立即落库——不需要再点下面的保存。
@@ -779,6 +938,20 @@ const Settings: React.FC = () => {
         minimax: localVoicePromptMinimax.trim() ? localVoicePromptMinimax : undefined,
         fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
         dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
+      },
+      ears: {
+        groqApiKey: localEarsGroqKey.trim() || undefined,
+        groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
+        groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
+        groqToneEnabled: localEarsGroqToneEnabled,
+        groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
+        tencentSecretId: localEarsTencentSecretId.trim() || undefined,
+        tencentSecretKey: localEarsTencentSecretKey.trim() || undefined,
+        tencentAppId: localEarsTencentAppId.trim() || undefined,
+        tencentVoicePrintId: localEarsTencentVoicePrintId.trim() || undefined,
+        xfyunAppId: localEarsXfyunAppId.trim() || undefined,
+        xfyunApiKey: localEarsXfyunApiKey.trim() || undefined,
+        xfyunApiSecret: localEarsXfyunApiSecret.trim() || undefined,
       },
       ttsProvider: provider,
     });
@@ -800,6 +973,20 @@ const Settings: React.FC = () => {
         minimax: localVoicePromptMinimax.trim() ? localVoicePromptMinimax : undefined,
         fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
         dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
+      },
+      ears: {
+        groqApiKey: localEarsGroqKey.trim() || undefined,
+        groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
+        groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
+        groqToneEnabled: localEarsGroqToneEnabled,
+        groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
+        tencentSecretId: localEarsTencentSecretId.trim() || undefined,
+        tencentSecretKey: localEarsTencentSecretKey.trim() || undefined,
+        tencentAppId: localEarsTencentAppId.trim() || undefined,
+        tencentVoicePrintId: localEarsTencentVoicePrintId.trim() || undefined,
+        xfyunAppId: localEarsXfyunAppId.trim() || undefined,
+        xfyunApiKey: localEarsXfyunApiKey.trim() || undefined,
+        xfyunApiSecret: localEarsXfyunApiSecret.trim() || undefined,
       },
     });
   };
@@ -1733,6 +1920,330 @@ const Settings: React.FC = () => {
                 <p className="text-[11px] text-slate-400 -mt-1 pl-1 leading-relaxed">
                     🎙️ 语音生成支持 <span className="font-semibold text-slate-500">MiniMax</span> 和 <span className="font-semibold text-slate-500">鱼声 Fish</span> 两家——下面两边都可以填，最后在底部「当前语音引擎」里二选一。
                 </p>
+
+                <div className="rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50/80 via-white/70 to-indigo-50/70 p-3 space-y-3">
+                    <div className="flex items-start gap-2">
+                        <div className="shrink-0 w-8 h-8 rounded-xl bg-sky-100 text-sky-600 flex items-center justify-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                                <path d="M8.25 4.5a3.75 3.75 0 0 1 7.5 0v6a3.75 3.75 0 0 1-7.5 0v-6Z" />
+                                <path d="M6 10.5a.75.75 0 0 1 1.5 0 4.5 4.5 0 1 0 9 0 .75.75 0 0 1 1.5 0 6.002 6.002 0 0 1-5.25 5.955v2.295h2.25a.75.75 0 0 1 0 1.5h-6a.75.75 0 0 1 0-1.5h2.25v-2.295A6.002 6.002 0 0 1 6 10.5Z" />
+                            </svg>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                                <h3 className="text-sm font-bold text-slate-700">语音识别 / Ears Lite</h3>
+                                <span className="text-[9px] font-bold text-sky-700 bg-sky-100 px-1.5 py-0.5 rounded-full">录音转写</span>
+                                <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded-full">声纹</span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 leading-relaxed mt-1">
+                                默认用 Groq + SullyOS 内置 Ears Lite：手机电脑都能直接录音转写，并用 Essentia.js 在本机做轻量声音特征。腾讯云/讯飞是后续声纹和画像增强。
+                            </p>
+                        </div>
+                    </div>
+
+                    <div className="rounded-xl bg-white/75 border border-emerald-100/80 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                            <div>
+                                <label className="text-[10px] font-bold text-emerald-700 uppercase tracking-widest">声音基线</label>
+                                <p className="text-[10px] text-slate-400 leading-relaxed mt-1">
+                                    在设置里建立，不会发进聊天。完成后角色才能看到“相对平时”的声音线索。
+                                </p>
+                            </div>
+                            <span className={`shrink-0 text-[10px] font-bold px-2 py-1 rounded-full ${earsBaselineCount >= EARS_LITE_BASELINE_TARGET ? 'text-emerald-700 bg-emerald-100' : 'text-sky-700 bg-sky-100'}`}>
+                                {Math.min(earsBaselineCount, EARS_LITE_BASELINE_TARGET)}/{EARS_LITE_BASELINE_TARGET}
+                            </span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                            <div
+                                className="h-full rounded-full bg-emerald-400 transition-all duration-300"
+                                style={{ width: `${Math.min(100, (earsBaselineCount / EARS_LITE_BASELINE_TARGET) * 100)}%` }}
+                            />
+                        </div>
+                        {earsBaselineMessage && (
+                            <p className="text-[10px] text-emerald-700 leading-relaxed">{earsBaselineMessage}</p>
+                        )}
+                        <div className="grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onClick={handleBuildEarsBaseline}
+                                disabled={earsBaselineRunning}
+                                className="py-2 rounded-xl bg-emerald-500 text-white text-[11px] font-bold active:scale-95 disabled:opacity-60 disabled:active:scale-100 transition-all"
+                            >
+                                {earsBaselineRunning ? '正在采样...' : earsBaselineCount >= EARS_LITE_BASELINE_TARGET ? '重新检测状态' : '建立基线'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleResetEarsBaseline}
+                                disabled={earsBaselineRunning || earsBaselineCount <= 0}
+                                className="py-2 rounded-xl bg-white text-emerald-700 border border-emerald-100 text-[11px] font-bold active:scale-95 disabled:opacity-50 disabled:active:scale-100 transition-all"
+                            >
+                                清空
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="rounded-xl bg-white/70 border border-sky-100/80 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                            <label className="text-[10px] font-bold text-sky-700 uppercase tracking-widest">Groq Whisper</label>
+                            <span className="text-[9px] font-bold text-white bg-sky-500 px-1.5 py-0.5 rounded-full">必填</span>
+                        </div>
+                        <input type="password" name="ears-groq-key" autoComplete="new-password" spellCheck={false} value={localEarsGroqKey} onChange={(e) => setLocalEarsGroqKey(e.target.value)} placeholder="Groq API Key（语音转写核心）" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input type="text" value={localEarsGroqBaseUrl} onChange={(e) => setLocalEarsGroqBaseUrl(e.target.value)} placeholder="https://api.groq.com/openai/v1" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
+                            <select value={localEarsGroqAsrModel} onChange={(e) => setLocalEarsGroqAsrModel(e.target.value)} className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all">
+                                <option value="whisper-large-v3-turbo">whisper-large-v3-turbo（推荐，便宜快）</option>
+                                <option value="whisper-large-v3">whisper-large-v3（质量更稳）</option>
+                            </select>
+                        </div>
+                        <div className="rounded-xl bg-sky-50/70 border border-sky-100 p-3 space-y-2">
+                            <label className="flex items-center justify-between gap-3 text-[11px] font-bold text-sky-800">
+                                <span>
+                                    Groq LLM 语气转述
+                                    <span className="ml-1 text-[9px] font-bold text-sky-500">可选 · 更像 ears</span>
+                                </span>
+                                <input
+                                    type="checkbox"
+                                    checked={localEarsGroqToneEnabled}
+                                    onChange={(e) => setLocalEarsGroqToneEnabled(e.target.checked)}
+                                    className="w-4 h-4 accent-sky-500"
+                                />
+                            </label>
+                            <select
+                                value={localEarsGroqToneModel}
+                                onChange={(e) => setLocalEarsGroqToneModel(e.target.value)}
+                                disabled={!localEarsGroqToneEnabled}
+                                className="w-full bg-white/80 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all disabled:opacity-50"
+                            >
+                                <option value="llama-3.3-70b-versatile">llama-3.3-70b-versatile（原版 ears 同款）</option>
+                                <option value="openai/gpt-oss-120b">openai/gpt-oss-120b（Groq 推荐替代）</option>
+                                <option value="openai/gpt-oss-20b">openai/gpt-oss-20b（更省）</option>
+                                <option value="llama-3.1-8b-instant">llama-3.1-8b-instant（极省，较粗）</option>
+                            </select>
+                            <p className="text-[10px] text-sky-500 leading-relaxed">
+                                开启后每条语音会多调用一次 Groq 文本模型，把转写、声学特征和个人基线简短转成 emotion / confidence / hint；关闭时继续用本地规则。
+                            </p>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                            只填 Groq Key 就能用：手机/电脑直接走内置 Ears Lite（Essentia.js 本地特征 + Groq 转写）。不需要另部署语音服务，也不需要电脑一直开着。
+                        </p>
+                        <button type="button" onClick={() => setEarsGroqGuideOpen(v => !v)} className="text-[11px] font-bold text-sky-600 underline">
+                            获取 Groq 教程 {earsGroqGuideOpen ? '▲' : '▼'}
+                        </button>
+                        {earsGroqGuideOpen && (
+                            <div className="rounded-xl bg-sky-50/80 border border-sky-100 p-3 space-y-2 text-[10px] text-sky-900 leading-relaxed">
+                                <div className="flex gap-2">
+                                    <a href="https://console.groq.com/home" target="_blank" rel="noopener noreferrer" className="flex-1 py-2 bg-sky-500 text-white rounded-lg text-center text-[11px] font-bold active:scale-95 transition-transform">
+                                        打开 Groq Console ↗
+                                    </a>
+                                </div>
+                                <p>
+                                    <b>最省事流程：</b><br/>
+                                    1. 打开 <a href="https://console.groq.com/home" target="_blank" rel="noopener noreferrer" className="font-mono underline font-bold text-sky-700">https://console.groq.com/home</a>，建议用 <b>Google 账号</b>注册/登录（个人邮箱和 GitHub 目前可能无法登录 Groq），然后进 <b>API Keys</b>，点 <b>Create API Key</b>，复制完整 Key（包含开头的 <span className="font-mono">gsk_</span>）。<br/>
+                                    2. 回到这里，把 <b>Groq API Key</b> 填进上面的输入框，保存。<br/>
+                                    3. 之后手机/电脑都会走内置 Ears Lite：Essentia.js 在本机提取声音特征，Groq Whisper 做转写。
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        const guide = [
+                                            'SullyOS 内置 Ears Lite 配置步骤：',
+                                            '1. 去 https://console.groq.com/home 登录 Groq Console，建议用 Google 账号注册/登录（个人邮箱和 GitHub 目前可能无法登录 Groq），再进入 API Keys 创建 Groq API Key，复制完整 Key（包含开头的 gsk_）。',
+                                            '2. 回到 SullyOS 设置 → 其他 API → 语音识别 / Ears Lite，把完整 Groq API Key 填进去并保存。',
+                                            '3. 之后手机/电脑都会走内置 Ears Lite：Essentia.js 在本机提取声音特征，Groq Whisper 做转写。',
+                                        ].join('\n');
+                                        try {
+                                            await navigator.clipboard.writeText(guide);
+                                            addToast('Groq / Ears Lite 配置步骤已复制', 'success');
+                                        } catch {
+                                            addToast('复制失败，请手动选择教程文字', 'error');
+                                        }
+                                    }}
+                                    className="w-full py-1.5 bg-white text-sky-700 border border-sky-200 rounded-lg text-[11px] font-bold active:scale-95 transition-transform"
+                                >
+                                    复制配置步骤
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="rounded-xl bg-amber-50/80 border border-amber-100 p-3 space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <label className="text-[10px] font-bold text-amber-700 uppercase tracking-widest">主 Worker 密钥配置</label>
+                                <p className="text-[10px] text-amber-800/80 leading-relaxed mt-1">
+                                    腾讯云 / 讯飞的 Secret 不在这里填，避免暴露到手机浏览器。去 Cloudflare Worker 后台给你的主代理 Worker 加环境变量；SullyOS 手机端和电脑端都会请求这个 Worker。
+                                </p>
+                            </div>
+                            <span className="shrink-0 text-[9px] font-bold text-amber-700 bg-white/70 border border-amber-100 px-1.5 py-0.5 rounded-full">不是前端 Key</span>
+                        </div>
+                        <div className="rounded-lg bg-white/75 border border-amber-100 p-2 text-[10px] text-amber-900 leading-relaxed">
+                            <p>当前主 Worker 地址：</p>
+                            <p className="font-mono break-all text-amber-700">{getProxyWorkerUrl()}</p>
+                            <p className="mt-1">
+                                Cloudflare 路径：<b>Workers & Pages → 你的主 Worker → Settings → Variables → Add variable</b>。改完变量后重新部署/保存 Worker。
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={async () => {
+                                const envGuide = [
+                                    'SullyOS 语音增强需要放到主 Worker 的环境变量：',
+                                    '',
+                                    '# 腾讯云说话人识别',
+                                    'TENCENT_SECRET_ID=你的腾讯云 SecretId',
+                                    'TENCENT_SECRET_KEY=你的腾讯云 SecretKey',
+                                    '# 可选',
+                                    'TENCENT_ASR_REGION=ap-guangzhou',
+                                    '',
+                                    '# 讯飞声音特征识别',
+                                    'XFYUN_API_KEY=你的讯飞 APIKey',
+                                    'XFYUN_API_SECRET=你的讯飞 APISecret',
+                                    '# 可选；也可以只在 SullyOS 前端填 APPID',
+                                    'XFYUN_APP_ID=你的讯飞 APPID',
+                                    '',
+                                    'Cloudflare 路径：Workers & Pages → 你的主 Worker → Settings → Variables → Add variable。',
+                                    'SullyOS 前端只填：腾讯云 VoicePrintId、讯飞 APPID；不要把 Secret 填进前端。',
+                                ].join('\n');
+                                try {
+                                    await navigator.clipboard.writeText(envGuide);
+                                    addToast('Worker 环境变量清单已复制', 'success');
+                                } catch {
+                                    addToast('复制失败，请手动选择环境变量文字', 'error');
+                                }
+                            }}
+                            className="w-full py-1.5 bg-white text-amber-700 border border-amber-200 rounded-lg text-[11px] font-bold active:scale-95 transition-transform"
+                        >
+                            复制 Worker 环境变量清单
+                        </button>
+                    </div>
+
+                    <div className="rounded-xl bg-white/70 border border-indigo-100/80 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                            <label className="text-[10px] font-bold text-indigo-700 uppercase tracking-widest">腾讯云说话人识别</label>
+                            <span className="text-[9px] font-bold text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded-full">增强：是不是你</span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2">
+                            <input type="text" value={localEarsTencentVoicePrintId} onChange={(e) => setLocalEarsTencentVoicePrintId(e.target.value)} placeholder="机主 VoicePrintId（建声纹后回填）" className="w-full bg-white/70 border border-indigo-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                            用于 speaker verification：只有本地基线发现明显异常时，才判断 matched / unmatched / uncertain。SecretId / SecretKey 请放到主 Worker 环境变量 TENCENT_SECRET_ID / TENCENT_SECRET_KEY，前端只保存 VoicePrintId。
+                        </p>
+                        <button type="button" onClick={() => setEarsTencentGuideOpen(v => !v)} className="text-[11px] font-bold text-indigo-600 underline">
+                            获取腾讯云教程 {earsTencentGuideOpen ? '▲' : '▼'}
+                        </button>
+                        {earsTencentGuideOpen && (
+                            <div className="rounded-xl bg-indigo-50/80 border border-indigo-100 p-3 space-y-2 text-[10px] text-indigo-950 leading-relaxed">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <a href="https://console.cloud.tencent.com/asr" target="_blank" rel="noopener noreferrer" className="py-2 bg-indigo-500 text-white rounded-lg text-center text-[11px] font-bold active:scale-95 transition-transform">
+                                        打开腾讯云 ASR 控制台 ↗
+                                    </a>
+                                    <a href="https://console.cloud.tencent.com/cam/capi" target="_blank" rel="noopener noreferrer" className="py-2 bg-white text-indigo-700 border border-indigo-200 rounded-lg text-center text-[11px] font-bold active:scale-95 transition-transform">
+                                        打开访问密钥 ↗
+                                    </a>
+                                </div>
+                                <p>
+                                    <b>最省事流程：</b><br/>
+                                    1. 登录腾讯云，开通 <b>语音识别 ASR</b>，按页面要求完成实名/授权。官方声纹注册文档：<a href="https://cloud.tencent.com/document/product/1093/94483" target="_blank" rel="noopener noreferrer" className="underline font-bold text-indigo-700">VoicePrintEnroll</a>。<br/>
+                                    2. 去 <b>访问管理 CAM → 访问密钥</b> 创建 SecretId / SecretKey。<b>不要填到前端</b>，放到主 Worker 环境变量：<span className="font-mono">TENCENT_SECRET_ID</span>、<span className="font-mono">TENCENT_SECRET_KEY</span>。<br/>
+                                    3. 给自己的声音建声纹后拿到 <b>VoicePrintId</b>，只把 VoicePrintId 填到这里并保存。之后只有本地 Ears Lite 判断“这条语音和平时差异明显”时，才走 Worker 调腾讯云验证是不是本人。
+                                </p>
+                                <p className="text-indigo-700/80">
+                                    备注：当前 SullyOS 前端先支持“填 VoicePrintId 后验证”。声纹注册可先用腾讯云文档/API Explorer 或 Worker 的 <span className="font-mono">/voice/tencent/enroll</span> 端点完成，后续可以再补一个一键建声纹按钮。
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        const guide = [
+                                            'SullyOS 腾讯云说话人识别配置步骤：',
+                                            '1. 打开 https://console.cloud.tencent.com/asr 开通腾讯云语音识别 ASR，并按要求完成实名/授权。',
+                                            '2. 打开 https://console.cloud.tencent.com/cam/capi 创建 SecretId / SecretKey。',
+                                            '3. 把 SecretId / SecretKey 放到主 Worker 环境变量：TENCENT_SECRET_ID、TENCENT_SECRET_KEY，不要放到前端。',
+                                            '4. 按腾讯云 VoicePrintEnroll 文档或 Worker 的 /voice/tencent/enroll 端点给机主声音建声纹，拿到 VoicePrintId。',
+                                            '5. 回到 SullyOS 设置 → 其他 API → 语音识别 / Ears Lite，把 VoicePrintId 填到腾讯云说话人识别里并保存。',
+                                            '6. 之后只有本地 Ears Lite 判断语音异常时，SullyOS 才会通过 Worker 调腾讯云验证是不是本人。',
+                                        ].join('\n');
+                                        try {
+                                            await navigator.clipboard.writeText(guide);
+                                            addToast('腾讯云配置步骤已复制', 'success');
+                                        } catch {
+                                            addToast('复制失败，请手动选择教程文字', 'error');
+                                        }
+                                    }}
+                                    className="w-full py-1.5 bg-white text-indigo-700 border border-indigo-200 rounded-lg text-[11px] font-bold active:scale-95 transition-transform"
+                                >
+                                    复制腾讯云配置步骤
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="rounded-xl bg-white/70 border border-violet-100/80 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                            <label className="text-[10px] font-bold text-violet-700 uppercase tracking-widest">讯飞声音特征识别</label>
+                            <span className="text-[9px] font-bold text-violet-600 bg-violet-100 px-1.5 py-0.5 rounded-full">抽样：年龄/性别听感</span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2">
+                            <input type="text" value={localEarsXfyunAppId} onChange={(e) => setLocalEarsXfyunAppId(e.target.value)} placeholder="APPID" className="w-full bg-white/70 border border-violet-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                            APIKey / APISecret 请放到主 Worker 环境变量 XFYUN_API_KEY / XFYUN_API_SECRET。只在本地基线明显异常且语音不超过 10 秒时抽样，结果只当“听感倾向”。
+                        </p>
+                        <button type="button" onClick={() => setEarsXfyunGuideOpen(v => !v)} className="text-[11px] font-bold text-violet-600 underline">
+                            获取讯飞教程 {earsXfyunGuideOpen ? '▲' : '▼'}
+                        </button>
+                        {earsXfyunGuideOpen && (
+                            <div className="rounded-xl bg-violet-50/80 border border-violet-100 p-3 space-y-2 text-[10px] text-violet-950 leading-relaxed">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <a href="https://www.xfyun.cn/" target="_blank" rel="noopener noreferrer" className="py-2 bg-violet-500 text-white rounded-lg text-center text-[11px] font-bold active:scale-95 transition-transform">
+                                        打开讯飞开放平台 ↗
+                                    </a>
+                                    <a href="https://www.xfyun.cn/doc/voiceservice/sound-feature-recg/API.html" target="_blank" rel="noopener noreferrer" className="py-2 bg-white text-violet-700 border border-violet-200 rounded-lg text-center text-[11px] font-bold active:scale-95 transition-transform">
+                                        查看接口文档 ↗
+                                    </a>
+                                </div>
+                                <p>
+                                    <b>最省事流程：</b><br/>
+                                    1. 登录讯飞开放平台，创建一个 WebAPI 应用，并开通 <b>性别年龄识别 / 声音特征识别</b> 服务。<br/>
+                                    2. 在应用里复制 <b>APPID</b>、<b>APIKey</b>、<b>APISecret</b>。APPID 可以填到这里；APIKey / APISecret 放到主 Worker 环境变量：<span className="font-mono">XFYUN_API_KEY</span>、<span className="font-mono">XFYUN_API_SECRET</span>。<br/>
+                                    3. 保存后，在用户主页 <b>档案 → 关于我 → 声音档案</b> 里点“建立声音画像”。聊天里只有本地 Ears Lite 判断异常、且语音不超过 10 秒时，才会抽样调讯飞补充“偏男/偏女、年龄段听感”。
+                                </p>
+                                <p className="text-violet-700/80">
+                                    备注：讯飞这个结果只当声音画像线索，不当真实身份/年龄判断。录音建议 5 秒左右、清晰、16k/16bit/单声道格式会由 SullyOS 在 Worker 调用前转换。
+                                </p>
+                                <button
+                                    type="button"
+                                    onClick={async () => {
+                                        const guide = [
+                                            'SullyOS 讯飞声音特征识别配置步骤：',
+                                            '1. 打开 https://www.xfyun.cn/ 登录讯飞开放平台，创建 WebAPI 应用，并开通性别年龄识别 / 声音特征识别服务。',
+                                            '2. 在应用里复制 APPID、APIKey、APISecret。',
+                                            '3. 把 APIKey / APISecret 放到主 Worker 环境变量：XFYUN_API_KEY、XFYUN_API_SECRET。',
+                                            '4. 回到 SullyOS 设置 → 其他 API → 语音识别 / Ears Lite，把 APPID 填到讯飞声音特征识别里并保存。',
+                                            '5. 在用户主页 → 档案 → 关于我 → 声音档案里点“建立声音画像”。聊天里只有本地 Ears Lite 判断语音异常且音频不超过 10 秒时，才会抽样调用讯飞。',
+                                        ].join('\n');
+                                        try {
+                                            await navigator.clipboard.writeText(guide);
+                                            addToast('讯飞配置步骤已复制', 'success');
+                                        } catch {
+                                            addToast('复制失败，请手动选择教程文字', 'error');
+                                        }
+                                    }}
+                                    className="w-full py-1.5 bg-white text-violet-700 border border-violet-200 rounded-lg text-[11px] font-bold active:scale-95 transition-transform"
+                                >
+                                    复制讯飞配置步骤
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    <button
+                        type="button"
+                        onClick={handleSaveEarsApis}
+                        className="w-full py-2.5 rounded-xl font-bold text-white bg-sky-500 shadow-lg shadow-sky-500/20 active:scale-95 transition-all"
+                    >
+                        {earsStatusMsg || '保存'}
+                    </button>
+                </div>
 
                 <div className="group">
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">MiniMax 服务器</label>

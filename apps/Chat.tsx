@@ -66,6 +66,8 @@ import {
     loadCharacterContextRange,
     type ContextRangeMode,
 } from '../utils/chatContextRange';
+import { analyzeVoiceWithEarsLite, judgeVoiceToneWithGroq, transcribeWithGroq } from '../utils/earsLite';
+import { decideVoiceCloudReview, prepareVoiceCloudAudio, profileVoiceWithXfyun, verifyTencentSpeaker } from '../utils/voiceCloud';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 type InstantToolUiStatus = {
@@ -372,6 +374,31 @@ const Chat: React.FC = () => {
         if (!data) {
             // No voice data yet — trigger TTS generation (e.g. placeholder voice bar clicked)
             const msg = messages.find(m => m.id === msgId);
+            if (msg?.type === 'voice') {
+                const meta: any = msg.metadata || {};
+                const detail: any = meta.voice || {};
+                const url = [
+                    meta.audioUrl,
+                    meta.url,
+                    meta.voiceUrl,
+                    detail.audioUrl,
+                    detail.url,
+                    typeof msg.content === 'string' && /^(?:blob:|data:audio\/|https?:\/\/)/i.test(msg.content.trim()) ? msg.content.trim() : '',
+                ].find(v => typeof v === 'string' && v.trim());
+                if (!url) return;
+                if (!chatAudioRef.current) chatAudioRef.current = new Audio();
+                const audio = chatAudioRef.current;
+                if (playingMsgId === msgId) {
+                    audio.pause();
+                    setPlayingMsgId(null);
+                    return;
+                }
+                audio.src = url;
+                audio.onended = () => setPlayingMsgId(null);
+                audio.play().catch(() => {});
+                setPlayingMsgId(msgId);
+                return;
+            }
             if (msg) handleManualTts(msg, false);
             return;
         }
@@ -1130,7 +1157,7 @@ const Chat: React.FC = () => {
         // autoTriggerOnSend gate：instant ready 也只在用户显式开启"发送后自动触发"时才自动回复，
         // 否则保留手动 ⚡（避免"启用 instant = 自动回复"的反直觉强绑定）。
         const instantCfg = loadInstantConfig();
-        if (type === 'text' && isInstantConfigReady(instantCfg) && instantCfg.autoTriggerOnSend) {
+        if ((type === 'text' || type === 'voice') && isInstantConfigReady(instantCfg) && instantCfg.autoTriggerOnSend) {
             // 上一轮还在跑时直接跳过：triggerAI 内部会因 isTyping=true 静默 reject，
             // 提前 guard 避免点亮"准备中"指示灯后没人来清，UI 灯被卡住。
             if (isTyping) return;
@@ -1139,6 +1166,103 @@ const Chat: React.FC = () => {
             const latestMessages = await DB.getRecentMessagesByCharId(char.id, char.contextLimit || 500, true)
                 .catch(() => messages);
             triggerAI(latestMessages, undefined, () => setInstantSendingActive(false));
+        }
+    };
+
+    const handleSendVoice = async (blob: Blob, durationSec: number, mimeType: string) => {
+        if (!char) return;
+        const groqKey = (apiConfig.ears?.groqApiKey || '').trim();
+        const audioUrl = URL.createObjectURL(blob);
+        try {
+            if (!groqKey) {
+                addToast('请先到设置 → 其他 API → 语音识别 / Ears Lite 填 Groq API Key', 'error');
+                URL.revokeObjectURL(audioUrl);
+                return;
+            }
+
+            addToast('正在用内置 Ears Lite 听这条语音…', 'info');
+            const [lite, transcript] = await Promise.all([
+                analyzeVoiceWithEarsLite(blob),
+                transcribeWithGroq(blob, {
+                    apiKey: groqKey,
+                    baseUrl: apiConfig.ears?.groqBaseUrl,
+                    model: apiConfig.ears?.groqAsrModel,
+                    mimeType,
+                }),
+            ]);
+            let voiceTone = {
+                emotion: lite.emotion,
+                confidence: lite.confidence,
+                hint: lite.hint,
+                provider: 'local-rules',
+            };
+            if (apiConfig.ears?.groqToneEnabled) {
+                try {
+                    const judged = await judgeVoiceToneWithGroq(transcript, lite, {
+                        apiKey: groqKey,
+                        baseUrl: apiConfig.ears?.groqBaseUrl,
+                        model: apiConfig.ears?.groqToneModel,
+                    });
+                    voiceTone = {
+                        ...judged,
+                        provider: `groq:${apiConfig.ears?.groqToneModel || 'llama-3.3-70b-versatile'}`,
+                    };
+                } catch (toneErr: any) {
+                    console.warn('[ears-lite] Groq tone judge failed, using local result:', toneErr);
+                    addToast(`语气转述失败，已用本地判断：${toneErr?.message || '未知错误'}`, 'error');
+                }
+            }
+            let speakerVerification: any = undefined;
+            let voiceProfile: any = undefined;
+            const cloudReview = decideVoiceCloudReview(lite);
+            const needsTencent = cloudReview.shouldReview && !!apiConfig.ears?.tencentVoicePrintId;
+            const needsXfyun = cloudReview.shouldReview && !!apiConfig.ears?.xfyunAppId && durationSec <= 10;
+            if (needsTencent || needsXfyun) {
+                try {
+                    const prepared = await prepareVoiceCloudAudio(blob);
+                    const jobs: Promise<void>[] = [];
+                    if (needsTencent) {
+                        jobs.push(verifyTencentSpeaker(prepared, apiConfig.ears!.tencentVoicePrintId!)
+                            .then(result => { speakerVerification = result; }));
+                    }
+                    if (needsXfyun) {
+                        jobs.push(profileVoiceWithXfyun(prepared, apiConfig.ears?.xfyunAppId)
+                            .then(result => { voiceProfile = result; }));
+                    }
+                    await Promise.all(jobs);
+                } catch (cloudErr: any) {
+                    console.warn('[ears-lite] cloud voice analysis failed:', cloudErr);
+                    addToast(`云端声音识别失败，已继续发送：${cloudErr?.message || '未知错误'}`, 'error');
+                }
+            }
+            await handleSendText(transcript || '[语音]', 'voice', {
+                transcript,
+                audioUrl,
+                durationSec,
+                voice: {
+                    source: 'ears-lite',
+                    provider: apiConfig.ears?.groqToneEnabled
+                        ? 'SullyOS Ears Lite + Essentia.js + Groq Whisper + Groq LLM'
+                        : 'SullyOS Ears Lite + Essentia.js + Groq Whisper',
+                    toneProvider: voiceTone.provider,
+                    durationSec,
+                    mimeType,
+                    audioUrl,
+                    emotion: voiceTone.emotion,
+                    confidence: voiceTone.confidence,
+                    hint: voiceTone.hint,
+                    relative: lite.relative,
+                    speakerVerification,
+                    voiceProfile,
+                    cloudReviewReasons: cloudReview.reasons,
+                    baselineProgress: lite.baselineProgress,
+                    features: lite.features,
+                    ts: Date.now(),
+                },
+            });
+        } catch (err: any) {
+            URL.revokeObjectURL(audioUrl);
+            addToast(`语音识别失败：${err?.message || '未知错误'}`, 'error');
         }
     };
 
@@ -3368,6 +3492,8 @@ const Chat: React.FC = () => {
                     isTyping={isTyping} selectionMode={selectionMode}
                     showPanel={showPanel} setShowPanel={setShowPanel}
                     onSend={handleSendCallback}
+                    onVoiceSend={handleSendVoice}
+                    onVoiceError={(message) => addToast(message, 'error')}
                     onDeleteSelected={handleBatchDelete}
                     onForwardSelected={handleForwardSelected}
                     selectedCount={selectedMsgIds.size + Array.from(selectedThinkingMsgIds).filter(id => !selectedMsgIds.has(id)).length}

@@ -3,7 +3,7 @@ import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProf
 import { ContextBuilder } from './context';
 import { DB } from './db';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
-import { normalizeMessageContent, stickerNameFromUrl, theaterWhenPhrase } from './messageFormat';
+import { getVoiceTranscript, normalizeMessageContent, stickerNameFromUrl, theaterWhenPhrase } from './messageFormat';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
 import { getCharLyricSnippet } from './charLyricCache';
 import { MusicCfg, loadMusicCfgStandalone, type MusicPlaybackSnapshot } from '../context/MusicContext';
@@ -85,6 +85,95 @@ async function consumePendingXhsPhoneResult(charId: string): Promise<string> {
     } catch {
         return '';
     }
+}
+
+function formatVoiceSignal(value: unknown): string {
+    if (value == null || value === '') return '';
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? String(Math.round(value * 1000) / 1000) : '';
+    }
+    if (typeof value === 'string') return value.trim();
+    try {
+        return JSON.stringify(value).slice(0, 240);
+    } catch {
+        return '';
+    }
+}
+
+function formatVoiceRelative(value: unknown): string {
+    if (!value || typeof value !== 'object') return formatVoiceSignal(value);
+    const relative = value as Record<string, unknown>;
+    if (typeof relative.status === 'string' && relative.status.trim()) return relative.status.trim();
+    const formatNum = (raw: unknown, suffix = '') => {
+        const n = typeof raw === 'number' ? raw : Number(raw);
+        return Number.isFinite(n) ? `${n.toFixed(2)}${suffix}` : '';
+    };
+    const parts = [
+        ['音量', formatNum(relative.energyRatio, '倍')],
+        ['停顿变化', formatNum(relative.pauseDelta)],
+        ['音高', formatNum(relative.pitchRatio, '倍')],
+        ['起伏', formatNum(relative.swayRatio, '倍')],
+        ['明亮度', formatNum(relative.brightnessRatio, '倍')],
+    ]
+        .filter(([, v]) => v)
+        .map(([k, v]) => `${k}=${v}`);
+    return parts.length ? parts.join('；') : '接近平时';
+}
+
+function formatSpeakerVerification(value: unknown): string {
+    if (!value || typeof value !== 'object') return '';
+    const result = value as Record<string, unknown>;
+    const status = String(result.status || '').trim();
+    const score = typeof result.score === 'number' ? `，分数=${Math.round(result.score * 10) / 10}` : '';
+    if (status === 'matched') return `像机主本人${score}`;
+    if (status === 'unmatched') return `不像机主本人${score}`;
+    if (status === 'uncertain') return `不确定是否机主${score}`;
+    return '';
+}
+
+function buildVoiceHistoryContent(m: Message, timeStr: string, userName?: string): string {
+    const meta: any = m.metadata || {};
+    const voice: any = meta.voice || {};
+    const transcript = getVoiceTranscript(m);
+    const speaker = m.role === 'user' ? (userName?.trim() || '用户') : '你';
+    const emotion = formatVoiceSignal(voice.emotion ?? meta.emotion);
+    const confidence = formatVoiceSignal(voice.confidence ?? meta.confidence);
+    const hint = formatVoiceSignal(voice.hint ?? meta.hint);
+    const toneProvider = formatVoiceSignal(voice.toneProvider ?? meta.toneProvider);
+    const hasToneNarration = toneProvider.startsWith('groq:');
+    const speakerVerification = formatSpeakerVerification(voice.speakerVerification ?? meta.speakerVerification);
+
+    if (hasToneNarration) {
+        const toneParts = [
+            emotion ? `情绪=${emotion}` : '',
+            confidence ? `可信度=${confidence}` : '',
+            hint ? `提示=${hint}` : '',
+            speakerVerification ? `身份=${speakerVerification}` : '',
+        ].filter(Boolean);
+        return [
+            `${timeStr} [聊天语音] ${speaker}：${transcript || '（未识别到文字）'}`,
+            toneParts.length ? `声音：${toneParts.join('；')}` : '',
+        ].filter(Boolean).join('\n');
+    }
+
+    const lines = [
+        `${timeStr} [聊天语音] ${speaker}：${transcript || '（未识别到文字）'}`,
+    ];
+
+    const relative = formatVoiceRelative(voice.relative ?? meta.relative);
+    const baseline = formatVoiceSignal(voice.baselineProgress ?? meta.baselineProgress ?? meta.baseline_progress);
+    const signals = [
+        emotion ? `情绪=${emotion}` : '',
+        confidence ? `可信度=${confidence}` : '',
+        hint ? `提示=${hint}` : '',
+        relative ? `相对个人基线=${relative}` : '',
+        speakerVerification ? `身份=${speakerVerification}` : '',
+        baseline ? `基线进度=${baseline}` : '',
+    ].filter(Boolean);
+    if (signals.length) {
+        lines.push(`声音：${signals.join('；')}`);
+    }
+    return lines.join('\n');
 }
 
 export const ChatPrompts = {
@@ -1205,6 +1294,10 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                         ? `正文: ${note.desc}`
                         : `正文: 未获取（${detailHint}）`;
                     content = `${timeStr} [${sender}分享了小红书笔记]\n标题: ${note.title || '无标题'}\n作者: ${note.author || '未知'}\n赞: ${note.likes || 0}${locatorLine ? `\n${locatorLine}` : ''}\n${bodyLine}${commentsLine}\n${m.role === 'user' ? '(请根据你的性格对这个帖子发表看法；正文为空时先承认只看到标题/链接，必要时再读取详情)' : ''}`;
+                }
+                else if ((m.type as string) === 'voice') {
+                    content = buildVoiceHistoryContent(m, timeStr, userProfile?.name);
+                    if (index === historySlice.length - 1 && timeGapHint && m.role === 'user') content = `${content}\n\n${timeGapHint}`;
                 }
                 else if ((m.type as string) === 'music_card') {
                     content = `${timeStr} ${normalizeMessageContent(

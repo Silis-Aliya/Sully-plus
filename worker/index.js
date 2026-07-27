@@ -31,6 +31,197 @@ function jsonResponse(obj, { status = 200, origin } = {}) {
   });
 }
 
+const textEncoder = new TextEncoder();
+
+async function sha256Bytes(input) {
+  const bytes = typeof input === 'string' ? textEncoder.encode(input) : input;
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+}
+
+function hex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hmacSha256(key, data) {
+  const cryptoKey = await crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', cryptoKey, typeof data === 'string' ? textEncoder.encode(data) : data));
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+async function callTencentAsr(action, payload, env) {
+  const secretId = env?.TENCENT_SECRET_ID;
+  const secretKey = env?.TENCENT_SECRET_KEY;
+  if (!secretId || !secretKey) throw new Error('Worker 未配置 TENCENT_SECRET_ID / TENCENT_SECRET_KEY');
+
+  const host = 'asr.tencentcloudapi.com';
+  const service = 'asr';
+  const version = '2019-06-14';
+  const region = env?.TENCENT_ASR_REGION || 'ap-guangzhou';
+  const timestamp = Math.floor(Date.now() / 1000);
+  const date = new Date(timestamp * 1000).toISOString().slice(0, 10);
+  const body = JSON.stringify(payload);
+  const contentType = 'application/json; charset=utf-8';
+  const hashedPayload = hex(await sha256Bytes(body));
+  const canonicalHeaders = `content-type:${contentType}\nhost:${host}\n`;
+  const signedHeaders = 'content-type;host';
+  const canonicalRequest = [
+    'POST',
+    '/',
+    '',
+    canonicalHeaders,
+    signedHeaders,
+    hashedPayload,
+  ].join('\n');
+  const credentialScope = `${date}/${service}/tc3_request`;
+  const stringToSign = [
+    'TC3-HMAC-SHA256',
+    String(timestamp),
+    credentialScope,
+    hex(await sha256Bytes(canonicalRequest)),
+  ].join('\n');
+  const secretDate = await hmacSha256(textEncoder.encode(`TC3${secretKey}`), date);
+  const secretService = await hmacSha256(secretDate, service);
+  const secretSigning = await hmacSha256(secretService, 'tc3_request');
+  const signature = hex(await hmacSha256(secretSigning, stringToSign));
+  const authorization = `TC3-HMAC-SHA256 Credential=${secretId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  const res = await fetch(`https://${host}/`, {
+    method: 'POST',
+    headers: {
+      Authorization: authorization,
+      'Content-Type': contentType,
+      Host: host,
+      'X-TC-Action': action,
+      'X-TC-Version': version,
+      'X-TC-Timestamp': String(timestamp),
+      'X-TC-Region': region,
+    },
+    body,
+  });
+  const data = await res.json().catch(async () => ({ error: await res.text().catch(() => '') }));
+  if (!res.ok || data?.Response?.Error) {
+    const err = data?.Response?.Error;
+    throw new Error(err ? `${err.Code}: ${err.Message}` : `Tencent ASR HTTP ${res.status}`);
+  }
+  return data.Response;
+}
+
+function normalizeTencentVerify(data) {
+  const result = data?.Data || {};
+  const score = Number(result.Score ?? result.ScoreText ?? 0);
+  const decision = Number(result.Decision ?? 0);
+  const status = decision === 1 || score >= 70 ? 'matched' : score > 0 ? 'unmatched' : 'uncertain';
+  return {
+    status,
+    matched: status === 'matched',
+    score: Number.isFinite(score) ? score : undefined,
+    decision: Number.isFinite(decision) ? decision : undefined,
+    voicePrintId: result.VoicePrintId,
+    requestId: data?.RequestId,
+    raw: result,
+  };
+}
+
+async function buildXfyunAuthUrl(env) {
+  const apiKey = env?.XFYUN_API_KEY;
+  const apiSecret = env?.XFYUN_API_SECRET;
+  if (!apiKey || !apiSecret) throw new Error('Worker 未配置 XFYUN_API_KEY / XFYUN_API_SECRET');
+  const host = 'ws-api.xfyun.cn';
+  const path = '/v2/igr';
+  const date = new Date().toUTCString();
+  const signatureOrigin = `host: ${host}\ndate: ${date}\nGET ${path} HTTP/1.1`;
+  const signature = bytesToBase64(await hmacSha256(textEncoder.encode(apiSecret), signatureOrigin));
+  const authorizationOrigin = `api_key="${apiKey}", algorithm="hmac-sha256", headers="host date request-line", signature="${signature}"`;
+  const authorization = btoa(authorizationOrigin);
+  const qs = new URLSearchParams({ authorization, date, host });
+  return `wss://${host}${path}?${qs.toString()}`;
+}
+
+async function callXfyunVoiceProfile(payload, env) {
+  const appId = payload.appId || env?.XFYUN_APP_ID;
+  if (!appId) throw new Error('缺少 XFYUN_APP_ID（可放 Worker env，或前端只传 AppId）');
+  const wsUrl = await buildXfyunAuthUrl(env);
+  return await new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    let settled = false;
+    let lastMessage = null;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { ws.close(); } catch {}
+      reject(new Error('讯飞声音画像超时'));
+    }, 20000);
+    ws.addEventListener('open', () => {
+      ws.send(JSON.stringify({
+        common: { app_id: appId },
+        business: { ent: 'igr', aue: payload.aue || 'raw', rate: String(payload.rate || 16000) },
+        data: { status: 0, audio: payload.data },
+      }));
+      ws.send(JSON.stringify({ data: { status: 2 } }));
+    });
+    ws.addEventListener('message', (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        lastMessage = msg;
+        if (msg.code && msg.code !== 0) throw new Error(`${msg.code}: ${msg.message || '讯飞识别失败'}`);
+        if (msg?.data?.status === 2) {
+          settled = true;
+          clearTimeout(timer);
+          try { ws.close(); } catch {}
+          resolve(msg);
+        }
+      } catch (err) {
+        settled = true;
+        clearTimeout(timer);
+        try { ws.close(); } catch {}
+        reject(err);
+      }
+    });
+    ws.addEventListener('error', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error('讯飞 WebSocket 连接失败'));
+    });
+    ws.addEventListener('close', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(lastMessage?.message || '讯飞 WebSocket 已关闭但没有返回最终结果'));
+    });
+  });
+}
+
+function normalizeXfyunProfile(message) {
+  const result = message?.data?.result || {};
+  const gender = result.gender || {};
+  const age = result.age || {};
+  const genderLabel = String(gender.gender_type) === '1' ? 'male' : String(gender.gender_type) === '0' ? 'female' : '';
+  const ageMap = { '0': 'middle', '1': 'child', '2': 'old' };
+  return {
+    gender: genderLabel,
+    genderScores: {
+      female: Number(gender.female),
+      male: Number(gender.male),
+    },
+    age: ageMap[String(age.age_type)] || '',
+    ageScores: {
+      child: Number(age.child),
+      middle: Number(age.middle),
+      old: Number(age.old),
+    },
+    raw: result,
+  };
+}
+
 // ---- /fetch-webpage 用: SSRF 防护 + body 大小上限 ----
 // 网页分享代理只抓用户粘贴的公网网页, 拒绝 loopback / 私有网段 / link-local / 内网后缀。
 function isUnsafeFetchTarget(parsed) {
@@ -1456,6 +1647,63 @@ export default {
     }
 
     // ========== WebDAV 代理 ==========
+    // ========== Voice cloud helpers (/voice/*) ==========
+    // Secrets stay in Worker env. Browser only sends short 16k mono audio plus
+    // non-secret ids such as VoicePrintId/AppId.
+    if (url.pathname.startsWith('/voice/')) {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      let body = {};
+      try { body = await request.json(); } catch {
+        return jsonResponse({ error: 'Invalid JSON body' }, { status: 400, origin });
+      }
+      try {
+        if (!body.data || typeof body.data !== 'string') {
+          return jsonResponse({ error: 'Missing base64 audio data' }, { status: 400, origin });
+        }
+        if (url.pathname === '/voice/tencent/enroll') {
+          const resp = await callTencentAsr('VoicePrintEnroll', {
+            VoiceFormat: Number(body.voiceFormat ?? 1),
+            SampleRate: Number(body.sampleRate ?? 16000),
+            Data: body.data,
+            ...(body.speakerNick ? { SpeakerNick: String(body.speakerNick).slice(0, 32) } : {}),
+            ...(body.groupId || env?.TENCENT_VOICE_GROUP_ID ? { GroupId: body.groupId || env.TENCENT_VOICE_GROUP_ID } : {}),
+          }, env);
+          return jsonResponse({
+            ok: true,
+            voicePrintId: resp?.Data?.VoicePrintId,
+            speakerNick: resp?.Data?.SpeakerNick,
+            requestId: resp?.RequestId,
+            raw: resp?.Data,
+          }, { origin });
+        }
+        if (url.pathname === '/voice/tencent/verify') {
+          const voicePrintId = body.voicePrintId || env?.TENCENT_VOICE_PRINT_ID;
+          if (!voicePrintId) return jsonResponse({ error: 'Missing VoicePrintId' }, { status: 400, origin });
+          const resp = await callTencentAsr('VoicePrintVerify', {
+            VoiceFormat: Number(body.voiceFormat ?? 1),
+            SampleRate: Number(body.sampleRate ?? 16000),
+            VoicePrintId: voicePrintId,
+            Data: body.data,
+          }, env);
+          return jsonResponse({ ok: true, ...normalizeTencentVerify(resp) }, { origin });
+        }
+        if (url.pathname === '/voice/xfyun/profile') {
+          const resp = await callXfyunVoiceProfile({
+            data: body.data,
+            appId: body.appId,
+            aue: body.aue || 'raw',
+            rate: body.rate || 16000,
+          }, env);
+          return jsonResponse({ ok: true, ...normalizeXfyunProfile(resp), sid: resp?.sid }, { origin });
+        }
+        return jsonResponse({ error: 'Unknown voice endpoint' }, { status: 404, origin });
+      } catch (e) {
+        return jsonResponse({ error: e.message || String(e) }, { status: 502, origin });
+      }
+    }
+
     if (url.pathname === '/webdav') {
       if (request.method !== 'POST') {
         return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });

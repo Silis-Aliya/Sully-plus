@@ -185,7 +185,9 @@ export const ContextBuilder = {
         if (!groupOptions?.skipUserProfile) {
             context += `### 互动对象 (User)\n`;
             context += `- 名字: ${user.name}\n`;
-            context += `- 设定/备注: ${user.bio || '无'}\n\n`;
+            context += `- 设定/备注: ${user.bio || '无'}\n`;
+            if (user.voiceProfile?.summary) context += `- 声音印象: 你已经熟悉 ta 的声音，大致是「${user.voiceProfile.summary}」。仅作长期听感背景，不主动复述；仅在状态、身份变化或对话需要时自然参考。\n`;
+            context += `\n`;
         }
 
         // 4. [NEW] 印象档案 (Private Impression)
@@ -454,7 +456,9 @@ export const ContextBuilder = {
 
         text += `### 互动对象 (User)\n`;
         text += `- 名字: ${user.name}\n`;
-        text += `- 设定/备注: ${user.bio || '无'}\n\n`;
+        text += `- 设定/备注: ${user.bio || '无'}\n`;
+        if (user.voiceProfile?.summary) text += `- 声音印象: 你已经熟悉 ta 的声音，大致是「${user.voiceProfile.summary}」。仅作长期听感背景，不主动复述；仅在状态、身份变化或对话需要时自然参考。\n`;
+        text += `\n`;
 
         if (worldviewIsShared) {
             text += `### 共有世界观 (Shared World Settings)\n${members[0].worldview!.trim()}\n\n`;

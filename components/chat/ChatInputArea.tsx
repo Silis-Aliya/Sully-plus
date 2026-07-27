@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Sparkle, CaretDown, FadersHorizontal } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Sparkle, CaretDown, FadersHorizontal, Microphone, Keyboard } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
@@ -14,6 +14,8 @@ interface ChatInputAreaProps {
     showPanel: 'none' | 'actions' | 'emojis' | 'chars';
     setShowPanel: (v: 'none' | 'actions' | 'emojis' | 'chars') => void;
     onSend: () => void;
+    onVoiceSend?: (blob: Blob, durationSec: number, mimeType: string) => void | Promise<void>;
+    onVoiceError?: (message: string) => void;
     onDeleteSelected: () => void;
     onForwardSelected?: () => void;
     selectedCount: number;
@@ -61,7 +63,7 @@ interface ChatInputAreaProps {
 
 const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     input, setInput, isTyping, selectionMode,
-    showPanel, setShowPanel, onSend, onDeleteSelected, onForwardSelected, selectedCount,
+    showPanel, setShowPanel, onSend, onVoiceSend, onVoiceError, onDeleteSelected, onForwardSelected, selectedCount,
     emojis, characters = [], activeCharacterId = '', onCharSelect = () => {},
     unreadMessages = {},
     customThemes = [], onUpdateTheme = () => {}, onRemoveTheme = () => {}, activeThemeId = '',
@@ -91,6 +93,12 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     const [pendingDeleteThemeId, setPendingDeleteThemeId] = useState<string | null>(null);
     const [emojiSelectionMode, setEmojiSelectionMode] = useState(false);
     const [selectedEmojis, setSelectedEmojis] = useState<any[]>([]);
+    const [inputMode, setInputMode] = useState<'text' | 'voice'>('text');
+    const [isVoiceRecording, setIsVoiceRecording] = useState(false);
+    const voiceRecorderRef = useRef<MediaRecorder | null>(null);
+    const voiceChunksRef = useRef<BlobPart[]>([]);
+    const voiceStartedAtRef = useRef(0);
+    const voiceStreamRef = useRef<MediaStream | null>(null);
     // 分组太多时横向拖不动：提供「展开全部分组」网格总览
     const [showCategoryOverview, setShowCategoryOverview] = useState(false);
     // 表情网格增量渲染：几百张 base64 图一次性挂载会卡爆，滚动到底再补
@@ -265,6 +273,85 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
         });
     };
 
+    const stopVoiceStream = () => {
+        voiceStreamRef.current?.getTracks().forEach(track => track.stop());
+        voiceStreamRef.current = null;
+    };
+
+    useEffect(() => () => {
+        try { voiceRecorderRef.current?.stop(); } catch { /* ignore */ }
+        stopVoiceStream();
+    }, []);
+
+    const pickVoiceMimeType = () => {
+        const candidates = [
+            'audio/webm;codecs=opus',
+            'audio/webm',
+            'audio/mp4',
+            'audio/ogg;codecs=opus',
+        ];
+        return candidates.find(type => {
+            try { return typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type); }
+            catch { return false; }
+        }) || '';
+    };
+
+    const handleVoicePointerDown = async (e: React.PointerEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        if (!onVoiceSend) {
+            onVoiceError?.('语音发送还没接好');
+            return;
+        }
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+            onVoiceError?.('当前浏览器不支持录音');
+            return;
+        }
+        try {
+            setShowPanel('none');
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            voiceStreamRef.current = stream;
+            voiceChunksRef.current = [];
+            voiceStartedAtRef.current = Date.now();
+            const mimeType = pickVoiceMimeType();
+            const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+            voiceRecorderRef.current = recorder;
+            recorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) voiceChunksRef.current.push(event.data);
+            };
+            recorder.onstop = () => {
+                const durationSec = Math.max(0.1, (Date.now() - voiceStartedAtRef.current) / 1000);
+                const blob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || mimeType || 'audio/webm' });
+                voiceRecorderRef.current = null;
+                voiceChunksRef.current = [];
+                setIsVoiceRecording(false);
+                stopVoiceStream();
+                if (durationSec < 0.6 || blob.size < 512) {
+                    onVoiceError?.('录音太短，再说一次吧');
+                    return;
+                }
+                Promise.resolve(onVoiceSend(blob, durationSec, blob.type)).catch(err => {
+                    onVoiceError?.(err?.message || '语音发送失败');
+                });
+            };
+            recorder.start();
+            setIsVoiceRecording(true);
+            try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+        } catch (err: any) {
+            setIsVoiceRecording(false);
+            stopVoiceStream();
+            onVoiceError?.(err?.message || '麦克风权限不可用');
+        }
+    };
+
+    const handleVoicePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        const recorder = voiceRecorderRef.current;
+        if (recorder && recorder.state !== 'inactive') {
+            try { recorder.stop(); } catch { /* ignore */ }
+        }
+        try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    };
+
     React.useEffect(() => {
         if (showPanel !== 'emojis') {
             setEmojiSelectionMode(false);
@@ -421,26 +508,53 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     <button onClick={() => setShowPanel(showPanel === 'actions' ? 'none' : 'actions')} className={actionButtonClass}>
                         <Plus className="w-6 h-6" weight="bold" />
                     </button>
-                    <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
-                        <textarea 
-                            ref={textareaRef}
-                            rows={1} 
-                            value={input} 
-                            onChange={(e) => setInput(e.target.value)} 
-                            onKeyDown={handleKeyDown} 
-                            onFocus={handleInputFocus}
-                            inputMode="text"
-                            enterKeyHint="send"
-                            autoCorrect="on"
-                            autoCapitalize="sentences"
-                            className={`flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-24 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`} 
-                            placeholder="Message..." 
-                            style={{ height: 'auto' }} 
-                        />
-                        <button onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
-                            <Smiley className="w-6 h-6" weight="regular" />
+                    {inputMode === 'voice' ? (
+                        <button
+                            type="button"
+                            onPointerDown={handleVoicePointerDown}
+                            onPointerUp={handleVoicePointerUp}
+                            onPointerCancel={handleVoicePointerUp}
+                            className={`flex-1 min-w-0 flex items-center justify-center gap-2 px-4 py-3 transition-all ${inputWrapClass} ${isPixelStyle ? 'text-[#6a4c35] active:bg-[#fff7ed]' : isDiscordStyle ? 'text-slate-200 active:bg-slate-800' : 'text-slate-600 active:bg-white'}`}
+                        >
+                            <Microphone className="w-5 h-5" weight="bold" />
+                            <span className="text-[15px] font-medium truncate">{isVoiceRecording ? '正在听  松开发送' : '按住 说话'}</span>
                         </button>
-                    </div>
+                    ) : (
+                        <div className={`flex-1 min-w-0 flex items-center px-1 transition-all ${useIOSStandaloneInputFix ? 'overflow-visible' : 'overflow-hidden'} ${inputWrapClass} ${isPixelStyle ? 'focus-within:bg-[#fff7ed]' : isDiscordStyle ? 'focus-within:bg-slate-800 focus-within:border-white/20' : 'border border-transparent focus-within:bg-white focus-within:border-primary/30'}`}>
+                            <textarea 
+                                ref={textareaRef}
+                                rows={1} 
+                                value={input} 
+                                onChange={(e) => setInput(e.target.value)} 
+                                onKeyDown={handleKeyDown} 
+                                onFocus={handleInputFocus}
+                                inputMode="text"
+                                enterKeyHint="send"
+                                autoCorrect="on"
+                                autoCapitalize="sentences"
+                                className={`flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-24 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`} 
+                                placeholder="Message..." 
+                                style={{ height: 'auto' }} 
+                            />
+                            <button onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
+                                <Smiley className="w-6 h-6" weight="regular" />
+                            </button>
+                        </div>
+                    )}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setInputMode(inputMode === 'voice' ? 'text' : 'voice');
+                            setShowPanel('none');
+                        }}
+                        className={actionButtonClass}
+                        aria-label={inputMode === 'voice' ? '切换到键盘输入' : '切换到语音输入'}
+                    >
+                        {inputMode === 'voice'
+                            ? <Keyboard className="w-6 h-6" weight="bold" />
+                            : <Microphone className="w-6 h-6" weight="bold" />
+                        }
+                    </button>
                     <button 
                         onClick={onSend} 
                         disabled={!input.trim()} 

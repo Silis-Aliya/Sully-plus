@@ -4,11 +4,138 @@ import { useOS } from '../context/OSContext';
 import { processImage } from '../utils/file';
 import LifeRecordPanel from '../components/lifeRecord/LifeRecordPanel';
 import PerCharAvatarPicker from '../components/user/PerCharAvatarPicker';
+import { EARS_LITE_BASELINE_TARGET, getEarsLiteBaselineStatus } from '../utils/earsLite';
+import { prepareVoiceCloudAudio, profileVoiceWithXfyun, verifyTencentSpeaker } from '../utils/voiceCloud';
 
 const UserApp: React.FC = () => {
-    const { closeApp, userProfile, updateUserProfile, addToast } = useOS();
+    const { closeApp, userProfile, updateUserProfile, addToast, apiConfig } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [tab, setTab] = useState<'profile' | 'life'>('profile');
+    const [voiceBusy, setVoiceBusy] = useState(false);
+    const [voiceStatus, setVoiceStatus] = useState('');
+    const baselineStatus = getEarsLiteBaselineStatus();
+
+    const recordVoiceProfileClip = async (durationMs = 6500): Promise<Blob> => {
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+            throw new Error('当前浏览器不支持录音');
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        try {
+            const mimeCandidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+            const mimeType = mimeCandidates.find(type => {
+                try { return MediaRecorder.isTypeSupported(type); } catch { return false; }
+            }) || '';
+            return await new Promise<Blob>((resolve, reject) => {
+                const chunks: BlobPart[] = [];
+                let recorder: MediaRecorder;
+                try {
+                    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+                } catch (err) {
+                    reject(err);
+                    return;
+                }
+                const timer = window.setTimeout(() => {
+                    try { if (recorder.state !== 'inactive') recorder.stop(); } catch {}
+                }, durationMs);
+                recorder.ondataavailable = event => {
+                    if (event.data && event.data.size > 0) chunks.push(event.data);
+                };
+                recorder.onerror = () => {
+                    window.clearTimeout(timer);
+                    reject(new Error('录音失败'));
+                };
+                recorder.onstop = () => {
+                    window.clearTimeout(timer);
+                    const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
+                    if (blob.size < 500) reject(new Error('录音太短或没有声音，请靠近麦克风再试'));
+                    else resolve(blob);
+                };
+                recorder.start();
+            });
+        } finally {
+            stream.getTracks().forEach(track => track.stop());
+        }
+    };
+
+    const voiceProfileSummary = (profile?: typeof userProfile.voiceProfile) => {
+        if (!profile?.summary) return '还没有建立声音画像';
+        return profile.summary;
+    };
+
+    const buildVoiceProfileSummary = (result: any) => {
+        const gender = result.gender === 'female' ? '偏女声' : result.gender === 'male' ? '偏男声' : '';
+        const age = result.age === 'child' ? '少年/儿童听感' : result.age === 'middle' ? '中青年听感' : result.age === 'old' ? '年长听感' : '';
+        return [gender, age].filter(Boolean).join('，') || '声音画像已记录';
+    };
+
+    const handleBuildVoiceProfile = async () => {
+        if (voiceBusy) return;
+        if (!apiConfig.ears?.xfyunAppId) {
+            addToast('请先到设置 → 语音识别 / Ears Lite 填讯飞 APPID，并在 Worker 配好 XFYUN_API_KEY / XFYUN_API_SECRET', 'error');
+            return;
+        }
+        setVoiceBusy(true);
+        setVoiceStatus('正在录制声音画像样本...');
+        try {
+            const blob = await recordVoiceProfileClip();
+            setVoiceStatus('正在分析声音画像...');
+            const prepared = await prepareVoiceCloudAudio(blob);
+            const result = await profileVoiceWithXfyun(prepared, apiConfig.ears.xfyunAppId);
+            const summary = buildVoiceProfileSummary(result);
+            updateUserProfile({
+                voiceProfile: {
+                    ...(userProfile.voiceProfile || {}),
+                    updatedAt: Date.now(),
+                    baselineCount: baselineStatus.count,
+                    summary,
+                    gender: result.gender,
+                    age: result.age,
+                    genderScores: result.genderScores,
+                    ageScores: result.ageScores,
+                },
+            });
+            setVoiceStatus('声音画像已更新');
+            addToast('声音画像已更新', 'success');
+        } catch (err: any) {
+            setVoiceStatus(err?.message || '声音画像建立失败');
+            addToast(err?.message || '声音画像建立失败', 'error');
+        } finally {
+            setVoiceBusy(false);
+        }
+    };
+
+    const handleVerifyVoiceIdentity = async () => {
+        if (voiceBusy) return;
+        if (!apiConfig.ears?.tencentVoicePrintId) {
+            addToast('请先到设置 → 语音识别 / Ears Lite 填机主 VoicePrintId，并在 Worker 配好腾讯云 Secret', 'error');
+            return;
+        }
+        setVoiceBusy(true);
+        setVoiceStatus('正在录制身份验证样本...');
+        try {
+            const blob = await recordVoiceProfileClip(4200);
+            setVoiceStatus('正在验证是不是机主...');
+            const prepared = await prepareVoiceCloudAudio(blob);
+            const result = await verifyTencentSpeaker(prepared, apiConfig.ears.tencentVoicePrintId);
+            updateUserProfile({
+                voiceProfile: {
+                    ...(userProfile.voiceProfile || {}),
+                    baselineCount: baselineStatus.count,
+                    lastIdentityStatus: result.status,
+                    lastIdentityScore: result.score,
+                    lastIdentityAt: Date.now(),
+                },
+            });
+            const label = result.status === 'matched' ? '像机主本人' : result.status === 'unmatched' ? '不像机主本人' : '无法确定';
+            setVoiceStatus(`身份验证：${label}`);
+            addToast(`身份验证：${label}`, result.status === 'matched' ? 'success' : 'error');
+        } catch (err: any) {
+            setVoiceStatus(err?.message || '身份验证失败');
+            addToast(err?.message || '身份验证失败', 'error');
+        } finally {
+            setVoiceBusy(false);
+        }
+    };
 
     const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -119,6 +246,66 @@ const UserApp: React.FC = () => {
                         className="w-full h-52 bg-slate-50 focus:bg-white border border-slate-100 focus:border-primary/30 rounded-2xl px-4 py-3 text-sm text-slate-700 leading-relaxed resize-none outline-none transition-all placeholder:text-slate-300"
                         placeholder="描述你自己..."
                     />
+                </div>
+
+                <div className="bg-white rounded-[1.75rem] shadow-[0_10px_30px_-12px_rgba(80,70,120,0.18)] border border-slate-100 p-5">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                        <div className="flex items-center gap-2">
+                            <span className="w-7 h-7 rounded-xl bg-sky-50 text-sky-500 flex items-center justify-center">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6.75 6.75 0 0 0 6.75-6.75V6.75a6.75 6.75 0 0 0-13.5 0V12A6.75 6.75 0 0 0 12 18.75Z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 12a3.75 3.75 0 0 0 7.5 0M12 18.75v2.25" />
+                                </svg>
+                            </span>
+                            <div>
+                                <h2 className="text-sm font-bold text-slate-700">声音档案</h2>
+                                <p className="text-[10px] text-slate-400">给角色认识你的长期声音画像</p>
+                            </div>
+                        </div>
+                        <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${baselineStatus.ready ? 'bg-emerald-50 text-emerald-600' : 'bg-sky-50 text-sky-600'}`}>
+                            基线 {Math.min(baselineStatus.count, EARS_LITE_BASELINE_TARGET)}/{EARS_LITE_BASELINE_TARGET}
+                        </span>
+                    </div>
+
+                    <div className="rounded-2xl bg-slate-50 border border-slate-100 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">声音画像</span>
+                            {userProfile.voiceProfile?.updatedAt && (
+                                <span className="text-[10px] text-slate-400">{new Date(userProfile.voiceProfile.updatedAt).toLocaleDateString()}</span>
+                            )}
+                        </div>
+                        <p className="text-sm text-slate-700 leading-relaxed">{voiceProfileSummary(userProfile.voiceProfile)}</p>
+                        {userProfile.voiceProfile?.lastIdentityStatus && (
+                            <p className="text-[11px] text-slate-500">
+                                最近身份验证：{userProfile.voiceProfile.lastIdentityStatus === 'matched' ? '像机主本人' : userProfile.voiceProfile.lastIdentityStatus === 'unmatched' ? '不像机主本人' : '无法确定'}
+                                {typeof userProfile.voiceProfile.lastIdentityScore === 'number' ? ` · ${Math.round(userProfile.voiceProfile.lastIdentityScore * 10) / 10}` : ''}
+                            </p>
+                        )}
+                    </div>
+
+                    {voiceStatus && <p className="text-[11px] text-sky-600 leading-relaxed mt-2">{voiceStatus}</p>}
+
+                    <div className="grid grid-cols-2 gap-2 mt-3">
+                        <button
+                            type="button"
+                            onClick={handleBuildVoiceProfile}
+                            disabled={voiceBusy}
+                            className="py-2.5 rounded-2xl bg-sky-500 text-white text-xs font-bold active:scale-95 disabled:opacity-60 disabled:active:scale-100 transition-all"
+                        >
+                            {voiceBusy ? '处理中...' : '建立声音画像'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleVerifyVoiceIdentity}
+                            disabled={voiceBusy}
+                            className="py-2.5 rounded-2xl bg-white text-sky-600 border border-sky-100 text-xs font-bold active:scale-95 disabled:opacity-60 disabled:active:scale-100 transition-all"
+                        >
+                            验证身份
+                        </button>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-relaxed mt-3">
+                        声音画像走讯飞抽样；身份验证走腾讯云声纹。密钥放在 Worker 环境变量里，前端只保存画像摘要和验证结果。
+                    </p>
                 </div>
                 </>}
             </div>

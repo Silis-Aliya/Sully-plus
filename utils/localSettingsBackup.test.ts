@@ -114,6 +114,80 @@ describe('localSettingsBackup', () => {
         expect(localStorage.getItem('workbench_mode_v1')).toBe('sully');
     });
 
+    it('backs up Ears Lite API settings through os_api_config', () => {
+        localStorage.setItem('os_api_config', JSON.stringify({
+            baseUrl: 'https://api.example.com/v1',
+            apiKey: 'sk-main',
+            model: 'chat-model',
+            ears: {
+                groqApiKey: 'gsk_voice_secret',
+                groqBaseUrl: 'https://api.groq.com/openai/v1',
+                groqAsrModel: 'whisper-large-v3-turbo',
+                groqToneEnabled: true,
+                groqToneModel: 'llama-3.3-70b-versatile',
+                tencentSecretId: 'tencent-id',
+                xfyunAppId: 'xfyun-app',
+            },
+        }));
+
+        const snapshot = exportLocalStorageSettings();
+        localStorage.clear();
+        importLocalStorageSettings(snapshot);
+
+        const restored = JSON.parse(localStorage.getItem('os_api_config') || '{}');
+        expect(restored.ears).toMatchObject({
+            groqApiKey: 'gsk_voice_secret',
+            groqBaseUrl: 'https://api.groq.com/openai/v1',
+            groqAsrModel: 'whisper-large-v3-turbo',
+            groqToneEnabled: true,
+            groqToneModel: 'llama-3.3-70b-versatile',
+            tencentSecretId: 'tencent-id',
+            xfyunAppId: 'xfyun-app',
+        });
+    });
+
+    it('applies Ears Lite API settings through incremental localStorage patches', () => {
+        applyLocalStorageSettingsPatch({
+            os_api_config: JSON.stringify({
+                baseUrl: 'https://api.example.com/v1',
+                apiKey: 'sk-main',
+                model: 'chat-model',
+                ears: {
+                    groqApiKey: 'gsk_incremental_voice_secret',
+                    groqBaseUrl: 'https://api.groq.com/openai/v1',
+                    groqAsrModel: 'whisper-large-v3-turbo',
+                    groqToneEnabled: true,
+                    groqToneModel: 'llama-3.3-70b-versatile',
+                },
+            }),
+        }, []);
+
+        const restored = JSON.parse(localStorage.getItem('os_api_config') || '{}');
+        expect(restored.ears?.groqApiKey).toBe('gsk_incremental_voice_secret');
+        expect(restored.ears?.groqToneEnabled).toBe(true);
+        expect(restored.ears?.groqToneModel).toBe('llama-3.3-70b-versatile');
+    });
+
+    it('backs up Ears Lite voice baseline for cross-device calibration', () => {
+        localStorage.setItem('sully_ears_lite_baseline_v1', JSON.stringify({
+            count: 8,
+            rmsMean: 0.12,
+            pauseRatio: 0.31,
+            pitchHz: 260,
+            energySway: 0.82,
+            brightness: 1.4,
+        }));
+
+        const snapshot = exportLocalStorageSettings();
+        localStorage.clear();
+        importLocalStorageSettings(snapshot);
+
+        expect(JSON.parse(localStorage.getItem('sully_ears_lite_baseline_v1') || '{}')).toMatchObject({
+            count: 8,
+            pitchHz: 260,
+        });
+    });
+
     it('includes expected setting prefixes but ignores unrelated large cache keys', () => {
         expect(shouldBackupLocalStorageKey('chat_translate_enabled_char-1')).toBe(true);
         expect(shouldBackupLocalStorageKey('mp_lastMsgId_char-1')).toBe(true);

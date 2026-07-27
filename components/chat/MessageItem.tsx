@@ -3732,6 +3732,31 @@ const MessageItem = React.memo(({
     // Display: "选" language by default, "译" language when toggled
     const displayContent = (isShowingTarget && langBContent) ? langBContent : langAContent;
     const showTranslateButton = translationEnabled && hasBilingual && langBContent;
+    const voiceMeta: any = m.metadata || {};
+    const voiceMetaDetail: any = voiceMeta.voice || {};
+    const isUserVoiceMsg = isUser && m.type === 'voice';
+    const userVoiceUrl = isUserVoiceMsg
+        ? [
+            voiceMeta.audioUrl,
+            voiceMeta.url,
+            voiceMeta.voiceUrl,
+            voiceMetaDetail.audioUrl,
+            voiceMetaDetail.url,
+            typeof m.content === 'string' && /^(?:blob:|data:audio\/|https?:\/\/)/i.test(m.content.trim()) ? m.content.trim() : '',
+        ].find(v => typeof v === 'string' && v.trim())
+        : '';
+    const userVoiceText = isUserVoiceMsg
+        ? cleanVoiceText([
+            voiceMeta.transcript,
+            voiceMeta.originalText,
+            voiceMeta.spokenText,
+            voiceMeta.text,
+            voiceMetaDetail.transcript,
+            voiceMetaDetail.text,
+            typeof m.content === 'string' && !/^(?:blob:|data:audio\/|https?:\/\/)/i.test(m.content.trim()) ? m.content : '',
+        ].find(v => typeof v === 'string' && v.trim()) || '')
+        : '';
+    const visibleDisplayContent = isUserVoiceMsg ? '' : displayContent;
 
     // Check if raw content has a <语音> tag (voice-only message that hasn't been TTS'd yet).
     // 未闭合的开标签也算 (历史坏数据: 语音块曾被 chunkText 切碎, 开标签落单) —
@@ -3746,12 +3771,12 @@ const MessageItem = React.memo(({
         ?? m.content.match(/<[语語]音[^>]*>([\s\S]*)$/)?.[1]
         ?? ''
     ).replace(/<字幕>[\s\S]*?<\/字幕>/g, '').trim()) : '';
-    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag;
+    const hasVoiceContent = voiceData?.url || voiceLoading || hasVoiceTag || isUserVoiceMsg;
     // Don't render empty bubbles (e.g. messages that were just "---"), unless voice data exists or pending
-    if (!displayContent && !hasVoiceContent) return null;
+    if (!visibleDisplayContent && !hasVoiceContent) return null;
 
     // Voice-only messages (no display text, only voice bar): skip bubble styling
-    const isVoiceOnlyMsg = !displayContent && hasVoiceContent && !isUser && m.type === 'text';
+    const isVoiceOnlyMsg = isUserVoiceMsg || (!visibleDisplayContent && hasVoiceContent && !isUser && m.type === 'text');
 
     // 外语语音消息：语音条展开区（转文字）本身就完整呈现「口播原文 + 中文翻译」两行，
     // 顶部气泡再渲染一遍 displayContent 就成了重复——翻译模式下顶部是中文、语音条翻译行
@@ -3801,14 +3826,14 @@ const MessageItem = React.memo(({
 
             {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
             {/* 外语语音消息把双语文字交给下方语音条渲染，顶部不再重复正文 */}
-            {displayContent && !isForeignVoiceMsg && (
+            {visibleDisplayContent && !isForeignVoiceMsg && (
             <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-all select-text" style={{ color: styleConfig.textColor }}>
-                {renderContent(displayContent)}
+                {renderContent(visibleDisplayContent)}
             </div>
             )}
 
             {/* Layer 5: 双语「翻译/原文」切换 —— 气泡内右下角，细分隔线压层级，小灰字克制易找 */}
-            {showTranslateButton && displayContent && !isForeignVoiceMsg && (
+            {showTranslateButton && visibleDisplayContent && !isForeignVoiceMsg && (
                 <div
                     className="relative z-10 mt-2 pt-1.5 flex justify-end"
                     style={{ borderTop: '1px solid rgba(127, 127, 127, 0.16)' }}
@@ -3832,6 +3857,96 @@ const MessageItem = React.memo(({
                     </button>
                 </div>
             )}
+
+            {/* Layer 6a: User Voice Bar */}
+            {isUserVoiceMsg && (() => {
+                const vbBg = styleConfig.voiceBarBg;
+                const vbActiveBg = styleConfig.voiceBarActiveBg;
+                const vbBtn = styleConfig.voiceBarBtnColor;
+                const vbWave = styleConfig.voiceBarWaveColor;
+                const vbText = styleConfig.voiceBarTextColor;
+                return (
+                    <div className="relative z-10">
+                        <div className="max-w-[260px]">
+                            <button
+                                onClick={(e) => { e.stopPropagation(); e.preventDefault(); if (userVoiceUrl) onPlayVoice?.(m.id); else setShowVoiceText(v => !v); }}
+                                className="group flex items-center gap-2.5 w-full px-3 py-2 rounded-2xl transition-all duration-300 active:scale-[0.97] select-none"
+                                style={{
+                                    background: isVoicePlaying
+                                        ? (vbActiveBg || 'linear-gradient(135deg, rgba(16,185,129,0.12) 0%, rgba(52,211,153,0.08) 100%)')
+                                        : (vbBg || 'linear-gradient(135deg, rgba(0,0,0,0.03) 0%, rgba(0,0,0,0.06) 100%)'),
+                                    border: isVoicePlaying
+                                        ? `1px solid ${vbBtn ? vbBtn + '33' : 'rgba(16,185,129,0.2)'}`
+                                        : '1px solid rgba(0,0,0,0.05)',
+                                }}
+                            >
+                                <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all duration-300"
+                                    style={{
+                                        backgroundColor: isVoicePlaying ? (vbBtn || '#10b981') : (vbBg ? 'rgba(255,255,255,0.25)' : 'rgba(148,163,184,0.2)'),
+                                        boxShadow: isVoicePlaying ? `0 2px 8px ${vbBtn ? vbBtn + '4D' : 'rgba(16,185,129,0.3)'}` : 'none',
+                                    }}
+                                >
+                                    {isVoicePlaying ? (
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-white"><path d="M5.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75A.75.75 0 0 0 7.25 3h-1.5ZM12.75 3a.75.75 0 0 0-.75.75v12.5c0 .414.336.75.75.75h1.5a.75.75 0 0 0 .75-.75V3.75a.75.75 0 0 0-.75-.75h-1.5Z" /></svg>
+                                    ) : (
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill={vbBtn || '#64748b'} className="w-3 h-3 ml-0.5"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
+                                    )}
+                                </div>
+                                <div className="flex-1 flex items-center gap-[3px] h-5 overflow-hidden">
+                                    {[4, 10, 6, 14, 8, 12, 5, 11, 7, 13, 4, 9, 6, 11, 5, 8, 10, 7, 12, 6].map((h, i) => (
+                                        <div
+                                            key={i}
+                                            className={`w-[2.5px] rounded-full transition-all duration-150 ${isVoicePlaying ? 'animate-pulse' : ''}`}
+                                            style={{
+                                                height: isVoicePlaying ? `${Math.max(3, h + Math.sin(i * 0.8) * 3)}px` : `${Math.max(2, h * 0.4)}px`,
+                                                backgroundColor: isVoicePlaying
+                                                    ? (vbWave || `rgba(16, 185, 129, ${0.4 + (h / 14) * 0.5})`)
+                                                    : (vbWave ? vbWave + '60' : `rgba(148, 163, 184, ${0.25 + (h / 14) * 0.35})`),
+                                                animationDelay: `${i * 60}ms`,
+                                                animationDuration: `${600 + (i % 3) * 200}ms`,
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                                {voiceMeta.durationSec ? (
+                                    <span className="shrink-0 text-[10px]" style={{ color: vbText || 'rgba(100,116,139,0.7)' }}>
+                                        {Math.max(1, Math.round(Number(voiceMeta.durationSec)))}"
+                                    </span>
+                                ) : null}
+                                {userVoiceText ? (
+                                    <div
+                                        className={`shrink-0 ml-0.5 px-1.5 py-0.5 rounded-lg text-[9px] font-medium transition-all ${showVoiceText ? 'ring-1 ring-current/20' : ''}`}
+                                        style={{
+                                            color: vbText || 'rgba(100,116,139,0.7)',
+                                            backgroundColor: showVoiceText ? 'rgba(0,0,0,0.08)' : 'rgba(0,0,0,0.04)',
+                                        }}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            e.preventDefault();
+                                            setShowVoiceText(v => !v);
+                                        }}
+                                    >
+                                        {showVoiceText ? '收起' : '转文字'}
+                                    </div>
+                                ) : (
+                                    <span className="text-[9px] shrink-0" style={{ color: vbText || 'rgba(100,116,139,0.7)' }}>语音</span>
+                                )}
+                            </button>
+                            {showVoiceText && userVoiceText && (
+                                <div className="mt-1.5 px-3 py-2 rounded-xl text-[11px] leading-relaxed whitespace-pre-wrap"
+                                    style={{
+                                        backgroundColor: vbBg || 'rgba(0,0,0,0.02)',
+                                        color: vbText || '#475569',
+                                        border: '1px solid rgba(0,0,0,0.04)',
+                                    }}
+                                >
+                                    {userVoiceText}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* Layer 6: Voice Bar */}
             {(voiceData?.url || voiceLoading || hasVoiceTag) && !isUser && m.type === 'text' && (() => {
