@@ -32,6 +32,13 @@ Current known baseline:
 
 This section supersedes the stale repository/baseline bullets inside the copied Next-Window Prompt above. Do not edit that prompt block without first showing the full revised prompt to the user for confirmation.
 
+### Maintenance Direction Update
+
+- `Sully-plus` is now the main active maintenance line.
+- The public fork is a frozen/current-version snapshot. Do not continue normal feature work there.
+- Future private features, voice work, upstream merge resolution, and Vercel/private deployment preparation should happen on `origin` (`Silis-Aliya/Sully-plus.git`) first.
+- Only touch `public-fork` for explicit snapshot/readme/security updates, and keep private Worker addresses out of that repository.
+
 ### Remotes And Ownership
 
 - `upstream` = `https://github.com/qegj567-cloud/SullyOS.git`
