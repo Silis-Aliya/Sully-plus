@@ -9,6 +9,38 @@ export interface ResolvedXhsShareLink {
     error?: string;
 }
 
+const isGenericXhsTitle = (value: string): boolean => {
+    const normalized = value.replace(/\s+/g, '').toLowerCase();
+    return !normalized || ['小红书', 'rednote', 'xiaohongshu', '小红书笔记', '笔记分享'].includes(normalized);
+};
+
+const cleanXhsShareTitle = (value: string): string => {
+    const cleaned = String(value || '')
+        .replace(/https?:\/\/\S+/gi, ' ')
+        .replace(/(?:打开|复制打开|点击打开)?\s*(?:小红书|REDnote)\s*(?:查看|看看|看|App)?/gi, ' ')
+        .replace(/(?:来自|分享自)\s*(?:小红书|REDnote)/gi, ' ')
+        .replace(/\s*[|｜]\s*(?:小红书|REDnote).*$/i, '')
+        .replace(/\s*[|｜]\s*$/i, '')
+        .replace(/[《》【】「」『』“”"'`]+/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return isGenericXhsTitle(cleaned) ? '' : cleaned;
+};
+
+const extractXhsTitleFromShareText = (text: string): string => {
+    const bracketCandidates = [...text.matchAll(/[【《「『“"]([^【】《》「」『』“"]{2,120})[】》」』”"]/g)]
+        .map(match => cleanXhsShareTitle(match[1]))
+        .filter(Boolean);
+    if (bracketCandidates.length) return bracketCandidates[0];
+
+    const urlMatch = text.match(/https?:\/\/\S+/i);
+    const beforeUrl = urlMatch ? text.slice(0, urlMatch.index).trim() : '';
+    const cleanedBeforeUrl = cleanXhsShareTitle(beforeUrl);
+    if (cleanedBeforeUrl && cleanedBeforeUrl.length <= 120) return cleanedBeforeUrl;
+
+    return '';
+};
+
 export const resolveXhsShareLink = async (
     text: string,
     realtimeConfig?: RealtimeConfig,
@@ -45,9 +77,7 @@ export const resolveXhsShareLink = async (
         };
     }
 
-    const titleFromText = (text.match(/【(.+?)】/)?.[1] || '')
-        .replace(/\s*[|｜]\s*小红书.*$/, '')
-        .trim();
+    const titleFromText = extractXhsTitleFromShareText(text);
     const sourceUrl = resolvedUrl
         || `https://www.xiaohongshu.com/explore/${noteId}${xsecToken ? `?xsec_token=${xsecToken}&xsec_source=pc_share` : ''}`;
     let note: Record<string, any> = {
@@ -81,7 +111,7 @@ export const resolveXhsShareLink = async (
             ...note,
             ...fetched,
             noteId: fetched.noteId || note.noteId,
-            title: titleFromText || fetched.title || note.title,
+            title: titleFromText || cleanXhsShareTitle(fetched.title) || cleanXhsShareTitle(note.title),
             xsecToken: fetched.xsecToken || xsecToken,
             sourceUrl,
         };

@@ -26,4 +26,24 @@ describe('resolveXhsShareLink', () => {
             detailLoaded: false,
         });
     });
+
+    it('does not use the app name as the card title', async () => {
+        const noteId = '64f123456789abcdef012345';
+        const result = await resolveXhsShareLink(
+            `【小红书】https://www.xiaohongshu.com/explore/${noteId}`,
+        );
+
+        expect(result.detected).toBe(true);
+        expect(result.note?.title).toBe('');
+    });
+
+    it('uses the text before the share url as a title fallback', async () => {
+        const noteId = '64f123456789abcdef012345';
+        const result = await resolveXhsShareLink(
+            `AI 声音怎么做出呼吸感？ ElevenLabs 标签自主创造和可复用分享 https://www.xiaohongshu.com/explore/${noteId}`,
+        );
+
+        expect(result.detected).toBe(true);
+        expect(result.note?.title).toBe('AI 声音怎么做出呼吸感？ ElevenLabs 标签自主创造和可复用分享');
+    });
 });

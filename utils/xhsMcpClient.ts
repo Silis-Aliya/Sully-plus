@@ -914,9 +914,13 @@ export const normalizeNote = (n: any): {
     const collectsRaw = n.collects ?? n.collected_count ?? interact.collected_count ?? interact.collectedCount ?? 0;
     const commentCountRaw = n.commentCount ?? n.comment_count ?? interact.comment_count ?? interact.commentCount ?? 0;
     const shareCountRaw = n.shareCount ?? n.share_count ?? interact.share_count ?? interact.shareCount ?? 0;
+    const rawTitle = n.title || n.display_title || n.displayTitle || card?.display_title || card?.displayTitle || card?.title || '';
+    const title = ['小红书', 'REDnote', 'xiaohongshu', '小红书笔记', '笔记分享'].includes(String(rawTitle).trim())
+        ? ''
+        : rawTitle;
     return {
         noteId: n.noteId || n.note_id || n.id || card?.note_id || card?.noteId || card?.noteId || '',
-        title: n.title || n.display_title || n.displayTitle || card?.display_title || card?.displayTitle || card?.title || '',
+        title,
         desc: (n.desc || n.description || n.content || card?.desc || card?.description || '').slice(0, 500),
         author: n.author || n.nickname || n.user?.nickname || n.user?.name || card?.user?.nickname || card?.user?.name || '',
         authorId: n.authorId || n.author_id || n.user?.user_id || n.user?.userId || card?.user?.user_id || card?.user?.userId || '',
