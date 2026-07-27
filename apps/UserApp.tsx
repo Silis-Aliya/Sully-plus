@@ -11,8 +11,12 @@ const UserApp: React.FC = () => {
     const { closeApp, userProfile, updateUserProfile, addToast, apiConfig, updateApiConfig } = useOS();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [tab, setTab] = useState<'profile' | 'life'>('profile');
-    const [voiceBusy, setVoiceBusy] = useState(false);
-    const [voiceStatus, setVoiceStatus] = useState('');
+    const [enrollBusy, setEnrollBusy] = useState(false);
+    const [profileBusy, setProfileBusy] = useState(false);
+    const [verifyBusy, setVerifyBusy] = useState(false);
+    const [enrollStatus, setEnrollStatus] = useState('');
+    const [profileStatus, setProfileStatus] = useState('');
+    const [verifyStatus, setVerifyStatus] = useState('');
     const baselineStatus = getEarsLiteBaselineStatus();
 
     const recordVoiceProfileClip = async (durationMs = 6500): Promise<Blob> => {
@@ -69,16 +73,16 @@ const UserApp: React.FC = () => {
     };
 
     const handleBuildVoiceProfile = async () => {
-        if (voiceBusy) return;
+        if (profileBusy) return;
         if (!apiConfig.ears?.xfyunAppId) {
             addToast('请先到设置 → 语音识别 / Ears Lite 填讯飞 APPID，并在 Worker 配好 XFYUN_API_KEY / XFYUN_API_SECRET', 'error');
             return;
         }
-        setVoiceBusy(true);
-        setVoiceStatus('正在录制声音画像样本...');
+        setProfileBusy(true);
+        setProfileStatus('正在录制声音画像样本...');
         try {
             const blob = await recordVoiceProfileClip();
-            setVoiceStatus('正在分析声音画像...');
+            setProfileStatus('正在分析声音画像...');
             const prepared = await prepareVoiceCloudAudio(blob);
             const result = await profileVoiceWithXfyun(prepared, apiConfig.ears.xfyunAppId);
             const summary = buildVoiceProfileSummary(result);
@@ -94,27 +98,27 @@ const UserApp: React.FC = () => {
                     ageScores: result.ageScores,
                 },
             });
-            setVoiceStatus('声音画像已更新');
+            setProfileStatus('声音画像已更新');
             addToast('声音画像已更新', 'success');
         } catch (err: any) {
-            setVoiceStatus(err?.message || '声音画像建立失败');
+            setProfileStatus(err?.message || '声音画像建立失败');
             addToast(err?.message || '声音画像建立失败', 'error');
         } finally {
-            setVoiceBusy(false);
+            setProfileBusy(false);
         }
     };
 
     const handleVerifyVoiceIdentity = async () => {
-        if (voiceBusy) return;
+        if (verifyBusy) return;
         if (!apiConfig.ears?.tencentVoicePrintId) {
             addToast('请先到设置 → 语音识别 / Ears Lite 填机主 VoicePrintId，并在 Worker 配好腾讯云 Secret', 'error');
             return;
         }
-        setVoiceBusy(true);
-        setVoiceStatus('正在录制身份验证样本...');
+        setVerifyBusy(true);
+        setVerifyStatus('正在录制身份验证样本...');
         try {
             const blob = await recordVoiceProfileClip(4200);
-            setVoiceStatus('正在验证是不是机主...');
+            setVerifyStatus('正在验证是不是机主...');
             const prepared = await prepareVoiceCloudAudio(blob);
             const result = await verifyTencentSpeaker(prepared, apiConfig.ears.tencentVoicePrintId);
             updateUserProfile({
@@ -127,23 +131,23 @@ const UserApp: React.FC = () => {
                 },
             });
             const label = result.status === 'matched' ? '像机主本人' : result.status === 'unmatched' ? '不像机主本人' : '无法确定';
-            setVoiceStatus(`身份验证：${label}`);
+            setVerifyStatus(`身份验证：${label}`);
             addToast(`身份验证：${label}`, result.status === 'matched' ? 'success' : 'error');
         } catch (err: any) {
-            setVoiceStatus(err?.message || '身份验证失败');
+            setVerifyStatus(err?.message || '身份验证失败');
             addToast(err?.message || '身份验证失败', 'error');
         } finally {
-            setVoiceBusy(false);
+            setVerifyBusy(false);
         }
     };
 
     const handleEnrollVoiceIdentity = async () => {
-        if (voiceBusy) return;
-        setVoiceBusy(true);
-        setVoiceStatus('正在录制声纹注册样本...');
+        if (enrollBusy) return;
+        setEnrollBusy(true);
+        setEnrollStatus('正在录制声纹注册样本...');
         try {
             const blob = await recordVoiceProfileClip(6500);
-            setVoiceStatus('正在注册腾讯云声纹...');
+            setEnrollStatus('正在注册腾讯云声纹...');
             const prepared = await prepareVoiceCloudAudio(blob);
             const result = await enrollTencentSpeaker(prepared, userProfile.name || 'SullyOS User');
             if (!result.voicePrintId) throw new Error('腾讯云没有返回 VoicePrintId，请换一段更清晰的声音再试');
@@ -153,21 +157,13 @@ const UserApp: React.FC = () => {
                     tencentVoicePrintId: result.voicePrintId,
                 },
             });
-            updateUserProfile({
-                voiceProfile: {
-                    ...(userProfile.voiceProfile || {}),
-                    baselineCount: baselineStatus.count,
-                    lastIdentityStatus: 'matched',
-                    lastIdentityAt: Date.now(),
-                },
-            });
-            setVoiceStatus(`声纹已注册：${result.voicePrintId}`);
+            setEnrollStatus(`声纹已注册：${result.voicePrintId}`);
             addToast('声纹已注册，VoicePrintId 已自动保存', 'success');
         } catch (err: any) {
-            setVoiceStatus(err?.message || '声纹注册失败');
+            setEnrollStatus(err?.message || '声纹注册失败');
             addToast(err?.message || '声纹注册失败', 'error');
         } finally {
-            setVoiceBusy(false);
+            setEnrollBusy(false);
         }
     };
 
@@ -324,32 +320,38 @@ const UserApp: React.FC = () => {
                         )}
                     </div>
 
-                    {voiceStatus && <p className="text-[11px] text-sky-600 leading-relaxed mt-2">{voiceStatus}</p>}
+                    {(enrollStatus || profileStatus || verifyStatus) && (
+                        <div className="mt-2 space-y-1">
+                            {enrollStatus && <p className="text-[11px] text-indigo-600 leading-relaxed">{enrollStatus}</p>}
+                            {profileStatus && <p className="text-[11px] text-sky-600 leading-relaxed">{profileStatus}</p>}
+                            {verifyStatus && <p className="text-[11px] text-slate-500 leading-relaxed">{verifyStatus}</p>}
+                        </div>
+                    )}
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
                         <button
                             type="button"
                             onClick={handleEnrollVoiceIdentity}
-                            disabled={voiceBusy}
+                            disabled={enrollBusy}
                             className="py-2.5 rounded-2xl bg-indigo-500 text-white text-xs font-bold active:scale-95 disabled:opacity-60 disabled:active:scale-100 transition-all"
                         >
-                            {voiceBusy ? '处理中...' : apiConfig.ears?.tencentVoicePrintId ? '重新注册声纹' : '注册声纹'}
+                            {enrollBusy ? '处理中...' : apiConfig.ears?.tencentVoicePrintId ? '重新注册声纹' : '注册声纹'}
                         </button>
                         <button
                             type="button"
                             onClick={handleBuildVoiceProfile}
-                            disabled={voiceBusy}
+                            disabled={profileBusy}
                             className="py-2.5 rounded-2xl bg-sky-500 text-white text-xs font-bold active:scale-95 disabled:opacity-60 disabled:active:scale-100 transition-all"
                         >
-                            {voiceBusy ? '处理中...' : '建立声音画像'}
+                            {profileBusy ? '处理中...' : '建立声音画像'}
                         </button>
                         <button
                             type="button"
                             onClick={handleVerifyVoiceIdentity}
-                            disabled={voiceBusy}
+                            disabled={verifyBusy}
                             className="py-2.5 rounded-2xl bg-white text-sky-600 border border-sky-100 text-xs font-bold active:scale-95 disabled:opacity-60 disabled:active:scale-100 transition-all"
                         >
-                            验证身份
+                            {verifyBusy ? '处理中...' : '验证身份'}
                         </button>
                     </div>
                     <p className="text-[10px] text-slate-400 leading-relaxed mt-3">
