@@ -1416,6 +1416,11 @@ export interface WorldProfile {
     timeMode?: WorldTimeMode;
     /** sim 模式的起始日期（不设时按创建当天） */
     simStartDate?: WorldSimDate;
+    /** real 模式：这个世界活在哪个时区（IANA id，如 'Asia/Tokyo'）。不设 = 跟随本机。
+     *  一个世界只有一个钟——它同时决定「早/中/晚/凌晨」的段判定、离线 tick 的触发时刻，
+     *  并**覆盖**成员各自的 customTimezone（同一个世界里的人不可能各活一个时区，
+     *  否则世界钟和角色 prompt 里的「当前时间」会互相打架）。sim 模式不使用此字段。 */
+    timezone?: string;
     /** real 模式：世界已演到的「现实段」（早/中/晚/凌晨跟着真实时钟走）。dayKey=YYYY-MM-DD，
      *  seg=0早/1中/2晚/3凌晨（凌晨发生在 dayKey **次日**的 0~5 点，排在该剧情日末尾以保证段序单调）。
      *  只能补当天错过的段，过了今天就补不了；未演过时为空。 */
@@ -3518,6 +3523,7 @@ export interface XhsMcpConfig {
     serverUrl: string;  // MCP: "http://localhost:18060/mcp" | Skills: "http://localhost:18061/api" | Lite Worker: "https://xhs-lite.<acct>.workers.dev/api"
     liteMode?: 'full' | 'simple'; // Lite 模式能力档位：full=完整，simple=不发帖/收藏/评论/回复
     cookie?: string;    // Lite 模式：登录后的小红书完整 cookie（含 a1 / web_session）。仅 lite Worker 用。
+    rnoteApiKey?: string; // Lite 模式可选：用户自己的 Rnote Key，仅用于读取真实评论。
     loggedInUserId?: string;   // 登录用户的 user_id，连接测试成功后自动获取
     loggedInNickname?: string; // 登录用户的昵称
     userXsecToken?: string;    // 连接测试时从首页推荐自动提取的 xsec_token
