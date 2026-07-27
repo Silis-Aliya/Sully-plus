@@ -2,7 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useRef, useCallb
 import { APIConfig, AppID, OSTheme, CharacterProfile, CharacterGroup, ChatTheme, Toast, FullBackupData, UserProfile, ApiPreset, GroupProfile, SystemLog, Worldbook, NovelBook, SongSheet, Message, RealtimeConfig, AppearancePreset, CloudBackupConfig, CloudBackupFile, CloudBackupProvider } from '../types';
 import { DB } from '../utils/db';
 import { modelRejectsSamplingParams, stripSamplingParams, isSamplingParamError } from '../utils/samplingParamCompat';
-import { extractImagesInPlace, deepCloneForExport } from '../utils/backupExport';
+import { extractImagesInPlace, deepCloneForExport, sanitizeBackupStoreRow } from '../utils/backupExport';
 import { isBlobRef, getBlobForRef, migrateDataUrlToRef, migrateAppearancePresetBlobRefs, resolveBlobRefsDeep, BLOBREF_PREFIX, deleteBlobRefIfUnreferenced } from '../utils/blobRef';
 import { LEGACY_DEFAULT_WALLPAPER, isLegacyDefaultWallpaper, shouldPreserveLegacyDefaultWallpaper } from '../utils/wallpaperCompat';
 import { migrateSharkpanAssets } from '../utils/sharkpanAssetMigration';
@@ -3886,6 +3886,9 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               });
 
               let rawData = await DB.getRawStoreData(storeName);
+              if (Array.isArray(rawData)) {
+                  rawData = rawData.map(row => sanitizeBackupStoreRow(storeName, row));
+              }
               let processedData: any;
 
               // 向量旁路：归一化拼 bin + 索引，不进 backupData（writeV2Backup 收尾落 zip）。直接跳过

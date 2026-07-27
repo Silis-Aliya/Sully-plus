@@ -8,6 +8,7 @@ import {
     shouldIncludeQuickSyncRow,
 } from './quickSync';
 import { shouldBackupLocalStorageKey } from './localSettingsBackup';
+import { sanitizeVoiceMessageForBackup } from './backupExport';
 
 describe('quickSync settings coverage', () => {
     it('includes theme and settings asset stores', () => {
@@ -49,6 +50,7 @@ describe('quickSync settings coverage', () => {
 
     it('includes persistent full-backup options in incremental settings', () => {
         expect(shouldBackupLocalStorageKey('os_api_config')).toBe(true);
+        expect(shouldBackupLocalStorageKey('sully_ears_lite_baseline_v1')).toBe(true);
         expect(shouldBackupLocalStorageKey('vr_po_base')).toBe(true);
         expect(shouldBackupLocalStorageKey('vr_po_device')).toBe(true);
         expect(shouldBackupLocalStorageKey('signal_my_authorship')).toBe(true);
@@ -58,7 +60,6 @@ describe('quickSync settings coverage', () => {
         expect(shouldBackupLocalStorageKey('sully_music_cfg_v1')).toBe(true);
         expect(shouldBackupLocalStorageKey('sully_music_state_v1')).toBe(true);
         expect(shouldBackupLocalStorageKey('sully_music_local_album_v1')).toBe(true);
-        expect(shouldBackupLocalStorageKey('sully_ears_lite_baseline_v1')).toBe(true);
         expect(shouldBackupLocalStorageKey('music_together_wake_schedules_v1')).toBe(false);
         expect(shouldBackupLocalStorageKey('vr_po_admin_token')).toBe(false);
         expect(shouldBackupLocalStorageKey('signal_whisper')).toBe(false);
@@ -74,6 +75,38 @@ describe('quickSync settings coverage', () => {
         expect(shouldIncludeQuickSyncRow('assets', { id: 'mmmusic_song_123', data: { blob: new Blob() } })).toBe(true);
         expect(shouldIncludeQuickSyncRow('assets', { id: 'voice_123', data: { blob: new Blob() } })).toBe(false);
         expect(shouldIncludeQuickSyncRow('assets', { id: 'minimax_music_cache_123', data: { blob: new Blob() } })).toBe(false);
+    });
+
+    it('keeps voice message analysis portable without exporting recorded audio', () => {
+        const sanitized = sanitizeVoiceMessageForBackup({
+            id: 12,
+            type: 'voice',
+            content: 'blob:http://localhost/recording',
+            metadata: {
+                transcript: '我没事啦，就是有点累',
+                audioUrl: 'blob:http://localhost/recording',
+                audioBlob: new Blob(['voice'], { type: 'audio/webm' }),
+                durationSec: 2,
+                voice: {
+                    audioUrl: 'data:audio/webm;base64,AAAA',
+                    emotion: '低落',
+                    confidence: 0.62,
+                    hint: '比平时更轻、停顿更多',
+                    speakerVerification: { status: 'unmatched' },
+                    voiceProfile: { gender: 'male', age: 'child' },
+                },
+            },
+        } as any);
+
+        expect(sanitized.content).toBe('我没事啦，就是有点累');
+        expect(sanitized.metadata.transcript).toBe('我没事啦，就是有点累');
+        expect(sanitized.metadata.audioUrl).toBeUndefined();
+        expect(sanitized.metadata.audioBlob).toBeUndefined();
+        expect(sanitized.metadata.durationSec).toBe(2);
+        expect(sanitized.metadata.voice.audioUrl).toBeUndefined();
+        expect(sanitized.metadata.voice.emotion).toBe('低落');
+        expect(sanitized.metadata.voice.speakerVerification.status).toBe('unmatched');
+        expect(sanitized.metadata.voice.voiceProfile.gender).toBe('male');
     });
 
     it('collects blobref image ids from nested synced records', () => {

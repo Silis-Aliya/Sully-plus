@@ -18,6 +18,7 @@ import { exportMcdLocal, importMcdLocal } from './mcdMcpClient';
 import { exportMcpLocal, importMcpLocal } from './mcpClient';
 import { exportWorldHomeLocal, importWorldHomeLocal } from './worldHome/localBackup';
 import { exportDesktopSkinLocal, importDesktopSkinLocal } from './desktopSkinBackup';
+import { sanitizeVoiceMessageForBackup } from './backupExport';
 
 const DB_NAME = 'AetherOS_Data';
 // v67：两条并行线各自用掉了 v65/v66（A线: blob_assets + 生活记录；B线: room_plates 门牌 + digest_reports 消化日志），
@@ -3032,17 +3033,14 @@ export const DB = {
           getAllFromStore<WorkbenchArtifact>(STORE_WORKBENCH_ARTIFACTS),
       ]);
 
-      const userProfile = userProfiles.length > 0 ? {
-          name: userProfiles[0].name,
-          avatar: userProfiles[0].avatar,
-          bio: userProfiles[0].bio
-      } : undefined;
+      const userProfile = userProfiles.length > 0 ? userProfiles[0] : undefined;
+      const portableMessages = messages.map((message: Message) => sanitizeVoiceMessageForBackup(message));
 
       const mainState = bankData.find((d: any) => d.id === 'main_state');
       const dollhouseRecord = bankData.find((d: any) => d.id === 'dollhouse_state');
 
       return {
-          characters, characterGroups, messages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, novels,
+          characters, characterGroups, messages: portableMessages, customThemes: themes, savedEmojis: emojis, emojiCategories, assets, galleryImages, userProfile, diaries, tasks, anniversaries, roomTodos, roomNotes, groups, savedJournalStickers: journalStickers, socialPosts, courses, games, worldbooks, novels,
           bankState: mainState ? { ...mainState, id: undefined } : undefined,
           bankDollhouse: dollhouseRecord?.data || undefined,
           bankTransactions: bankTx,

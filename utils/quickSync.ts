@@ -3,6 +3,7 @@ import { applyLocalStorageSettingsPatch, exportLocalStorageSettings } from './lo
 import { BLOBREF_PREFIX } from './blobRef';
 import { encodeVectorsForBackup, ensureFloat32 } from './memoryPalace/db';
 import type { VectorIndexEntry } from './backupFormat';
+import { sanitizeBackupStoreRow } from './backupExport';
 
 export type QuickSyncManifest = {
     version: 1;
@@ -268,7 +269,9 @@ export const buildQuickSyncManifest = async (
     const records: Record<string, Map<string, any>> = {};
     for (let i = 0; i < QUICK_SYNC_STORES.length; i++) {
         const storeName = QUICK_SYNC_STORES[i];
-        const rows = (await DB.getRawStoreData(storeName)).filter(row => shouldIncludeQuickSyncRow(storeName, row));
+        const rows = (await DB.getRawStoreData(storeName))
+            .filter(row => shouldIncludeQuickSyncRow(storeName, row))
+            .map(row => sanitizeBackupStoreRow(storeName, row));
         const hashes: Record<string, string> = {};
         const map = new Map<string, any>();
         for (const row of rows) {

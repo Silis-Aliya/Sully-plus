@@ -74,6 +74,67 @@ export function deepCloneForExport<T>(value: T): T {
     return JSON.parse(JSON.stringify(value));
 }
 
+const AUDIO_PAYLOAD_KEYS = new Set([
+    'audio',
+    'audioBlob',
+    'audioBase64',
+    'audioData',
+    'audioFile',
+    'audioUrl',
+    'blob',
+    'blobUrl',
+    'file',
+    'recording',
+    'recordingBlob',
+    'recordingUrl',
+]);
+
+const isAudioPayloadString = (value: string): boolean =>
+    value.startsWith('blob:') || value.startsWith('data:audio/') || value.startsWith('data:application/octet-stream');
+
+const stripAudioPayloadFields = (value: any): any => {
+    if (value === null || value === undefined) return value;
+    if (typeof Blob !== 'undefined' && value instanceof Blob) return undefined;
+    if (typeof File !== 'undefined' && value instanceof File) return undefined;
+    if (typeof value === 'string') return isAudioPayloadString(value) ? undefined : value;
+    if (Array.isArray(value)) {
+        return value
+            .map(item => stripAudioPayloadFields(item))
+            .filter(item => item !== undefined);
+    }
+    if (typeof value !== 'object') return value;
+    const out: Record<string, any> = {};
+    for (const [key, item] of Object.entries(value)) {
+        if (AUDIO_PAYLOAD_KEYS.has(key)) continue;
+        const cleaned = stripAudioPayloadFields(item);
+        if (cleaned !== undefined) out[key] = cleaned;
+    }
+    return out;
+};
+
+export function sanitizeVoiceMessageForBackup<T extends { type?: string; content?: any; metadata?: any }>(message: T): T {
+    if (!message || message.type !== 'voice') return message;
+    const cloned = deepCloneForExport(message) as T;
+    const metadata = cloned.metadata && typeof cloned.metadata === 'object'
+        ? stripAudioPayloadFields(cloned.metadata)
+        : cloned.metadata;
+    cloned.metadata = metadata;
+    const transcript = typeof metadata?.transcript === 'string' && metadata.transcript.trim()
+        ? metadata.transcript
+        : typeof metadata?.voice?.transcript === 'string' && metadata.voice.transcript.trim()
+            ? metadata.voice.transcript
+            : '';
+    if (typeof cloned.content === 'string' && isAudioPayloadString(cloned.content)) {
+        cloned.content = transcript || '[语音]';
+    }
+    return cloned;
+}
+
+export function sanitizeBackupStoreRow(storeName: string, row: any): any {
+    if (storeName === 'messages') return sanitizeVoiceMessageForBackup(row);
+    return row;
+}
+
 /**
  * 手机端分片导出用的原始分片大小：3MiB，且能被 3 整除。
  *
