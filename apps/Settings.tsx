@@ -2222,7 +2222,7 @@ const Settings: React.FC = () => {
                             <option value="groq">Groq Whisper（原方案）</option>
                         </select>
                         <p className="text-[10px] text-slate-400 leading-relaxed">
-                            中文老被 Groq 听成乱码/外语时，优先选 FunASR / SenseVoice。接口按 OpenAI-compatible /audio/transcriptions 调用，不需要自己部署模型。
+                            这里的切换只决定“语音转文字”用谁：选 FunASR 就走 SiliconFlow/SenseVoice，选 Groq 就走 Groq Whisper。下面的 Groq 情绪转换器是单独开关，不跟着这个下拉切。
                         </p>
                     </div>
 
@@ -2246,10 +2246,10 @@ const Settings: React.FC = () => {
 
                     <div className="border-t border-sky-100 pt-3 space-y-2">
                         <div className="flex items-center justify-between gap-2">
-                            <label className="text-[10px] font-bold text-sky-700 uppercase tracking-widest">Groq（可选）</label>
-                            <span className="text-[9px] font-bold text-white bg-sky-500 px-1.5 py-0.5 rounded-full">兜底 / 语气</span>
+                            <label className="text-[10px] font-bold text-sky-700 uppercase tracking-widest">Groq Whisper / 情绪转换器</label>
+                            <span className="text-[9px] font-bold text-white bg-sky-500 px-1.5 py-0.5 rounded-full">独立于 ASR 渠道</span>
                         </div>
-                        <input type="password" name="ears-groq-key" autoComplete="new-password" spellCheck={false} value={localEarsGroqKey} onChange={(e) => setLocalEarsGroqKey(e.target.value)} placeholder="Groq API Key（可选：自动兜底 / LLM 语气转述）" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                        <input type="password" name="ears-groq-key" autoComplete="new-password" spellCheck={false} value={localEarsGroqKey} onChange={(e) => setLocalEarsGroqKey(e.target.value)} placeholder="Groq API Key（Groq Whisper 通道 + 情绪转换器共用）" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                             <input type="text" value={localEarsGroqBaseUrl} onChange={(e) => setLocalEarsGroqBaseUrl(e.target.value)} placeholder="https://api.groq.com/openai/v1" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
                             <select value={localEarsGroqAsrModel} onChange={(e) => setLocalEarsGroqAsrModel(e.target.value)} className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all">
@@ -2265,7 +2265,7 @@ const Settings: React.FC = () => {
                         <div className="border-t border-sky-100/70 pt-3 space-y-2">
                             <label className="flex items-center justify-between gap-3 text-[11px] font-bold text-sky-800">
                                 <span>
-                                    Groq LLM 语气转述
+                                    Groq 情绪转换器
                                     <span className="ml-1 text-[9px] font-bold text-sky-500">可选 · 需要 Groq Key</span>
                                 </span>
                                 <input
@@ -2287,11 +2287,11 @@ const Settings: React.FC = () => {
                                 <option value="llama-3.1-8b-instant">llama-3.1-8b-instant（极省，较粗）</option>
                             </select>
                             <p className="text-[10px] text-sky-500 leading-relaxed">
-                                开启且填了 Groq Key 时，每条语音会多调用一次 Groq 文本模型，把转写、声学特征和个人基线简短转成 emotion / confidence / hint；没填 Groq Key 时自动退回本地规则。
+                                开启且填了 Groq Key 时，不管上面 ASR 选 SiliconFlow 还是 Groq，都会额外调用 Groq 文本模型，把转写、声学特征和个人基线转成 emotion / confidence / hint。
                             </p>
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed">
-                            如果主服务选 FunASR / SenseVoice，只填上面的 SiliconFlow Key 就能转写；Groq 这里只是保留给自动兜底和可选语气转述，不需要一起改。
+                            这块里的 Whisper 模型/语言只在上方 ASR 选 Groq 或自动兜底用到；情绪转换器只看它自己的开关和 Groq Key。
                         </p>
                         <button type="button" onClick={() => setEarsGroqGuideOpen(v => !v)} className="text-[11px] font-bold text-sky-600 underline">
                             获取 Groq 教程 {earsGroqGuideOpen ? '▲' : '▼'}
