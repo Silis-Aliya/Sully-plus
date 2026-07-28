@@ -347,37 +347,119 @@ export async function analyzeVoiceWithEarsLite(blob: Blob): Promise<EarsLiteResu
   return result;
 }
 
-export async function transcribeWithGroq(blob: Blob, config: {
+type EarsAsrProvider = 'groq' | 'funasr' | 'auto';
+
+type OpenAICompatibleAsrConfig = {
   apiKey?: string;
   baseUrl?: string;
   model?: string;
   mimeType?: string;
   language?: string;
-}): Promise<string> {
-  const apiKey = (config.apiKey || '').trim();
-  if (!apiKey) throw new Error('缺少 Groq API Key');
-  const base = (config.baseUrl || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
-  const model = (config.model || 'whisper-large-v3-turbo').trim();
+};
+
+const appendAsrForm = (blob: Blob, config: Pick<OpenAICompatibleAsrConfig, 'mimeType' | 'model' | 'language'>) => {
   const language = (config.language === undefined ? 'zh' : config.language).trim();
   const ext = (config.mimeType || blob.type).includes('mp4') ? 'm4a'
     : (config.mimeType || blob.type).includes('ogg') ? 'ogg'
     : 'webm';
   const form = new FormData();
   form.append('file', blob, `sully-voice.${ext}`);
-  form.append('model', model);
+  form.append('model', (config.model || '').trim());
   if (language) form.append('language', language);
+  return form;
+};
+
+const readAsrText = async (res: Response, providerLabel: string): Promise<string> => {
+  if (!res.ok) {
+    if (res.status === 401) throw new Error(`${providerLabel} 401：API Key 无效、未保存，或复制错了`);
+    if (res.status === 429) throw new Error(`${providerLabel} 429：额度或频率限制`);
+    if (res.status === 503 || res.status === 504) throw new Error(`${providerLabel} ${res.status}：服务繁忙或超时`);
+    throw new Error(`${providerLabel} ${res.status}`);
+  }
+  const data = await res.json();
+  return String(data?.text || data?.transcript || '').trim();
+};
+
+export async function transcribeWithGroq(blob: Blob, config: OpenAICompatibleAsrConfig): Promise<string> {
+  const apiKey = (config.apiKey || '').trim();
+  if (!apiKey) throw new Error('缺少 Groq API Key');
+  const base = (config.baseUrl || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
+  const model = (config.model || 'whisper-large-v3-turbo').trim();
+  const form = appendAsrForm(blob, { ...config, model });
   const res = await fetch(`${base}/audio/transcriptions`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
     body: form,
   });
-  if (!res.ok) {
-    if (res.status === 401) throw new Error('Groq Whisper 401：API Key 无效、未保存，或复制错了');
-    if (res.status === 429) throw new Error('Groq Whisper 429：额度或频率限制');
-    throw new Error(`Groq Whisper ${res.status}`);
+  return readAsrText(res, 'Groq Whisper');
+}
+
+export async function transcribeWithFunAsr(blob: Blob, config: OpenAICompatibleAsrConfig): Promise<string> {
+  const apiKey = (config.apiKey || '').trim();
+  if (!apiKey) throw new Error('缺少 FunASR API Key');
+  const base = (config.baseUrl || 'https://api.siliconflow.cn/v1').replace(/\/+$/, '');
+  const model = (config.model || 'FunAudioLLM/SenseVoiceSmall').trim();
+  const form = appendAsrForm(blob, { ...config, model });
+  const res = await fetch(`${base}/audio/transcriptions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: form,
+  });
+  return readAsrText(res, 'FunASR / SenseVoice');
+}
+
+export async function transcribeWithEarsAsr(blob: Blob, config: OpenAICompatibleAsrConfig & {
+  provider?: EarsAsrProvider;
+  groqApiKey?: string;
+  groqBaseUrl?: string;
+  groqModel?: string;
+  funAsrApiKey?: string;
+  funAsrBaseUrl?: string;
+  funAsrModel?: string;
+}): Promise<{ text: string; provider: string }> {
+  const provider = config.provider || 'groq';
+  const language = config.language;
+  const attempts: Array<() => Promise<{ text: string; provider: string }>> = [];
+  const addFunAsr = () => attempts.push(async () => ({
+    text: await transcribeWithFunAsr(blob, {
+      apiKey: config.funAsrApiKey || config.apiKey,
+      baseUrl: config.funAsrBaseUrl || config.baseUrl,
+      model: config.funAsrModel || config.model,
+      mimeType: config.mimeType,
+      language,
+    }),
+    provider: `funasr:${config.funAsrModel || config.model || 'FunAudioLLM/SenseVoiceSmall'}`,
+  }));
+  const addGroq = () => attempts.push(async () => ({
+    text: await transcribeWithGroq(blob, {
+      apiKey: config.groqApiKey || config.apiKey,
+      baseUrl: config.groqBaseUrl || config.baseUrl,
+      model: config.groqModel || config.model,
+      mimeType: config.mimeType,
+      language,
+    }),
+    provider: `groq:${config.groqModel || config.model || 'whisper-large-v3-turbo'}`,
+  }));
+
+  if (provider === 'funasr') addFunAsr();
+  else if (provider === 'auto') {
+    if ((config.funAsrApiKey || config.apiKey || '').trim()) addFunAsr();
+    if ((config.groqApiKey || '').trim()) addGroq();
+  } else addGroq();
+
+  if (!attempts.length) throw new Error('请先在设置 → 语音识别里填写 Groq 或 FunASR API Key');
+  let lastError: any;
+  for (const attempt of attempts) {
+    try {
+      const result = await attempt();
+      if (result.text) return result;
+      lastError = new Error(`${result.provider} 没有返回文字`);
+    } catch (err) {
+      lastError = err;
+      if (provider !== 'auto') break;
+    }
   }
-  const data = await res.json();
-  return String(data?.text || data?.transcript || '').trim();
+  throw lastError || new Error('语音识别失败');
 }
 
 const EARS_TONE_EMOTIONS = '开心/兴奋/撒娇/平静/期待/低落/委屈/生气/嘴硬/紧张/黏人/烦躁/焦虑/强撑/敷衍/犹豫/认真/哽咽/憋笑';

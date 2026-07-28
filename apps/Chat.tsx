@@ -68,7 +68,7 @@ import {
     loadCharacterContextRange,
     type ContextRangeMode,
 } from '../utils/chatContextRange';
-import { analyzeVoiceWithEarsLite, judgeVoiceToneWithGroq, transcribeWithGroq } from '../utils/earsLite';
+import { analyzeVoiceWithEarsLite, judgeVoiceToneWithGroq, transcribeWithEarsAsr } from '../utils/earsLite';
 import { decideVoiceCloudReview, prepareVoiceCloudAudio, profileVoiceWithXfyun, shouldRunTencentSpeakerVerification, shouldRunXfyunVoiceProfile, verifyTencentSpeaker } from '../utils/voiceCloud';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
@@ -1206,27 +1206,33 @@ const Chat: React.FC = () => {
     const handleSendVoice = async (blob: Blob, durationSec: number, mimeType: string) => {
         if (!char) return;
         const groqKey = (apiConfig.ears?.groqApiKey || '').trim();
+        const funAsrKey = (apiConfig.ears?.funAsrApiKey || '').trim();
         const audioUrl = URL.createObjectURL(blob);
         try {
-            if (!groqKey) {
-                addToast('请先到设置 → 其他 API → 语音识别 / Ears Lite 填 Groq API Key', 'error');
+            if (!groqKey && !funAsrKey) {
+                addToast('请先到设置 → 语音识别里填 Groq 或 FunASR API Key', 'error');
                 URL.revokeObjectURL(audioUrl);
                 return;
             }
 
             addToast('正在用内置 Ears Lite 听这条语音…', 'info');
-            const [lite, transcript] = await Promise.all([
+            const [lite, asrResult] = await Promise.all([
                 analyzeVoiceWithEarsLite(blob),
-                transcribeWithGroq(blob, {
-                    apiKey: groqKey,
-                    baseUrl: apiConfig.ears?.groqBaseUrl,
-                    model: apiConfig.ears?.groqAsrModel,
+                transcribeWithEarsAsr(blob, {
+                    provider: apiConfig.ears?.asrProvider || 'groq',
+                    groqApiKey: groqKey,
+                    groqBaseUrl: apiConfig.ears?.groqBaseUrl,
+                    groqModel: apiConfig.ears?.groqAsrModel,
+                    funAsrApiKey: funAsrKey,
+                    funAsrBaseUrl: apiConfig.ears?.funAsrBaseUrl,
+                    funAsrModel: apiConfig.ears?.funAsrModel,
                     mimeType,
                     language: apiConfig.ears?.groqAsrLanguage === 'auto'
                         ? ''
                         : (apiConfig.ears?.groqAsrLanguage || 'zh'),
                 }),
             ]);
+            const transcript = asrResult.text;
             let voiceTone = {
                 emotion: lite.emotion,
                 confidence: lite.confidence,
@@ -1296,8 +1302,9 @@ const Chat: React.FC = () => {
                 voice: {
                     source: 'ears-lite',
                     provider: apiConfig.ears?.groqToneEnabled
-                        ? 'SullyOS Ears Lite + Essentia.js + Groq Whisper + Groq LLM'
-                        : 'SullyOS Ears Lite + Essentia.js + Groq Whisper',
+                        ? `SullyOS Ears Lite + Essentia.js + ${asrResult.provider} + Groq LLM`
+                        : `SullyOS Ears Lite + Essentia.js + ${asrResult.provider}`,
+                    asrProvider: asrResult.provider,
                     toneProvider: voiceTone.provider,
                     durationSec,
                     mimeType,

@@ -360,10 +360,14 @@ export interface APIConfig {
     dateVoice?: string;
   };
   ears?: {
+    asrProvider?: 'groq' | 'funasr' | 'auto';
     groqApiKey?: string;
     groqBaseUrl?: string;
     groqAsrModel?: string;
     groqAsrLanguage?: 'auto' | 'zh' | 'en';
+    funAsrApiKey?: string;
+    funAsrBaseUrl?: string;
+    funAsrModel?: string;
     groqToneEnabled?: boolean;
     groqToneModel?: string;
     tencentSecretId?: string;

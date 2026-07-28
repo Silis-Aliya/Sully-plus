@@ -27,7 +27,7 @@ import { LoyalUserRecruitmentController } from '../components/LoyalUserRecruitme
 import { isPushVapidReady } from '../utils/pushVapid';
 import ApiCallLogModal from '../components/settings/ApiCallLogModal';
 import { DB } from '../utils/db';
-import type { CloudBackupProvider } from '../types';
+import type { APIConfig, CloudBackupProvider } from '../types';
 import { getBackupReminderState, setBackupReminderIntervalDays, daysSinceLastBackup, BACKUP_REMINDER_MIN_DAYS, BACKUP_REMINDER_MAX_DAYS } from '../utils/backupReminder';
 import { analyzeVoiceWithEarsLite, EARS_LITE_BASELINE_TARGET, getEarsLiteBaselineStatus, resetEarsLiteBaseline } from '../utils/earsLite';
 
@@ -388,6 +388,10 @@ const Settings: React.FC = () => {
   const [localEarsGroqBaseUrl, setLocalEarsGroqBaseUrl] = useState(apiConfig.ears?.groqBaseUrl || 'https://api.groq.com/openai/v1');
   const [localEarsGroqAsrModel, setLocalEarsGroqAsrModel] = useState(apiConfig.ears?.groqAsrModel || 'whisper-large-v3-turbo');
   const [localEarsGroqAsrLanguage, setLocalEarsGroqAsrLanguage] = useState(apiConfig.ears?.groqAsrLanguage || 'zh');
+  const [localEarsAsrProvider, setLocalEarsAsrProvider] = useState<'groq' | 'funasr' | 'auto'>(apiConfig.ears?.asrProvider || 'groq');
+  const [localEarsFunAsrKey, setLocalEarsFunAsrKey] = useState(apiConfig.ears?.funAsrApiKey || '');
+  const [localEarsFunAsrBaseUrl, setLocalEarsFunAsrBaseUrl] = useState(apiConfig.ears?.funAsrBaseUrl || 'https://api.siliconflow.cn/v1');
+  const [localEarsFunAsrModel, setLocalEarsFunAsrModel] = useState(apiConfig.ears?.funAsrModel || 'FunAudioLLM/SenseVoiceSmall');
   const [localEarsGroqToneEnabled, setLocalEarsGroqToneEnabled] = useState(!!apiConfig.ears?.groqToneEnabled);
   const [localEarsGroqToneModel, setLocalEarsGroqToneModel] = useState(apiConfig.ears?.groqToneModel || 'llama-3.3-70b-versatile');
   const [localEarsTencentSecretId, setLocalEarsTencentSecretId] = useState(apiConfig.ears?.tencentSecretId || '');
@@ -727,6 +731,10 @@ const Settings: React.FC = () => {
       setLocalEarsGroqBaseUrl(apiConfig.ears?.groqBaseUrl || 'https://api.groq.com/openai/v1');
       setLocalEarsGroqAsrModel(apiConfig.ears?.groqAsrModel || 'whisper-large-v3-turbo');
       setLocalEarsGroqAsrLanguage(apiConfig.ears?.groqAsrLanguage || 'zh');
+      setLocalEarsAsrProvider(apiConfig.ears?.asrProvider || 'groq');
+      setLocalEarsFunAsrKey(apiConfig.ears?.funAsrApiKey || '');
+      setLocalEarsFunAsrBaseUrl(apiConfig.ears?.funAsrBaseUrl || 'https://api.siliconflow.cn/v1');
+      setLocalEarsFunAsrModel(apiConfig.ears?.funAsrModel || 'FunAudioLLM/SenseVoiceSmall');
       setLocalEarsGroqToneEnabled(!!apiConfig.ears?.groqToneEnabled);
       setLocalEarsGroqToneModel(apiConfig.ears?.groqToneModel || 'llama-3.3-70b-versatile');
       setLocalEarsTencentSecretId(apiConfig.ears?.tencentSecretId || '');
@@ -778,6 +786,26 @@ const Settings: React.FC = () => {
     setTimeout(() => setStatusMsg(''), 2000);
   };
 
+  const buildEarsConfig = (): NonNullable<APIConfig['ears']> => ({
+    asrProvider: localEarsAsrProvider,
+    groqApiKey: localEarsGroqKey.trim() || undefined,
+    groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
+    groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
+    groqAsrLanguage: localEarsGroqAsrLanguage as 'auto' | 'zh' | 'en',
+    funAsrApiKey: localEarsFunAsrKey.trim() || undefined,
+    funAsrBaseUrl: localEarsFunAsrBaseUrl.trim() || 'https://api.siliconflow.cn/v1',
+    funAsrModel: localEarsFunAsrModel.trim() || 'FunAudioLLM/SenseVoiceSmall',
+    groqToneEnabled: localEarsGroqToneEnabled,
+    groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
+    tencentSecretId: localEarsTencentSecretId.trim() || undefined,
+    tencentSecretKey: localEarsTencentSecretKey.trim() || undefined,
+    tencentAppId: localEarsTencentAppId.trim() || undefined,
+    tencentVoicePrintId: localEarsTencentVoicePrintId.trim() || undefined,
+    xfyunAppId: localEarsXfyunAppId.trim() || undefined,
+    xfyunApiKey: localEarsXfyunApiKey.trim() || undefined,
+    xfyunApiSecret: localEarsXfyunApiSecret.trim() || undefined,
+  });
+
   const handleSaveOtherApis = () => {
     updateApiConfig({
       minimaxApiKey: localMiniMaxKey,
@@ -792,21 +820,7 @@ const Settings: React.FC = () => {
         fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
         dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
       },
-      ears: {
-        groqApiKey: localEarsGroqKey.trim() || undefined,
-        groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
-        groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
-        groqAsrLanguage: localEarsGroqAsrLanguage as 'auto' | 'zh' | 'en',
-        groqToneEnabled: localEarsGroqToneEnabled,
-        groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
-        tencentSecretId: localEarsTencentSecretId.trim() || undefined,
-        tencentSecretKey: localEarsTencentSecretKey.trim() || undefined,
-        tencentAppId: localEarsTencentAppId.trim() || undefined,
-        tencentVoicePrintId: localEarsTencentVoicePrintId.trim() || undefined,
-        xfyunAppId: localEarsXfyunAppId.trim() || undefined,
-        xfyunApiKey: localEarsXfyunApiKey.trim() || undefined,
-        xfyunApiSecret: localEarsXfyunApiSecret.trim() || undefined,
-      },
+      ears: buildEarsConfig(),
     });
     setOtherStatusMsg('已保存');
     setTimeout(() => setOtherStatusMsg(''), 2000);
@@ -814,21 +828,7 @@ const Settings: React.FC = () => {
 
   const handleSaveEarsApis = () => {
     updateApiConfig({
-      ears: {
-        groqApiKey: localEarsGroqKey.trim() || undefined,
-        groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
-        groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
-        groqAsrLanguage: localEarsGroqAsrLanguage as 'auto' | 'zh' | 'en',
-        groqToneEnabled: localEarsGroqToneEnabled,
-        groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
-        tencentSecretId: localEarsTencentSecretId.trim() || undefined,
-        tencentSecretKey: localEarsTencentSecretKey.trim() || undefined,
-        tencentAppId: localEarsTencentAppId.trim() || undefined,
-        tencentVoicePrintId: localEarsTencentVoicePrintId.trim() || undefined,
-        xfyunAppId: localEarsXfyunAppId.trim() || undefined,
-        xfyunApiKey: localEarsXfyunApiKey.trim() || undefined,
-        xfyunApiSecret: localEarsXfyunApiSecret.trim() || undefined,
-      },
+      ears: buildEarsConfig(),
     });
     setEarsStatusMsg('已保存');
     setTimeout(() => setEarsStatusMsg(''), 2000);
@@ -943,21 +943,7 @@ const Settings: React.FC = () => {
         fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
         dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
       },
-      ears: {
-        groqApiKey: localEarsGroqKey.trim() || undefined,
-        groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
-        groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
-        groqAsrLanguage: localEarsGroqAsrLanguage as 'auto' | 'zh' | 'en',
-        groqToneEnabled: localEarsGroqToneEnabled,
-        groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
-        tencentSecretId: localEarsTencentSecretId.trim() || undefined,
-        tencentSecretKey: localEarsTencentSecretKey.trim() || undefined,
-        tencentAppId: localEarsTencentAppId.trim() || undefined,
-        tencentVoicePrintId: localEarsTencentVoicePrintId.trim() || undefined,
-        xfyunAppId: localEarsXfyunAppId.trim() || undefined,
-        xfyunApiKey: localEarsXfyunApiKey.trim() || undefined,
-        xfyunApiSecret: localEarsXfyunApiSecret.trim() || undefined,
-      },
+      ears: buildEarsConfig(),
       ttsProvider: provider,
     });
     addToast(provider === 'fishaudio' ? '语音生成已切到鱼声 Fish' : '语音生成已切到 MiniMax', 'success');
@@ -979,21 +965,7 @@ const Settings: React.FC = () => {
         fishaudio: localVoicePromptFish.trim() ? localVoicePromptFish : undefined,
         dateVoice: localVoicePromptDate.trim() ? localVoicePromptDate : undefined,
       },
-      ears: {
-        groqApiKey: localEarsGroqKey.trim() || undefined,
-        groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
-        groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
-        groqAsrLanguage: localEarsGroqAsrLanguage as 'auto' | 'zh' | 'en',
-        groqToneEnabled: localEarsGroqToneEnabled,
-        groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
-        tencentSecretId: localEarsTencentSecretId.trim() || undefined,
-        tencentSecretKey: localEarsTencentSecretKey.trim() || undefined,
-        tencentAppId: localEarsTencentAppId.trim() || undefined,
-        tencentVoicePrintId: localEarsTencentVoicePrintId.trim() || undefined,
-        xfyunAppId: localEarsXfyunAppId.trim() || undefined,
-        xfyunApiKey: localEarsXfyunApiKey.trim() || undefined,
-        xfyunApiSecret: localEarsXfyunApiSecret.trim() || undefined,
-      },
+      ears: buildEarsConfig(),
     });
   };
 
@@ -2237,8 +2209,45 @@ const Settings: React.FC = () => {
 
                     <div className="border-t border-sky-100 pt-3 space-y-2">
                         <div className="flex items-center justify-between gap-2">
+                            <label className="text-[10px] font-bold text-sky-700 uppercase tracking-widest">语音转文字主服务</label>
+                            <span className="text-[9px] font-bold text-sky-600 bg-sky-100 px-1.5 py-0.5 rounded-full">ASR</span>
+                        </div>
+                        <select
+                            value={localEarsAsrProvider}
+                            onChange={(e) => setLocalEarsAsrProvider(e.target.value as 'groq' | 'funasr' | 'auto')}
+                            className="w-full bg-white/80 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-700 focus:bg-white transition-all"
+                        >
+                            <option value="funasr">FunASR / SenseVoice（中文优先，低成本）</option>
+                            <option value="auto">自动兜底：FunASR 失败再试 Groq</option>
+                            <option value="groq">Groq Whisper（原方案）</option>
+                        </select>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                            中文老被 Groq 听成乱码/外语时，优先选 FunASR / SenseVoice。接口按 OpenAI-compatible /audio/transcriptions 调用，不需要自己部署模型。
+                        </p>
+                    </div>
+
+                    <div className="border-t border-cyan-100 pt-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                            <label className="text-[10px] font-bold text-cyan-700 uppercase tracking-widest">FunASR / SenseVoice</label>
+                            <span className="text-[9px] font-bold text-white bg-cyan-500 px-1.5 py-0.5 rounded-full">中文推荐</span>
+                        </div>
+                        <input type="password" name="ears-funasr-key" autoComplete="new-password" spellCheck={false} value={localEarsFunAsrKey} onChange={(e) => setLocalEarsFunAsrKey(e.target.value)} placeholder="API Key（如 SiliconFlow sk-...）" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input type="text" value={localEarsFunAsrBaseUrl} onChange={(e) => setLocalEarsFunAsrBaseUrl(e.target.value)} placeholder="https://api.siliconflow.cn/v1" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
+                            <select value={localEarsFunAsrModel} onChange={(e) => setLocalEarsFunAsrModel(e.target.value)} className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all">
+                                <option value="FunAudioLLM/SenseVoiceSmall">FunAudioLLM/SenseVoiceSmall（中文口语推荐）</option>
+                                <option value="TeleAI/TeleSpeechASR">TeleAI/TeleSpeechASR（备选）</option>
+                            </select>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                            默认按 SiliconFlow 的转写接口填好了 Base URL；如果换 302.AI、TheRouter 或自建 FunASR 网关，只要它兼容 /v1/audio/transcriptions，就改 Base URL 和模型名。
+                        </p>
+                    </div>
+
+                    <div className="border-t border-sky-100 pt-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
                             <label className="text-[10px] font-bold text-sky-700 uppercase tracking-widest">Groq Whisper</label>
-                            <span className="text-[9px] font-bold text-white bg-sky-500 px-1.5 py-0.5 rounded-full">必填</span>
+                            <span className="text-[9px] font-bold text-white bg-sky-500 px-1.5 py-0.5 rounded-full">可选兜底</span>
                         </div>
                         <input type="password" name="ears-groq-key" autoComplete="new-password" spellCheck={false} value={localEarsGroqKey} onChange={(e) => setLocalEarsGroqKey(e.target.value)} placeholder="Groq API Key（语音转写核心）" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -2282,7 +2291,7 @@ const Settings: React.FC = () => {
                             </p>
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed">
-                            只填 Groq Key 就能用：手机/电脑直接走内置 Ears Lite（Essentia.js 本地特征 + Groq 转写）。不需要另部署语音服务，也不需要电脑一直开着。
+                            Groq 仍可作为原方案或自动兜底：手机/电脑直接走内置 Ears Lite（Essentia.js 本地特征 + 云端转写）。不需要另部署语音服务，也不需要电脑一直开着。
                         </p>
                         <button type="button" onClick={() => setEarsGroqGuideOpen(v => !v)} className="text-[11px] font-bold text-sky-600 underline">
                             获取 Groq 教程 {earsGroqGuideOpen ? '▲' : '▼'}
