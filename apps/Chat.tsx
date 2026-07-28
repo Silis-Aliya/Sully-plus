@@ -68,7 +68,7 @@ import {
     type ContextRangeMode,
 } from '../utils/chatContextRange';
 import { analyzeVoiceWithEarsLite, judgeVoiceToneWithGroq, transcribeWithGroq } from '../utils/earsLite';
-import { decideVoiceCloudReview, prepareVoiceCloudAudio, profileVoiceWithXfyun, shouldRunXfyunVoiceProfile, verifyTencentSpeaker } from '../utils/voiceCloud';
+import { decideVoiceCloudReview, prepareVoiceCloudAudio, profileVoiceWithXfyun, shouldRunTencentSpeakerVerification, shouldRunXfyunVoiceProfile, verifyTencentSpeaker } from '../utils/voiceCloud';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 type InstantToolUiStatus = {
@@ -1220,7 +1220,10 @@ const Chat: React.FC = () => {
             let speakerVerification: any = undefined;
             let voiceProfile: any = undefined;
             const cloudReview = decideVoiceCloudReview(lite);
-            const needsTencent = cloudReview.shouldReview && !!apiConfig.ears?.tencentVoicePrintId;
+            const needsTencent = shouldRunTencentSpeakerVerification({
+                hasVoicePrintId: !!apiConfig.ears?.tencentVoicePrintId,
+                baselineProgress: lite.baselineProgress,
+            });
             const hasXfyunAppId = !!apiConfig.ears?.xfyunAppId;
             const mayNeedXfyun = hasXfyunAppId && durationSec <= 10;
             if (needsTencent || mayNeedXfyun) {
