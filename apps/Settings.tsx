@@ -2246,10 +2246,10 @@ const Settings: React.FC = () => {
 
                     <div className="border-t border-sky-100 pt-3 space-y-2">
                         <div className="flex items-center justify-between gap-2">
-                            <label className="text-[10px] font-bold text-sky-700 uppercase tracking-widest">Groq Whisper</label>
-                            <span className="text-[9px] font-bold text-white bg-sky-500 px-1.5 py-0.5 rounded-full">可选兜底</span>
+                            <label className="text-[10px] font-bold text-sky-700 uppercase tracking-widest">Groq（可选）</label>
+                            <span className="text-[9px] font-bold text-white bg-sky-500 px-1.5 py-0.5 rounded-full">兜底 / 语气</span>
                         </div>
-                        <input type="password" name="ears-groq-key" autoComplete="new-password" spellCheck={false} value={localEarsGroqKey} onChange={(e) => setLocalEarsGroqKey(e.target.value)} placeholder="Groq API Key（语音转写核心）" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                        <input type="password" name="ears-groq-key" autoComplete="new-password" spellCheck={false} value={localEarsGroqKey} onChange={(e) => setLocalEarsGroqKey(e.target.value)} placeholder="Groq API Key（可选：自动兜底 / LLM 语气转述）" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                             <input type="text" value={localEarsGroqBaseUrl} onChange={(e) => setLocalEarsGroqBaseUrl(e.target.value)} placeholder="https://api.groq.com/openai/v1" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
                             <select value={localEarsGroqAsrModel} onChange={(e) => setLocalEarsGroqAsrModel(e.target.value)} className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all">
@@ -2266,7 +2266,7 @@ const Settings: React.FC = () => {
                             <label className="flex items-center justify-between gap-3 text-[11px] font-bold text-sky-800">
                                 <span>
                                     Groq LLM 语气转述
-                                    <span className="ml-1 text-[9px] font-bold text-sky-500">可选 · 更像 ears</span>
+                                    <span className="ml-1 text-[9px] font-bold text-sky-500">可选 · 需要 Groq Key</span>
                                 </span>
                                 <input
                                     type="checkbox"
@@ -2287,11 +2287,11 @@ const Settings: React.FC = () => {
                                 <option value="llama-3.1-8b-instant">llama-3.1-8b-instant（极省，较粗）</option>
                             </select>
                             <p className="text-[10px] text-sky-500 leading-relaxed">
-                                开启后每条语音会多调用一次 Groq 文本模型，把转写、声学特征和个人基线简短转成 emotion / confidence / hint；关闭时继续用本地规则。
+                                开启且填了 Groq Key 时，每条语音会多调用一次 Groq 文本模型，把转写、声学特征和个人基线简短转成 emotion / confidence / hint；没填 Groq Key 时自动退回本地规则。
                             </p>
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed">
-                            Groq 仍可作为原方案或自动兜底：手机/电脑直接走内置 Ears Lite（Essentia.js 本地特征 + 云端转写）。不需要另部署语音服务，也不需要电脑一直开着。
+                            如果主服务选 FunASR / SenseVoice，只填上面的 SiliconFlow Key 就能转写；Groq 这里只是保留给自动兜底和可选语气转述，不需要一起改。
                         </p>
                         <button type="button" onClick={() => setEarsGroqGuideOpen(v => !v)} className="text-[11px] font-bold text-sky-600 underline">
                             获取 Groq 教程 {earsGroqGuideOpen ? '▲' : '▼'}

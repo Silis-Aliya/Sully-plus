@@ -1239,7 +1239,7 @@ const Chat: React.FC = () => {
                 hint: lite.hint,
                 provider: 'local-rules',
             };
-            if (apiConfig.ears?.groqToneEnabled) {
+            if (apiConfig.ears?.groqToneEnabled && groqKey) {
                 try {
                     const judged = await judgeVoiceToneWithGroq(transcript, lite, {
                         apiKey: groqKey,
