@@ -32,6 +32,35 @@ Current known baseline:
 
 This section supersedes the stale repository/baseline bullets inside the copied Next-Window Prompt above. Do not edit that prompt block without first showing the full revised prompt to the user for confirmation.
 
+## 2026-07-28 Upstream Refresh to 9753431
+
+- Fetched `upstream/master`; it advanced from `835a4d7` to `9753431`.
+- Merged upstream memory import/recall repair and synchronized schedule-card theming into `codex/merge-upstream-plus-maintenance`.
+- Prompt-bearing additions were reviewed with the user before merge:
+  - schedule-card AI CSS helper prompt,
+  - external-memory no-loss migration prompt,
+  - recall-repair guide diagnosis prompt.
+- Resolved conflicts in:
+  - `apps/Chat.tsx`
+  - `components/chat/ChatInputArea.tsx`
+- Kept Plus fork behavior while resolving:
+  - narrow OS context hooks in Chat instead of reverting to aggregate `useOS()`,
+  - Ears Lite voice input and cloud review flow,
+  - shared XHS link resolver and Code/XHS title preservation path,
+  - hidden `code_card` / music invite result visibility rules,
+  - remote vector config handoff for memory repair re-embedding.
+- Integrated upstream features:
+  - external raw-memory import with 50k-character local limit, no-loss LLM cleaning, vectorization, linking, and same-batch traditional memory writeback,
+  - per-round recall repair portal from the chat action panel, including editable recalled nodes/EventBox expansion and same-`memoryId` re-embedding,
+  - unified schedule-card appearance presets/custom scoped CSS for desktop, room, and chat schedule cards.
+- Preserved fork maintenance requirements:
+  - Memory Palace vector anomaly/debug tools remain; upstream recall repair is the daily correction path, not a replacement for vector health checks.
+  - QuickSync/local settings coverage for `memory_vectors`, `memoryId` manifests, and portable config remains tested.
+  - Code/Workbench isolation and backup behavior were not changed by this merge.
+- Verification passed:
+  - `pnpm build`
+  - `pnpm vitest run utils/memoryPalace/externalMemory.test.ts utils/memoryPalace/memoryRepair.test.ts utils/memoryPalace/memoryEdit.test.ts utils/memoryPalace/memoryDate.test.ts utils/scheduleAppearance.test.ts utils/quickSync.test.ts utils/localSettingsBackup.test.ts`
+
 ### Maintenance Direction Update
 
 - `Sully-plus` is now the main active maintenance line.
