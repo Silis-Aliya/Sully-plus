@@ -120,9 +120,13 @@ describe('localSettingsBackup', () => {
             apiKey: 'sk-main',
             model: 'chat-model',
             ears: {
+                asrProvider: 'funasr',
                 groqApiKey: 'gsk_voice_secret',
                 groqBaseUrl: 'https://api.groq.com/openai/v1',
                 groqAsrModel: 'whisper-large-v3-turbo',
+                funAsrApiKey: 'sk_siliconflow_voice_secret',
+                funAsrBaseUrl: 'https://api.siliconflow.com/v1',
+                funAsrModel: 'FunAudioLLM/SenseVoiceSmall',
                 groqToneEnabled: true,
                 groqToneModel: 'llama-3.3-70b-versatile',
                 tencentSecretId: 'tencent-id',
@@ -136,9 +140,13 @@ describe('localSettingsBackup', () => {
 
         const restored = JSON.parse(localStorage.getItem('os_api_config') || '{}');
         expect(restored.ears).toMatchObject({
+            asrProvider: 'funasr',
             groqApiKey: 'gsk_voice_secret',
             groqBaseUrl: 'https://api.groq.com/openai/v1',
             groqAsrModel: 'whisper-large-v3-turbo',
+            funAsrApiKey: 'sk_siliconflow_voice_secret',
+            funAsrBaseUrl: 'https://api.siliconflow.com/v1',
+            funAsrModel: 'FunAudioLLM/SenseVoiceSmall',
             groqToneEnabled: true,
             groqToneModel: 'llama-3.3-70b-versatile',
             tencentSecretId: 'tencent-id',
@@ -153,9 +161,13 @@ describe('localSettingsBackup', () => {
                 apiKey: 'sk-main',
                 model: 'chat-model',
                 ears: {
+                    asrProvider: 'auto',
                     groqApiKey: 'gsk_incremental_voice_secret',
                     groqBaseUrl: 'https://api.groq.com/openai/v1',
                     groqAsrModel: 'whisper-large-v3-turbo',
+                    funAsrApiKey: 'sk_incremental_siliconflow_secret',
+                    funAsrBaseUrl: 'https://api.siliconflow.cn/v1',
+                    funAsrModel: 'FunAudioLLM/SenseVoiceSmall',
                     groqToneEnabled: true,
                     groqToneModel: 'llama-3.3-70b-versatile',
                 },
@@ -163,7 +175,11 @@ describe('localSettingsBackup', () => {
         }, []);
 
         const restored = JSON.parse(localStorage.getItem('os_api_config') || '{}');
+        expect(restored.ears?.asrProvider).toBe('auto');
         expect(restored.ears?.groqApiKey).toBe('gsk_incremental_voice_secret');
+        expect(restored.ears?.funAsrApiKey).toBe('sk_incremental_siliconflow_secret');
+        expect(restored.ears?.funAsrBaseUrl).toBe('https://api.siliconflow.cn/v1');
+        expect(restored.ears?.funAsrModel).toBe('FunAudioLLM/SenseVoiceSmall');
         expect(restored.ears?.groqToneEnabled).toBe(true);
         expect(restored.ears?.groqToneModel).toBe('llama-3.3-70b-versatile');
     });

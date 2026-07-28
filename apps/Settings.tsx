@@ -2231,7 +2231,7 @@ const Settings: React.FC = () => {
                             <label className="text-[10px] font-bold text-cyan-700 uppercase tracking-widest">FunASR / SenseVoice</label>
                             <span className="text-[9px] font-bold text-white bg-cyan-500 px-1.5 py-0.5 rounded-full">中文推荐</span>
                         </div>
-                        <input type="password" name="ears-funasr-key" autoComplete="new-password" spellCheck={false} value={localEarsFunAsrKey} onChange={(e) => setLocalEarsFunAsrKey(e.target.value)} placeholder="API Key（如 SiliconFlow sk-...）" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                        <input type="text" name="ears-funasr-token-input" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} value={localEarsFunAsrKey} onChange={(e) => setLocalEarsFunAsrKey(e.target.value)} placeholder="API Key（如 SiliconFlow sk-...）" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             <input type="text" value={localEarsFunAsrBaseUrl} onChange={(e) => setLocalEarsFunAsrBaseUrl(e.target.value)} placeholder="https://api.siliconflow.cn/v1" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
                             <select value={localEarsFunAsrModel} onChange={(e) => setLocalEarsFunAsrModel(e.target.value)} className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all">
@@ -2249,7 +2249,7 @@ const Settings: React.FC = () => {
                             <label className="text-[10px] font-bold text-sky-700 uppercase tracking-widest">Groq Whisper / 情绪转换器</label>
                             <span className="text-[9px] font-bold text-white bg-sky-500 px-1.5 py-0.5 rounded-full">独立于 ASR 渠道</span>
                         </div>
-                        <input type="password" name="ears-groq-key" autoComplete="new-password" spellCheck={false} value={localEarsGroqKey} onChange={(e) => setLocalEarsGroqKey(e.target.value)} placeholder="Groq API Key（Groq Whisper 通道 + 情绪转换器共用）" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                        <input type="text" name="ears-groq-token-input" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} value={localEarsGroqKey} onChange={(e) => setLocalEarsGroqKey(e.target.value)} placeholder="Groq API Key（Groq Whisper 通道 + 情绪转换器共用）" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                             <input type="text" value={localEarsGroqBaseUrl} onChange={(e) => setLocalEarsGroqBaseUrl(e.target.value)} placeholder="https://api.groq.com/openai/v1" className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
                             <select value={localEarsGroqAsrModel} onChange={(e) => setLocalEarsGroqAsrModel(e.target.value)} className="w-full bg-white/70 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all">
