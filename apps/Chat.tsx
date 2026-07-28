@@ -1221,6 +1221,7 @@ const Chat: React.FC = () => {
             let voiceProfile: any = undefined;
             const cloudReview = decideVoiceCloudReview(lite);
             const needsTencent = shouldRunTencentSpeakerVerification({
+                cloudShouldReview: cloudReview.shouldReview,
                 hasVoicePrintId: !!apiConfig.ears?.tencentVoicePrintId,
                 baselineProgress: lite.baselineProgress,
             });

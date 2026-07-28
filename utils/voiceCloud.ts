@@ -50,11 +50,13 @@ export const XFYUN_PROFILE_MAX_DURATION_SEC = 10;
 export const VOICE_CLOUD_BASELINE_TARGET = 8;
 
 export function shouldRunTencentSpeakerVerification(options: {
+  cloudShouldReview: boolean;
   hasVoicePrintId: boolean;
   baselineProgress: number;
   baselineTarget?: number;
 }): boolean {
   if (!options.hasVoicePrintId) return false;
+  if (!options.cloudShouldReview) return false;
   const target = options.baselineTarget ?? VOICE_CLOUD_BASELINE_TARGET;
   return (options.baselineProgress || 0) >= target;
 }

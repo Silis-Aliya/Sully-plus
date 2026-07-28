@@ -2416,7 +2416,7 @@ const Settings: React.FC = () => {
                                     <b>最省事流程：</b><br/>
                                     1. 登录腾讯云，开通 <b>语音识别 ASR</b>，按页面要求完成实名/授权。官方声纹注册文档：<a href="https://cloud.tencent.com/document/product/1093/94483" target="_blank" rel="noopener noreferrer" className="underline font-bold text-indigo-700">VoicePrintEnroll</a>。<br/>
                                     2. 去 <b>访问管理 CAM → 访问密钥</b> 创建 SecretId / SecretKey。<b>不要填到前端</b>，放到主 Worker 环境变量：<span className="font-mono">TENCENT_SECRET_ID</span>、<span className="font-mono">TENCENT_SECRET_KEY</span>。<br/>
-                                    3. 回到 SullyOS 的 <b>个人档案 → 声音档案</b>，点“注册声纹”。注册成功后 VoicePrintId 会自动保存到这里。声音基线完成后，聊天里的语音会走 Worker 调腾讯云验证是不是本人；Ears Lite 判断异常或腾讯云判定不像本人时，再补充讯飞声音画像。
+                                    3. 回到 SullyOS 的 <b>个人档案 → 声音档案</b>，点“注册声纹”。注册成功后 VoicePrintId 会自动保存到这里。声音基线完成后，只有 Ears Lite 判断“这条语音和平时差异明显”时，才走 Worker 调腾讯云验证是不是本人；Ears Lite 判断异常或腾讯云判定不像本人时，再补充讯飞声音画像。
                                 </p>
                                 <p className="text-indigo-700/80">
                                     备注：这里保留教程和状态，不再提供手填 Secret。腾讯云 Secret 放 Worker；声纹 ID 由前端录音注册后自动保存。
@@ -2430,7 +2430,7 @@ const Settings: React.FC = () => {
                                             '2. 打开 https://console.cloud.tencent.com/cam/capi 创建 SecretId / SecretKey。',
                                             '3. 把 SecretId / SecretKey 放到主 Worker 环境变量：TENCENT_SECRET_ID、TENCENT_SECRET_KEY，不要放到前端。',
                                             '4. 回到 SullyOS → 个人档案 → 声音档案，点“注册声纹”。成功后 VoicePrintId 会自动保存。',
-                                            '5. 声音基线完成后，聊天里的语音会通过 Worker 调腾讯云验证是不是本人；Ears Lite 判断异常或腾讯云判定不像本人时，再补充讯飞声音画像。',
+                                            '5. 声音基线完成后，只有 Ears Lite 判断语音异常时，SullyOS 才会通过 Worker 调腾讯云验证是不是本人；Ears Lite 判断异常或腾讯云判定不像本人时，再补充讯飞声音画像。',
                                         ].join('\n');
                                         try {
                                             await navigator.clipboard.writeText(guide);
