@@ -360,14 +360,17 @@ export interface APIConfig {
     dateVoice?: string;
   };
   ears?: {
-    asrProvider?: 'groq' | 'funasr' | 'auto';
+    asrProvider?: 'groq' | 'volcengine' | 'auto';
     groqApiKey?: string;
     groqBaseUrl?: string;
     groqAsrModel?: string;
     groqAsrLanguage?: 'auto' | 'zh' | 'en';
-    funAsrApiKey?: string;
-    funAsrBaseUrl?: string;
-    funAsrModel?: string;
+    volcengineApiKey?: string;
+    volcengineAppId?: string;
+    volcengineAccessKey?: string;
+    volcengineEndpoint?: string;
+    volcengineResourceId?: string;
+    volcengineUid?: string;
     groqToneEnabled?: boolean;
     groqToneModel?: string;
     tencentSecretId?: string;

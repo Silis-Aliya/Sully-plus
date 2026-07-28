@@ -388,10 +388,13 @@ const Settings: React.FC = () => {
   const [localEarsGroqBaseUrl, setLocalEarsGroqBaseUrl] = useState(apiConfig.ears?.groqBaseUrl || 'https://api.groq.com/openai/v1');
   const [localEarsGroqAsrModel, setLocalEarsGroqAsrModel] = useState(apiConfig.ears?.groqAsrModel || 'whisper-large-v3-turbo');
   const [localEarsGroqAsrLanguage, setLocalEarsGroqAsrLanguage] = useState(apiConfig.ears?.groqAsrLanguage || 'zh');
-  const [localEarsAsrProvider, setLocalEarsAsrProvider] = useState<'groq' | 'funasr' | 'auto'>(apiConfig.ears?.asrProvider || 'groq');
-  const [localEarsFunAsrKey, setLocalEarsFunAsrKey] = useState(apiConfig.ears?.funAsrApiKey || '');
-  const [localEarsFunAsrBaseUrl, setLocalEarsFunAsrBaseUrl] = useState(apiConfig.ears?.funAsrBaseUrl || 'https://api.siliconflow.cn/v1');
-  const [localEarsFunAsrModel, setLocalEarsFunAsrModel] = useState(apiConfig.ears?.funAsrModel || 'FunAudioLLM/SenseVoiceSmall');
+  const [localEarsAsrProvider, setLocalEarsAsrProvider] = useState<'groq' | 'volcengine' | 'auto'>(apiConfig.ears?.asrProvider || 'groq');
+  const [localEarsVolcengineKey, setLocalEarsVolcengineKey] = useState(apiConfig.ears?.volcengineApiKey || '');
+  const [localEarsVolcengineAppId, setLocalEarsVolcengineAppId] = useState(apiConfig.ears?.volcengineAppId || '');
+  const [localEarsVolcengineAccessKey, setLocalEarsVolcengineAccessKey] = useState(apiConfig.ears?.volcengineAccessKey || '');
+  const [localEarsVolcengineEndpoint, setLocalEarsVolcengineEndpoint] = useState(apiConfig.ears?.volcengineEndpoint || 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash');
+  const [localEarsVolcengineResourceId, setLocalEarsVolcengineResourceId] = useState(apiConfig.ears?.volcengineResourceId || 'volc.bigasr.auc_turbo');
+  const [localEarsVolcengineUid, setLocalEarsVolcengineUid] = useState(apiConfig.ears?.volcengineUid || 'sullyos');
   const [localEarsGroqToneEnabled, setLocalEarsGroqToneEnabled] = useState(!!apiConfig.ears?.groqToneEnabled);
   const [localEarsGroqToneModel, setLocalEarsGroqToneModel] = useState(apiConfig.ears?.groqToneModel || 'llama-3.3-70b-versatile');
   const [localEarsTencentSecretId, setLocalEarsTencentSecretId] = useState(apiConfig.ears?.tencentSecretId || '');
@@ -732,9 +735,12 @@ const Settings: React.FC = () => {
       setLocalEarsGroqAsrModel(apiConfig.ears?.groqAsrModel || 'whisper-large-v3-turbo');
       setLocalEarsGroqAsrLanguage(apiConfig.ears?.groqAsrLanguage || 'zh');
       setLocalEarsAsrProvider(apiConfig.ears?.asrProvider || 'groq');
-      setLocalEarsFunAsrKey(apiConfig.ears?.funAsrApiKey || '');
-      setLocalEarsFunAsrBaseUrl(apiConfig.ears?.funAsrBaseUrl || 'https://api.siliconflow.cn/v1');
-      setLocalEarsFunAsrModel(apiConfig.ears?.funAsrModel || 'FunAudioLLM/SenseVoiceSmall');
+      setLocalEarsVolcengineKey(apiConfig.ears?.volcengineApiKey || '');
+      setLocalEarsVolcengineAppId(apiConfig.ears?.volcengineAppId || '');
+      setLocalEarsVolcengineAccessKey(apiConfig.ears?.volcengineAccessKey || '');
+      setLocalEarsVolcengineEndpoint(apiConfig.ears?.volcengineEndpoint || 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash');
+      setLocalEarsVolcengineResourceId(apiConfig.ears?.volcengineResourceId || 'volc.bigasr.auc_turbo');
+      setLocalEarsVolcengineUid(apiConfig.ears?.volcengineUid || 'sullyos');
       setLocalEarsGroqToneEnabled(!!apiConfig.ears?.groqToneEnabled);
       setLocalEarsGroqToneModel(apiConfig.ears?.groqToneModel || 'llama-3.3-70b-versatile');
       setLocalEarsTencentSecretId(apiConfig.ears?.tencentSecretId || '');
@@ -792,9 +798,12 @@ const Settings: React.FC = () => {
     groqBaseUrl: localEarsGroqBaseUrl.trim() || 'https://api.groq.com/openai/v1',
     groqAsrModel: localEarsGroqAsrModel.trim() || 'whisper-large-v3-turbo',
     groqAsrLanguage: localEarsGroqAsrLanguage as 'auto' | 'zh' | 'en',
-    funAsrApiKey: localEarsFunAsrKey.trim() || undefined,
-    funAsrBaseUrl: localEarsFunAsrBaseUrl.trim() || 'https://api.siliconflow.cn/v1',
-    funAsrModel: localEarsFunAsrModel.trim() || 'FunAudioLLM/SenseVoiceSmall',
+    volcengineApiKey: localEarsVolcengineKey.trim() || undefined,
+    volcengineAppId: localEarsVolcengineAppId.trim() || undefined,
+    volcengineAccessKey: localEarsVolcengineAccessKey.trim() || undefined,
+    volcengineEndpoint: localEarsVolcengineEndpoint.trim() || 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash',
+    volcengineResourceId: localEarsVolcengineResourceId.trim() || 'volc.bigasr.auc_turbo',
+    volcengineUid: localEarsVolcengineUid.trim() || 'sullyos',
     groqToneEnabled: localEarsGroqToneEnabled,
     groqToneModel: localEarsGroqToneModel.trim() || 'llama-3.3-70b-versatile',
     tencentSecretId: localEarsTencentSecretId.trim() || undefined,
@@ -2214,33 +2223,33 @@ const Settings: React.FC = () => {
                         </div>
                         <select
                             value={localEarsAsrProvider}
-                            onChange={(e) => setLocalEarsAsrProvider(e.target.value as 'groq' | 'funasr' | 'auto')}
+                            onChange={(e) => setLocalEarsAsrProvider(e.target.value as 'groq' | 'volcengine' | 'auto')}
                             className="w-full bg-white/80 border border-sky-100 rounded-xl px-3 py-2.5 text-xs font-medium text-slate-700 focus:bg-white transition-all"
                         >
-                            <option value="funasr">FunASR / SenseVoice（中文优先，低成本）</option>
-                            <option value="auto">自动兜底：FunASR 失败再试 Groq</option>
-                            <option value="groq">Groq Whisper（原方案）</option>
+                            <option value="volcengine">火山豆包 ASR（中文推荐，极速版）</option>
+                            <option value="auto">自动兜底：火山失败再试 Groq</option>
+                            <option value="groq">Groq Whisper（便宜备用）</option>
                         </select>
                         <p className="text-[10px] text-slate-400 leading-relaxed">
-                            这里的切换只决定“语音转文字”用谁：选 FunASR 就走 SiliconFlow/SenseVoice，选 Groq 就走 Groq Whisper。下面的 Groq 情绪转换器是单独开关，不跟着这个下拉切。
+                            这里的切换只决定“语音转文字”用谁：选火山就走豆包录音文件识别极速版，选 Groq 就走 Groq Whisper。下面的 Groq 情绪转换器是单独开关，不跟着这个下拉切。
                         </p>
                     </div>
 
                     <div className="border-t border-cyan-100 pt-3 space-y-2">
                         <div className="flex items-center justify-between gap-2">
-                            <label className="text-[10px] font-bold text-cyan-700 uppercase tracking-widest">FunASR / SenseVoice</label>
-                            <span className="text-[9px] font-bold text-white bg-cyan-500 px-1.5 py-0.5 rounded-full">中文推荐</span>
+                            <label className="text-[10px] font-bold text-cyan-700 uppercase tracking-widest">火山豆包 ASR</label>
+                            <span className="text-[9px] font-bold text-white bg-cyan-500 px-1.5 py-0.5 rounded-full">极速版</span>
                         </div>
-                        <input type="text" name="ears-funasr-token-input" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} value={localEarsFunAsrKey} onChange={(e) => setLocalEarsFunAsrKey(e.target.value)} placeholder="API Key（如 SiliconFlow sk-...）" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
+                        <input type="text" name="ears-volcengine-token-input" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} value={localEarsVolcengineKey} onChange={(e) => setLocalEarsVolcengineKey(e.target.value)} placeholder="新版 API Key（火山控制台 API Key 接入）" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-sm font-mono focus:bg-white transition-all" />
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <input type="text" value={localEarsFunAsrBaseUrl} onChange={(e) => setLocalEarsFunAsrBaseUrl(e.target.value)} placeholder="https://api.siliconflow.cn/v1" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
-                            <select value={localEarsFunAsrModel} onChange={(e) => setLocalEarsFunAsrModel(e.target.value)} className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all">
-                                <option value="FunAudioLLM/SenseVoiceSmall">FunAudioLLM/SenseVoiceSmall（中文口语推荐）</option>
-                                <option value="TeleAI/TeleSpeechASR">TeleAI/TeleSpeechASR（备选）</option>
-                            </select>
+                            <input type="text" value={localEarsVolcengineEndpoint} onChange={(e) => setLocalEarsVolcengineEndpoint(e.target.value)} placeholder="https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
+                            <input type="text" value={localEarsVolcengineResourceId} onChange={(e) => setLocalEarsVolcengineResourceId(e.target.value)} placeholder="volc.bigasr.auc_turbo" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
+                            <input type="text" value={localEarsVolcengineUid} onChange={(e) => setLocalEarsVolcengineUid(e.target.value)} placeholder="UID（可选，默认 sullyos）" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
+                            <input type="text" value={localEarsVolcengineAppId} onChange={(e) => setLocalEarsVolcengineAppId(e.target.value)} placeholder="旧版 App ID（新版不用填）" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all" />
+                            <input type="text" value={localEarsVolcengineAccessKey} onChange={(e) => setLocalEarsVolcengineAccessKey(e.target.value)} placeholder="旧版 Access Token（新版不用填）" className="w-full bg-white/70 border border-cyan-100 rounded-xl px-3 py-2.5 text-xs font-mono focus:bg-white transition-all sm:col-span-2" />
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed">
-                            默认按 SiliconFlow 的转写接口填好了 Base URL；如果换 302.AI、TheRouter 或自建 FunASR 网关，只要它兼容 /v1/audio/transcriptions，就改 Base URL 和模型名。
+                            新版控制台只填 API Key 就行；旧版才填 App ID + Access Token。默认资源 ID 是 volc.bigasr.auc_turbo，走“大模型录音文件识别极速版”。
                         </p>
                     </div>
 
@@ -2287,7 +2296,7 @@ const Settings: React.FC = () => {
                                 <option value="llama-3.1-8b-instant">llama-3.1-8b-instant（极省，较粗）</option>
                             </select>
                             <p className="text-[10px] text-sky-500 leading-relaxed">
-                                开启且填了 Groq Key 时，不管上面 ASR 选 SiliconFlow 还是 Groq，都会额外调用 Groq 文本模型，把转写、声学特征和个人基线转成 emotion / confidence / hint。
+                                开启且填了 Groq Key 时，不管上面 ASR 选火山还是 Groq，都会额外调用 Groq 文本模型，把转写、声学特征和个人基线转成 emotion / confidence / hint。
                             </p>
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed">

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { transcribeWithEarsAsr, transcribeWithFunAsr, transcribeWithGroq } from './earsLite';
+import { transcribeWithEarsAsr, transcribeWithGroq, transcribeWithVolcengine } from './earsLite';
 
 describe('transcribeWithGroq', () => {
   afterEach(() => {
@@ -64,33 +64,37 @@ describe('transcribeWithGroq', () => {
   });
 });
 
-describe('transcribeWithFunAsr', () => {
+describe('transcribeWithVolcengine', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it('uses the SiliconFlow SenseVoice endpoint defaults', async () => {
+  it('uses the Volcengine Doubao flash ASR endpoint defaults', async () => {
     let body: BodyInit | null | undefined;
+    let headers: HeadersInit | undefined;
     const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
       body = init?.body;
-      return new Response(JSON.stringify({ text: '你好' }), {
+      headers = init?.headers;
+      return new Response(JSON.stringify({ result: { text: '你好' } }), {
         status: 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Api-Status-Code': '20000000' },
       });
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const text = await transcribeWithFunAsr(new Blob(['audio'], { type: 'audio/webm' }), {
-      apiKey: 'sk_test',
+    const text = await transcribeWithVolcengine({
+      apiKey: 'volc_test',
+      audioDataBase64: 'wav-base64',
     });
 
     expect(text).toBe('你好');
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.siliconflow.cn/v1/audio/transcriptions',
+      'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash',
       expect.objectContaining({ method: 'POST' }),
     );
-    expect((body as FormData).get('model')).toBe('FunAudioLLM/SenseVoiceSmall');
-    expect((body as FormData).get('language')).toBe('zh');
+    expect((headers as Record<string, string>)['X-Api-Key']).toBe('volc_test');
+    expect((headers as Record<string, string>)['X-Api-Resource-Id']).toBe('volc.bigasr.auc_turbo');
+    expect(JSON.parse(String(body)).audio.data).toBe('wav-base64');
   });
 });
 
@@ -99,7 +103,7 @@ describe('transcribeWithEarsAsr', () => {
     vi.unstubAllGlobals();
   });
 
-  it('falls back from FunASR to Groq in auto mode', async () => {
+  it('falls back from Volcengine to Groq in auto mode', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response('rate limit', { status: 429 }))
@@ -111,7 +115,8 @@ describe('transcribeWithEarsAsr', () => {
 
     const result = await transcribeWithEarsAsr(new Blob(['audio'], { type: 'audio/webm' }), {
       provider: 'auto',
-      funAsrApiKey: 'sk_fun',
+      volcengineApiKey: 'volc_test',
+      volcengineAudioDataBase64: 'wav-base64',
       groqApiKey: 'gsk_test',
     });
 

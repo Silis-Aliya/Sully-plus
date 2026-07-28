@@ -120,13 +120,14 @@ describe('localSettingsBackup', () => {
             apiKey: 'sk-main',
             model: 'chat-model',
             ears: {
-                asrProvider: 'funasr',
+                asrProvider: 'volcengine',
                 groqApiKey: 'gsk_voice_secret',
                 groqBaseUrl: 'https://api.groq.com/openai/v1',
                 groqAsrModel: 'whisper-large-v3-turbo',
-                funAsrApiKey: 'sk_siliconflow_voice_secret',
-                funAsrBaseUrl: 'https://api.siliconflow.com/v1',
-                funAsrModel: 'FunAudioLLM/SenseVoiceSmall',
+                volcengineApiKey: 'volc_voice_secret',
+                volcengineEndpoint: 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash',
+                volcengineResourceId: 'volc.bigasr.auc_turbo',
+                volcengineUid: 'sullyos',
                 groqToneEnabled: true,
                 groqToneModel: 'llama-3.3-70b-versatile',
                 tencentSecretId: 'tencent-id',
@@ -140,13 +141,14 @@ describe('localSettingsBackup', () => {
 
         const restored = JSON.parse(localStorage.getItem('os_api_config') || '{}');
         expect(restored.ears).toMatchObject({
-            asrProvider: 'funasr',
+            asrProvider: 'volcengine',
             groqApiKey: 'gsk_voice_secret',
             groqBaseUrl: 'https://api.groq.com/openai/v1',
             groqAsrModel: 'whisper-large-v3-turbo',
-            funAsrApiKey: 'sk_siliconflow_voice_secret',
-            funAsrBaseUrl: 'https://api.siliconflow.com/v1',
-            funAsrModel: 'FunAudioLLM/SenseVoiceSmall',
+            volcengineApiKey: 'volc_voice_secret',
+            volcengineEndpoint: 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash',
+            volcengineResourceId: 'volc.bigasr.auc_turbo',
+            volcengineUid: 'sullyos',
             groqToneEnabled: true,
             groqToneModel: 'llama-3.3-70b-versatile',
             tencentSecretId: 'tencent-id',
@@ -165,9 +167,10 @@ describe('localSettingsBackup', () => {
                     groqApiKey: 'gsk_incremental_voice_secret',
                     groqBaseUrl: 'https://api.groq.com/openai/v1',
                     groqAsrModel: 'whisper-large-v3-turbo',
-                    funAsrApiKey: 'sk_incremental_siliconflow_secret',
-                    funAsrBaseUrl: 'https://api.siliconflow.cn/v1',
-                    funAsrModel: 'FunAudioLLM/SenseVoiceSmall',
+                    volcengineApiKey: 'volc_incremental_secret',
+                    volcengineEndpoint: 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash',
+                    volcengineResourceId: 'volc.bigasr.auc_turbo',
+                    volcengineUid: 'sullyos',
                     groqToneEnabled: true,
                     groqToneModel: 'llama-3.3-70b-versatile',
                 },
@@ -177,9 +180,10 @@ describe('localSettingsBackup', () => {
         const restored = JSON.parse(localStorage.getItem('os_api_config') || '{}');
         expect(restored.ears?.asrProvider).toBe('auto');
         expect(restored.ears?.groqApiKey).toBe('gsk_incremental_voice_secret');
-        expect(restored.ears?.funAsrApiKey).toBe('sk_incremental_siliconflow_secret');
-        expect(restored.ears?.funAsrBaseUrl).toBe('https://api.siliconflow.cn/v1');
-        expect(restored.ears?.funAsrModel).toBe('FunAudioLLM/SenseVoiceSmall');
+        expect(restored.ears?.volcengineApiKey).toBe('volc_incremental_secret');
+        expect(restored.ears?.volcengineEndpoint).toBe('https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash');
+        expect(restored.ears?.volcengineResourceId).toBe('volc.bigasr.auc_turbo');
+        expect(restored.ears?.volcengineUid).toBe('sullyos');
         expect(restored.ears?.groqToneEnabled).toBe(true);
         expect(restored.ears?.groqToneModel).toBe('llama-3.3-70b-versatile');
     });

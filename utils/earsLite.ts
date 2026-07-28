@@ -347,7 +347,7 @@ export async function analyzeVoiceWithEarsLite(blob: Blob): Promise<EarsLiteResu
   return result;
 }
 
-type EarsAsrProvider = 'groq' | 'funasr' | 'auto';
+type EarsAsrProvider = 'groq' | 'volcengine' | 'auto';
 
 type OpenAICompatibleAsrConfig = {
   apiKey?: string;
@@ -356,6 +356,19 @@ type OpenAICompatibleAsrConfig = {
   mimeType?: string;
   language?: string;
 };
+
+type VolcengineAsrConfig = {
+  apiKey?: string;
+  appId?: string;
+  accessKey?: string;
+  endpoint?: string;
+  resourceId?: string;
+  uid?: string;
+  audioDataBase64?: string;
+};
+
+const VOLCENGINE_ASR_ENDPOINT = 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash';
+const VOLCENGINE_ASR_RESOURCE_ID = 'volc.bigasr.auc_turbo';
 
 const appendAsrForm = (blob: Blob, config: Pick<OpenAICompatibleAsrConfig, 'mimeType' | 'model' | 'language'>) => {
   const language = (config.language === undefined ? 'zh' : config.language).trim();
@@ -372,6 +385,7 @@ const appendAsrForm = (blob: Blob, config: Pick<OpenAICompatibleAsrConfig, 'mime
 const readAsrText = async (res: Response, providerLabel: string): Promise<string> => {
   if (!res.ok) {
     if (res.status === 401) throw new Error(`${providerLabel} 401：API Key 无效、未保存，或复制错了`);
+    if (res.status === 403) throw new Error(`${providerLabel} 403：账号或 Key 没有这个模型/接口权限`);
     if (res.status === 429) throw new Error(`${providerLabel} 429：额度或频率限制`);
     if (res.status === 503 || res.status === 504) throw new Error(`${providerLabel} ${res.status}：服务繁忙或超时`);
     throw new Error(`${providerLabel} ${res.status}`);
@@ -394,18 +408,66 @@ export async function transcribeWithGroq(blob: Blob, config: OpenAICompatibleAsr
   return readAsrText(res, 'Groq Whisper');
 }
 
-export async function transcribeWithFunAsr(blob: Blob, config: OpenAICompatibleAsrConfig): Promise<string> {
+const getVolcengineRequestId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+export async function transcribeWithVolcengine(config: VolcengineAsrConfig): Promise<string> {
   const apiKey = (config.apiKey || '').trim();
-  if (!apiKey) throw new Error('缺少 FunASR API Key');
-  const base = (config.baseUrl || 'https://api.siliconflow.cn/v1').replace(/\/+$/, '');
-  const model = (config.model || 'FunAudioLLM/SenseVoiceSmall').trim();
-  const form = appendAsrForm(blob, { ...config, model });
-  const res = await fetch(`${base}/audio/transcriptions`, {
+  const appId = (config.appId || '').trim();
+  const accessKey = (config.accessKey || '').trim();
+  const audioDataBase64 = (config.audioDataBase64 || '').trim();
+  if (!apiKey && !(appId && accessKey)) throw new Error('缺少火山豆包 ASR API Key');
+  if (!audioDataBase64) throw new Error('火山豆包 ASR 需要先把录音转换成 WAV base64');
+
+  const endpoint = (config.endpoint || VOLCENGINE_ASR_ENDPOINT).trim();
+  const resourceId = (config.resourceId || VOLCENGINE_ASR_RESOURCE_ID).trim();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-Api-Resource-Id': resourceId,
+    'X-Api-Request-Id': getVolcengineRequestId(),
+    'X-Api-Sequence': '-1',
+  };
+  if (apiKey) {
+    headers['X-Api-Key'] = apiKey;
+  } else {
+    headers['X-Api-App-Key'] = appId;
+    headers['X-Api-Access-Key'] = accessKey;
+  }
+
+  const res = await fetch(endpoint, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}` },
-    body: form,
+    headers,
+    body: JSON.stringify({
+      user: { uid: (config.uid || appId || 'sullyos').trim() },
+      audio: { data: audioDataBase64 },
+      request: {
+        model_name: 'bigmodel',
+        enable_itn: true,
+        enable_punc: true,
+        enable_ddc: true,
+      },
+    }),
   });
-  return readAsrText(res, 'FunASR / SenseVoice');
+  const data = await res.json().catch(() => ({}));
+  const statusCode = String(res.headers.get('X-Api-Status-Code') || data?.code || data?.resp?.code || '');
+  const statusMessage = String(res.headers.get('X-Api-Message') || data?.message || data?.resp?.message || '');
+  if (!res.ok || (statusCode && statusCode !== '20000000')) {
+    if (res.status === 401 || res.status === 403) throw new Error(`火山豆包 ASR ${res.status}：API Key 或模型权限不对`);
+    throw new Error(`火山豆包 ASR ${statusCode || res.status || '失败'}：${statusMessage || '没有返回可用文本'}`);
+  }
+  const text = String(
+    data?.result?.text
+    || data?.text
+    || data?.transcript
+    || data?.result?.utterances?.map((item: any) => item?.text).filter(Boolean).join('')
+    || '',
+  ).trim();
+  if (!text) throw new Error('火山豆包 ASR 没有返回文字');
+  return text;
 }
 
 export async function transcribeWithEarsAsr(blob: Blob, config: OpenAICompatibleAsrConfig & {
@@ -413,22 +475,28 @@ export async function transcribeWithEarsAsr(blob: Blob, config: OpenAICompatible
   groqApiKey?: string;
   groqBaseUrl?: string;
   groqModel?: string;
-  funAsrApiKey?: string;
-  funAsrBaseUrl?: string;
-  funAsrModel?: string;
+  volcengineApiKey?: string;
+  volcengineAppId?: string;
+  volcengineAccessKey?: string;
+  volcengineEndpoint?: string;
+  volcengineResourceId?: string;
+  volcengineUid?: string;
+  volcengineAudioDataBase64?: string;
 }): Promise<{ text: string; provider: string }> {
   const provider = config.provider || 'groq';
   const language = config.language;
   const attempts: Array<() => Promise<{ text: string; provider: string }>> = [];
-  const addFunAsr = () => attempts.push(async () => ({
-    text: await transcribeWithFunAsr(blob, {
-      apiKey: config.funAsrApiKey || config.apiKey,
-      baseUrl: config.funAsrBaseUrl || config.baseUrl,
-      model: config.funAsrModel || config.model,
-      mimeType: config.mimeType,
-      language,
+  const addVolcengine = () => attempts.push(async () => ({
+    text: await transcribeWithVolcengine({
+      apiKey: config.volcengineApiKey || config.apiKey,
+      appId: config.volcengineAppId,
+      accessKey: config.volcengineAccessKey,
+      endpoint: config.volcengineEndpoint,
+      resourceId: config.volcengineResourceId,
+      uid: config.volcengineUid,
+      audioDataBase64: config.volcengineAudioDataBase64,
     }),
-    provider: `funasr:${config.funAsrModel || config.model || 'FunAudioLLM/SenseVoiceSmall'}`,
+    provider: `volcengine:${config.volcengineResourceId || VOLCENGINE_ASR_RESOURCE_ID}`,
   }));
   const addGroq = () => attempts.push(async () => ({
     text: await transcribeWithGroq(blob, {
@@ -441,13 +509,13 @@ export async function transcribeWithEarsAsr(blob: Blob, config: OpenAICompatible
     provider: `groq:${config.groqModel || config.model || 'whisper-large-v3-turbo'}`,
   }));
 
-  if (provider === 'funasr') addFunAsr();
+  if (provider === 'volcengine') addVolcengine();
   else if (provider === 'auto') {
-    if ((config.funAsrApiKey || config.apiKey || '').trim()) addFunAsr();
+    if ((config.volcengineApiKey || config.apiKey || '').trim() || ((config.volcengineAppId || '').trim() && (config.volcengineAccessKey || '').trim())) addVolcengine();
     if ((config.groqApiKey || '').trim()) addGroq();
   } else addGroq();
 
-  if (!attempts.length) throw new Error('请先在设置 → 语音识别里填写 Groq 或 FunASR API Key');
+  if (!attempts.length) throw new Error('请先在设置 → 语音识别里填写 Groq 或火山豆包 ASR API Key');
   let lastError: any;
   for (const attempt of attempts) {
     try {

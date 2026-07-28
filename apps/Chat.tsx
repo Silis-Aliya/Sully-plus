@@ -69,7 +69,7 @@ import {
     type ContextRangeMode,
 } from '../utils/chatContextRange';
 import { analyzeVoiceWithEarsLite, judgeVoiceToneWithGroq, transcribeWithEarsAsr } from '../utils/earsLite';
-import { decideVoiceCloudReview, prepareVoiceCloudAudio, profileVoiceWithXfyun, shouldRunTencentSpeakerVerification, shouldRunXfyunVoiceProfile, verifyTencentSpeaker } from '../utils/voiceCloud';
+import { decideVoiceCloudReview, prepareVoiceCloudAudio, profileVoiceWithXfyun, shouldRunTencentSpeakerVerification, shouldRunXfyunVoiceProfile, verifyTencentSpeaker, type PreparedVoiceCloudAudio } from '../utils/voiceCloud';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
 type InstantToolUiStatus = {
@@ -1206,31 +1206,49 @@ const Chat: React.FC = () => {
     const handleSendVoice = async (blob: Blob, durationSec: number, mimeType: string) => {
         if (!char) return;
         const groqKey = (apiConfig.ears?.groqApiKey || '').trim();
-        const funAsrKey = (apiConfig.ears?.funAsrApiKey || '').trim();
+        const volcengineKey = (apiConfig.ears?.volcengineApiKey || '').trim();
+        const volcengineAppId = (apiConfig.ears?.volcengineAppId || '').trim();
+        const volcengineAccessKey = (apiConfig.ears?.volcengineAccessKey || '').trim();
         const audioUrl = URL.createObjectURL(blob);
         try {
-            if (!groqKey && !funAsrKey) {
-                addToast('请先到设置 → 语音识别里填 Groq 或 FunASR API Key', 'error');
+            if (!groqKey && !volcengineKey && !(volcengineAppId && volcengineAccessKey)) {
+                addToast('请先到设置 → 语音识别里填 Groq 或火山豆包 ASR API Key', 'error');
                 URL.revokeObjectURL(audioUrl);
                 return;
             }
 
             addToast('正在用内置 Ears Lite 听这条语音…', 'info');
+            let preparedCloudAudio: PreparedVoiceCloudAudio | undefined;
+            const getPreparedCloudAudio = async () => {
+                if (!preparedCloudAudio) preparedCloudAudio = await prepareVoiceCloudAudio(blob);
+                return preparedCloudAudio;
+            };
+            const asrProvider = apiConfig.ears?.asrProvider || 'groq';
+            const needsVolcengineAsr = asrProvider === 'volcengine' || asrProvider === 'auto';
             const [lite, asrResult] = await Promise.all([
                 analyzeVoiceWithEarsLite(blob),
-                transcribeWithEarsAsr(blob, {
-                    provider: apiConfig.ears?.asrProvider || 'groq',
-                    groqApiKey: groqKey,
-                    groqBaseUrl: apiConfig.ears?.groqBaseUrl,
-                    groqModel: apiConfig.ears?.groqAsrModel,
-                    funAsrApiKey: funAsrKey,
-                    funAsrBaseUrl: apiConfig.ears?.funAsrBaseUrl,
-                    funAsrModel: apiConfig.ears?.funAsrModel,
-                    mimeType,
-                    language: apiConfig.ears?.groqAsrLanguage === 'auto'
-                        ? ''
-                        : (apiConfig.ears?.groqAsrLanguage || 'zh'),
-                }),
+                (async () => {
+                    const volcengineAudioDataBase64 = needsVolcengineAsr && (volcengineKey || (volcengineAppId && volcengineAccessKey))
+                        ? (await getPreparedCloudAudio()).wavBase64
+                        : undefined;
+                    return transcribeWithEarsAsr(blob, {
+                        provider: asrProvider,
+                        groqApiKey: groqKey,
+                        groqBaseUrl: apiConfig.ears?.groqBaseUrl,
+                        groqModel: apiConfig.ears?.groqAsrModel,
+                        volcengineApiKey: volcengineKey,
+                        volcengineAppId,
+                        volcengineAccessKey,
+                        volcengineEndpoint: apiConfig.ears?.volcengineEndpoint,
+                        volcengineResourceId: apiConfig.ears?.volcengineResourceId,
+                        volcengineUid: apiConfig.ears?.volcengineUid,
+                        volcengineAudioDataBase64,
+                        mimeType,
+                        language: apiConfig.ears?.groqAsrLanguage === 'auto'
+                            ? ''
+                            : (apiConfig.ears?.groqAsrLanguage || 'zh'),
+                    });
+                })(),
             ]);
             const transcript = asrResult.text;
             let voiceTone = {
@@ -1267,7 +1285,7 @@ const Chat: React.FC = () => {
             const mayNeedXfyun = hasXfyunAppId && durationSec <= 10;
             if (needsTencent || mayNeedXfyun) {
                 try {
-                    const prepared = await prepareVoiceCloudAudio(blob);
+                    const prepared = await getPreparedCloudAudio();
                     if (needsTencent) {
                         try {
                             speakerVerification = await verifyTencentSpeaker(prepared, apiConfig.ears!.tencentVoicePrintId!);
