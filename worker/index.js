@@ -3823,6 +3823,75 @@ export default {
       }
     }
 
+    if (url.pathname === '/volcengine/asr') {
+      if (request.method !== 'POST') {
+        return jsonResponse({ error: 'Method not allowed' }, { status: 405, origin });
+      }
+      let body = {};
+      try {
+        body = await request.json();
+      } catch {
+        return jsonResponse({ error: 'Invalid JSON body' }, { status: 400, origin });
+      }
+      const endpoint = String(body.endpoint || 'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash').trim();
+      let parsedEndpoint;
+      try {
+        parsedEndpoint = new URL(endpoint);
+      } catch {
+        return jsonResponse({ error: 'Invalid Volcengine endpoint' }, { status: 400, origin });
+      }
+      if (parsedEndpoint.protocol !== 'https:' || parsedEndpoint.hostname !== 'openspeech.bytedance.com') {
+        return jsonResponse({ error: 'Volcengine endpoint must be https://openspeech.bytedance.com' }, { status: 400, origin });
+      }
+      const auth = request.headers.get('Authorization') || '';
+      const apiKey = auth.replace(/^Bearer\s+/i, '').trim();
+      const appId = String(body.appId || '').trim();
+      const accessKey = String(body.accessKey || '').trim();
+      if (!apiKey && !(appId && accessKey)) {
+        return jsonResponse({ error: 'Missing Volcengine API Key' }, { status: 401, origin });
+      }
+      if (!body.audio || typeof body.audio.data !== 'string' || !body.audio.data.trim()) {
+        return jsonResponse({ error: 'Missing base64 audio data' }, { status: 400, origin });
+      }
+      const resourceId = String(body.resourceId || 'volc.bigasr.auc_turbo').trim();
+      const requestId = String(body.requestId || crypto.randomUUID()).trim();
+      const upstreamHeaders = {
+        'Content-Type': 'application/json',
+        'X-Api-Resource-Id': resourceId,
+        'X-Api-Request-Id': requestId,
+        'X-Api-Sequence': '-1',
+      };
+      if (apiKey) {
+        upstreamHeaders['X-Api-Key'] = apiKey;
+      } else {
+        upstreamHeaders['X-Api-App-Key'] = appId;
+        upstreamHeaders['X-Api-Access-Key'] = accessKey;
+      }
+      try {
+        const upstream = await fetch(endpoint, {
+          method: 'POST',
+          headers: upstreamHeaders,
+          body: JSON.stringify({
+            user: body.user || { uid: 'sullyos' },
+            audio: body.audio,
+            request: body.request || { model_name: 'bigmodel' },
+          }),
+        });
+        const upstreamText = await upstream.text();
+        let payload = {};
+        try { payload = upstreamText ? JSON.parse(upstreamText) : {}; } catch { payload = { raw: upstreamText }; }
+        return jsonResponse({
+          ...payload,
+          code: upstream.headers.get('X-Api-Status-Code') || payload.code || payload?.resp?.code,
+          message: upstream.headers.get('X-Api-Message') || payload.message || payload?.resp?.message,
+          requestId,
+          logId: upstream.headers.get('X-Tt-Logid') || payload.logId,
+        }, { status: upstream.status, origin });
+      } catch (e) {
+        return jsonResponse({ error: 'Volcengine ASR upstream fetch failed', detail: String(e && e.message || e) }, { status: 502, origin });
+      }
+    }
+
     // ========== 麦当劳 MCP 代理 (浏览器 CORS 兜底, 纯透传) ==========
     // 前端 POST /mcp/mcd  + Authorization: Bearer <user_mcp_token>
     // body 即 MCP JSON-RPC 报文 (initialize / tools/list / tools/call ...)

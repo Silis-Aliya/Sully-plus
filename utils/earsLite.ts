@@ -425,23 +425,21 @@ export async function transcribeWithVolcengine(config: VolcengineAsrConfig): Pro
 
   const endpoint = (config.endpoint || VOLCENGINE_ASR_ENDPOINT).trim();
   const resourceId = (config.resourceId || VOLCENGINE_ASR_RESOURCE_ID).trim();
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'X-Api-Resource-Id': resourceId,
-    'X-Api-Request-Id': getVolcengineRequestId(),
-    'X-Api-Sequence': '-1',
-  };
-  if (apiKey) {
-    headers['X-Api-Key'] = apiKey;
-  } else {
-    headers['X-Api-App-Key'] = appId;
-    headers['X-Api-Access-Key'] = accessKey;
-  }
 
-  const res = await fetch(endpoint, {
+  const res = await fetch(`${getProxyWorkerUrl()}/volcengine/asr`, {
     method: 'POST',
-    headers,
+    headers: apiKey ? {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    } : {
+      'Content-Type': 'application/json',
+    },
     body: JSON.stringify({
+      endpoint,
+      resourceId,
+      requestId: getVolcengineRequestId(),
+      appId: apiKey ? undefined : appId,
+      accessKey: apiKey ? undefined : accessKey,
       user: { uid: (config.uid || appId || 'sullyos').trim() },
       audio: { data: audioDataBase64 },
       request: {
@@ -588,3 +586,4 @@ export async function judgeVoiceToneWithGroq(transcript: string, lite: EarsLiteR
   debugEarsLite('tone-llm', { model, raw, result });
   return result;
 }
+import { getProxyWorkerUrl } from './proxyWorker';

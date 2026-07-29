@@ -89,12 +89,14 @@ describe('transcribeWithVolcengine', () => {
 
     expect(text).toBe('你好');
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash',
+      'https://sullymeow.ccwu.cc/volcengine/asr',
       expect.objectContaining({ method: 'POST' }),
     );
-    expect((headers as Record<string, string>)['X-Api-Key']).toBe('volc_test');
-    expect((headers as Record<string, string>)['X-Api-Resource-Id']).toBe('volc.bigasr.auc_turbo');
-    expect(JSON.parse(String(body)).audio.data).toBe('wav-base64');
+    expect((headers as Record<string, string>).Authorization).toBe('Bearer volc_test');
+    const payload = JSON.parse(String(body));
+    expect(payload.endpoint).toBe('https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash');
+    expect(payload.resourceId).toBe('volc.bigasr.auc_turbo');
+    expect(payload.audio.data).toBe('wav-base64');
   });
 });
 
