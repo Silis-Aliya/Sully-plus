@@ -1280,6 +1280,7 @@ const Chat: React.FC = () => {
                 cloudShouldReview: cloudReview.shouldReview,
                 hasVoicePrintId: !!apiConfig.ears?.tencentVoicePrintId,
                 baselineProgress: lite.baselineProgress,
+                allowBeforeBaseline: true,
             });
             const hasXfyunAppId = !!apiConfig.ears?.xfyunAppId;
             const mayNeedXfyun = hasXfyunAppId && durationSec <= 10;

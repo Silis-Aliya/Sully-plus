@@ -54,8 +54,10 @@ export function shouldRunTencentSpeakerVerification(options: {
   hasVoicePrintId: boolean;
   baselineProgress: number;
   baselineTarget?: number;
+  allowBeforeBaseline?: boolean;
 }): boolean {
   if (!options.hasVoicePrintId) return false;
+  if (options.allowBeforeBaseline) return true;
   if (!options.cloudShouldReview) return false;
   const target = options.baselineTarget ?? VOICE_CLOUD_BASELINE_TARGET;
   return (options.baselineProgress || 0) >= target;
