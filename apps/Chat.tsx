@@ -1309,6 +1309,23 @@ const Chat: React.FC = () => {
                             addToast(`讯飞声音画像失败，已继续发送：${cloudErr?.message || '未知错误'}`, 'error');
                         }
                     }
+                    if (speakerVerification) {
+                        const statusText = speakerVerification.status === 'matched'
+                            ? '像机主本人'
+                            : speakerVerification.status === 'unmatched'
+                                ? '不像机主本人'
+                                : '无法确定';
+                        const scoreText = typeof speakerVerification.score === 'number'
+                            ? ` · ${Math.round(speakerVerification.score * 10) / 10}`
+                            : '';
+                        addToast(`腾讯声纹：${statusText}${scoreText}`, speakerVerification.status === 'unmatched' ? 'error' : 'success');
+                    }
+                    if (voiceProfile) {
+                        const genderText = voiceProfile.gender === 'female' ? '偏女声' : voiceProfile.gender === 'male' ? '偏男声' : '';
+                        const ageText = voiceProfile.age === 'child' ? '少年/儿童听感' : voiceProfile.age === 'middle' ? '中青年听感' : voiceProfile.age === 'old' ? '年长听感' : '';
+                        const profileText = [genderText, ageText].filter(Boolean).join('，') || '已返回画像';
+                        addToast(`讯飞画像：${profileText}`, 'info');
+                    }
                 } catch (cloudErr: any) {
                     console.warn('[ears-lite] cloud voice analysis failed:', cloudErr);
                     addToast(`云端声音识别失败，已继续发送：${cloudErr?.message || '未知错误'}`, 'error');
