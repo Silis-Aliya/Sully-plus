@@ -10,32 +10,35 @@ describe('shouldRunTencentSpeakerVerification', () => {
     })).toBe(true);
   });
 
-  it('can run before baseline is ready when a verified cloud voice print exists', () => {
+  it('can run before baseline when local confidence is low', () => {
     expect(shouldRunTencentSpeakerVerification({
-      cloudShouldReview: true,
+      cloudShouldReview: false,
       hasVoicePrintId: true,
       baselineProgress: 7,
-      allowBeforeBaseline: true,
+      confidence: 0.42,
     })).toBe(true);
   });
 
-  it('skips before baseline by default, without a voice print, or without a local review trigger', () => {
+  it('skips before baseline when confidence is okay, without a voice print, or without a local review trigger', () => {
     expect(shouldRunTencentSpeakerVerification({
       cloudShouldReview: true,
       hasVoicePrintId: true,
       baselineProgress: 7,
+      confidence: 0.72,
     })).toBe(false);
 
     expect(shouldRunTencentSpeakerVerification({
       cloudShouldReview: true,
       hasVoicePrintId: false,
       baselineProgress: 8,
+      confidence: 0.2,
     })).toBe(false);
 
     expect(shouldRunTencentSpeakerVerification({
       cloudShouldReview: false,
       hasVoicePrintId: true,
       baselineProgress: 8,
+      confidence: 0.72,
     })).toBe(false);
   });
 });

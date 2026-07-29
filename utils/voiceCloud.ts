@@ -48,16 +48,20 @@ export interface VoiceCloudReviewDecision {
 
 export const XFYUN_PROFILE_MAX_DURATION_SEC = 10;
 export const VOICE_CLOUD_BASELINE_TARGET = 8;
+export const VOICE_CLOUD_LOW_CONFIDENCE_THRESHOLD = 0.55;
 
 export function shouldRunTencentSpeakerVerification(options: {
   cloudShouldReview: boolean;
   hasVoicePrintId: boolean;
   baselineProgress: number;
   baselineTarget?: number;
-  allowBeforeBaseline?: boolean;
+  confidence?: number;
+  lowConfidenceThreshold?: number;
 }): boolean {
   if (!options.hasVoicePrintId) return false;
-  if (options.allowBeforeBaseline) return true;
+  const confidence = typeof options.confidence === 'number' ? options.confidence : null;
+  const lowConfidenceThreshold = options.lowConfidenceThreshold ?? VOICE_CLOUD_LOW_CONFIDENCE_THRESHOLD;
+  if (confidence != null && Number.isFinite(confidence) && confidence < lowConfidenceThreshold) return true;
   if (!options.cloudShouldReview) return false;
   const target = options.baselineTarget ?? VOICE_CLOUD_BASELINE_TARGET;
   return (options.baselineProgress || 0) >= target;
