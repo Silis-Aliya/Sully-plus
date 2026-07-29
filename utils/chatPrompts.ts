@@ -18,6 +18,7 @@ import { buildLifeRecordInjection } from './lifeRecords';
 import { getLocalDateKey } from './localDate';
 import { getCharNameById } from './charNameRegistry';
 import { getDailyScheduleForChar } from './dailySchedule';
+import { formatRelativeAge } from './groupChat/relativeTime';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -431,7 +432,8 @@ export const ChatPrompts = {
                         : m.charId === char.id
                             ? `你（${char.name}）`
                             : getCharNameById(m.charId) || '群友';
-                    return `[${dateStr}] [Group: ${m.groupName}] ${speaker}: ${summarizeGroupMsgContent(m)}`;
+                    const relativeAge = formatRelativeAge(m.timestamp);
+                    return `[${dateStr} · ${relativeAge}] [Group: ${m.groupName}] ${speaker}: ${summarizeGroupMsgContent(m)}`;
                 }).join('\n');
                 return `\n### 你亲历的近期群聊\n以下是你实际参与的群聊记录。发言人会标明为“用户名”“你（角色名）”或真实群成员名；这些只是背景，不要把群聊消息误当成当前用户刚刚对你说的话。\n\n${groupLogStr}\n`;
             } catch (e) {

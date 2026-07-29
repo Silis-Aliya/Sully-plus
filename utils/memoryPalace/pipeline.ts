@@ -75,6 +75,11 @@ import { isMessageSemanticallyRelevant, formatMessageForPrompt } from '../messag
 import { sanitizeQuerySourceMessages } from './querySanitizer';
 import { getLocalDateKey } from '../localDate';
 import { extractExternalMemoryText } from './externalMemory';
+import {
+    getLocalMemoryPalaceHighWaterMark,
+    getReliableMemoryPalaceHighWaterMark,
+    setReliableMemoryPalaceHighWaterMark,
+} from './highWaterMark';
 
 const isMemoryPipelineMessage = (msg: Message): boolean => {
     if (msg.metadata?.hidden || msg.metadata?.noMemory) return false;
@@ -1125,22 +1130,10 @@ export async function ingestDiaryToPalace(
 
 // ─── 高水位标记：记录每个角色处理到的最后消息 ID ────────
 
-const LAST_MSG_KEY = (charId: string) => `mp_lastMsgId_${charId}`;
-
-function getLastProcessedId(charId: string): number {
-    try {
-        const val = parseInt(localStorage.getItem(LAST_MSG_KEY(charId)) || '0', 10);
-        return isNaN(val) || val < 0 ? 0 : val;
-    } catch { return 0; }
-}
-
-function setLastProcessedId(charId: string, msgId: number): void {
-    try { localStorage.setItem(LAST_MSG_KEY(charId), String(msgId)); } catch {}
-}
 
 /** 获取当前高水位标记（供外部上下文过滤使用） */
 export function getMemoryPalaceHighWaterMark(charId: string): number {
-    return getLastProcessedId(charId);
+    return getLocalMemoryPalaceHighWaterMark(charId);
 }
 
 // ─── 缓冲区配置 ─────────────────────────────────────
@@ -1167,7 +1160,8 @@ const PROCESS_RATIO = 0.85;
 export async function getMemoryPalaceUnprocessedBufferCount(charId: string): Promise<number> {
     const allMessages = await DB.getMessagesByCharId(charId, true);
     const semantic = allMessages.filter(isMemoryPipelineMessage);
-    return countUnprocessedBufferMessages(semantic, getLastProcessedId(charId), HOT_ZONE_SIZE);
+    const highWaterMark = await getReliableMemoryPalaceHighWaterMark(charId);
+    return countUnprocessedBufferMessages(semantic, highWaterMark, HOT_ZONE_SIZE);
 }
 
 /** 并发锁：防止多次 AI 回复同时触发 processNewMessages 产生竞态 */
@@ -1573,7 +1567,7 @@ export async function processNewMessages(
         const hotZoneStartId = textMessages[hotZoneStartIdx].id;
 
         // 3. 缓冲区 = 高水位标记之后、热区之前
-        const lastProcessedId = getLastProcessedId(charId);
+        const lastProcessedId = await getReliableMemoryPalaceHighWaterMark(charId);
         const buffer = textMessages.filter(m => m.id > lastProcessedId && m.id < hotZoneStartId);
 
         const minThreshold = force ? 10 : BUFFER_THRESHOLD;
@@ -1613,7 +1607,7 @@ export async function processNewMessages(
             return { stored: 0, skipped: core.skipped, memories: [], batches: core.batches };
         }
         const newHighWaterMark = toProcess[toProcess.length - 1].id;
-        setLastProcessedId(charId, newHighWaterMark);
+        await setReliableMemoryPalaceHighWaterMark(charId, newHighWaterMark);
         console.log(`✅ [Pipeline] 缓冲区处理完成：${core.stored} 条记忆, hwm ${lastProcessedId} → ${newHighWaterMark}`);
         onProgress?.(`记忆整理完成！新增 ${core.stored} 条记忆`);
 
