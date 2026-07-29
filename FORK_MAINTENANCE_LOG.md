@@ -14,16 +14,16 @@ Important rules:
 - When merging upstream, do not overwrite my OSContext / chat prompt / post-processing changes blindly.
 - If editing prompts, show me the full prompt first and wait for confirmation.
 - After changes, run pnpm build.
-- Deployment default: after fetching/checking upstream and confirming there are no new upstream commits to merge, a user request to `push`, deploy, or update Vercel means push the verified current release directly to `Silis-Aliya/sully-change` `master` so Vercel production deploys. Do not stop at a feature-branch push. If upstream has advanced, conflicts exist, or verification failed, stop and report before touching production `master`.
+- Deployment default: after fetching/checking upstream and confirming there are no new upstream commits to merge, a user request to `push`, deploy, or update Vercel means push the verified current release directly to private `origin` (`Silis-Aliya/Sully-plus.git`) `master`. Do not use `Silis-Aliya/sully-change`, `vercel-target`, or `public-fork` for normal work. If upstream has advanced, conflicts exist, or verification failed, stop and report before touching private production `master`.
 - Keep this file updated with what changed, risk points, and follow-up checks.
 
 Current known baseline:
 - upstream/master checked through 7602a5b; the current fork is 64 commits ahead and 0 commits behind.
 - Current fork release branch is `codex/merge-upstream-20260721`.
-- Current verified release commit is `4949d6b`; `origin/codex/merge-upstream-20260721` and `Silis-Aliya/sully-change` `master` point to it.
+- Historical verified release commit was `4949d6b`; older notes may mention `Silis-Aliya/sully-change`, but that repo is no longer an active target. The active private deployment target is `origin/master` for `Silis-Aliya/Sully-plus.git`.
 - Last verified full suite passed at 147 files / 1284 tests.
 - Last verified production build passed after the together-listening, migration, PersonaSim parsing, clock/music rendering, and OS context isolation changes.
-- The feature branch and Vercel production repository `Silis-Aliya/sully-change` `master` must point to the same verified release commit.
+- The active feature branch and private `origin/master` (`Silis-Aliya/Sully-plus.git`) should point to the same verified release commit when production is updated.
 - Vercel should auto-deploy from `master` after the push; verify the deployment dashboard before treating production as updated.
 - Pre-context-split recovery tag: `backup/pre-context-split` at `e968fc3`. This tag includes the earlier fork features but predates the 2026-07-26 OS context split.
 ```
@@ -85,8 +85,9 @@ This section supersedes the stale repository/baseline bullets inside the copied 
   - Public fork. GitHub currently reports this repository moved to `https://github.com/Silis-Aliya/sully-change.git`; pushes to `public-fork` are accepted but may redirect.
   - Public code must not expose the owner's private Worker URL.
   - Public default proxy worker must remain `https://sullymeow.ccwu.cc` or another explicit public/placeholder address.
-- `vercel-target` = `https://github.com/Silis-Aliya/sully-change.git`
-  - Vercel production target. Treat as production, not a scratch remote.
+- `vercel-target` / `Silis-Aliya/sully-change`
+  - Deprecated historical deployment repo. Do not push here for normal work.
+  - The active private repo and expected Vercel source is `origin` / `Silis-Aliya/Sully-plus.git`.
 
 ### Baseline Heads Before This Maintenance Note
 
@@ -117,8 +118,8 @@ This section supersedes the stale repository/baseline bullets inside the copied 
   - Run `pnpm build`.
   - Push with `git push public-fork HEAD:master`.
 - Vercel production update:
-  - Only after the user explicitly wants production/Vercel updated.
-  - Use the verified target commit and push `git push vercel-target HEAD:master`.
+  - The owner's current Vercel production source is private `Sully-plus`, so a normal production/Vercel update uses `git push origin HEAD:master`.
+  - Do not push `vercel-target`/`sully-change` for deployment.
   - Verify deployment separately before calling it live.
 
 ### Upstream Merge Check On 2026-07-27
@@ -156,7 +157,7 @@ This section supersedes the stale repository/baseline bullets inside the copied 
   - `pnpm build`
   - `pnpm vitest run utils/earsLite.test.ts utils/musicProgressVisibility.test.ts utils/musicSettingsNavigation.test.ts utils/musicRuntimeBackup.test.ts utils/applyAssistantPostProcessing.test.ts utils/datePromptsTimezone.test.ts utils/scheduleTimezone.e2e.test.ts utils/wallClockToTimestamp.test.ts utils/realtimeContext.specialDates.test.ts utils/scheduleTime.test.ts utils/timezone.test.ts`
   - `pnpm vitest run utils/xhsMcpClient.test.ts utils/xhsShareLink.test.ts`
-- Before publishing to Vercel, merge `vercel-target/master` into this branch so the deployment repository's public/default-worker commits are preserved, then push with `git push vercel-target HEAD:master`.
+- Historical note: this release originally referenced `vercel-target/master`. Current private workflow supersedes it: normal Vercel publishing should push the verified Plus commit to `origin/master`, not `vercel-target`, unless the user explicitly says otherwise.
 
 ## 2026-07-26 Verified Production Release And Recovery Point
 
