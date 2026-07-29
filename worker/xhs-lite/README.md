@@ -1,5 +1,9 @@
 # XHS Lite — 小红书 Lite 后端（已并入 worker/index.js）
 
+> Private Plus note (2026-07-29): in `Silis-Aliya/Sully-plus`, the active private main Worker is
+> `https://sullyos-main-proxy.sully-aliya.workers.dev`. Later `sullymeow.ccwu.cc` mentions in this
+> file are historical/public-snapshot examples, not the current private deployment target.
+
 让 SullyOS 角色**无浏览器、无隧道、无 Python、无扫码**地浏览 / 搜索 / 看详情 /
 点赞 / 收藏 / 评论 / 发帖（带图），用户**只需粘贴一次 cookie**。
 

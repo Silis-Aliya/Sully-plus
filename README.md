@@ -167,9 +167,10 @@ pnpm build
 
 然后部署 `dist/`。
 
-如果使用 Vercel，push 到绑定分支后应自动部署。若线上没有更新，优先检查：
+如果使用 Vercel，push 到绑定分支后应自动部署。当前 owner 的私有部署约定是绑定 `Silis-Aliya/Sully-plus` 的 `master`；不要把 `Silis-Aliya/sully-change` 当作当前部署目标。若线上没有更新，优先检查：
 
 - 当前改动是否已经 commit 并 push 到部署分支。
+- Vercel Project → Settings → Git 里绑定的仓库是否是 `Silis-Aliya/Sully-plus`。
 - Vercel 是否完成了最新一次部署。
 - 浏览器 / PWA / Service Worker 是否仍在缓存旧资源。
 

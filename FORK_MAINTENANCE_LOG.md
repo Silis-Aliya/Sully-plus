@@ -161,11 +161,11 @@ This section supersedes the stale repository/baseline bullets inside the copied 
 
 ## 2026-07-26 Verified Production Release And Recovery Point
 
-- Published verified release `4949d6b` to both `origin/codex/merge-upstream-20260721` and `Silis-Aliya/sully-change` `master`.
-- Confirmed the production URL `https://sully-change.vercel.app` returned HTTP 200 after the `master` push.
-- Added annotated recovery tag `backup/pre-context-split` at `e968fc3` and pushed it to `Silis-Aliya/sully-change`.
+- Historical record: release `4949d6b` was published at that time to both `origin/codex/merge-upstream-20260721` and `Silis-Aliya/sully-change` `master`.
+- Historical record: the old production URL `https://sully-change.vercel.app` returned HTTP 200 after that `master` push.
+- Historical record: annotated recovery tag `backup/pre-context-split` was added at `e968fc3` and pushed to `Silis-Aliya/sully-change`.
 - The recovery tag is not the pure upstream version. It preserves the fork features present at that point, including the together-listening work, while providing a known state before the OS context performance split.
-- Do not publish `upstream/master` directly to Vercel. Merge upstream into `codex/merge-upstream-20260721`, preserve fork behavior, run the full suite/build, then publish the verified merge result with `git push vercel-target HEAD:master`.
+- Historical old Vercel flow: this note originally published through `vercel-target`. Current workflow supersedes it; do not use `vercel-target`/`sully-change`. Publish verified Plus releases with `git push origin HEAD:master`.
 - If a domain-context regression is suspected, first switch only the affected component back to the retained aggregate `useOS()` compatibility hook. Do not roll back unrelated fork features or user data.
 
 ### Features Included In `4949d6b`
@@ -273,7 +273,7 @@ This section supersedes the stale repository/baseline bullets inside the copied 
 
 - Rechecked `upstream/master`; no newer upstream commit was present beyond 3255ee7, so no merge was performed.
 - Continued development on `codex/merge-upstream-20260721`.
-- Pushed the fork to GitHub and updated the Vercel production repository `Silis-Aliya/sully-change` on `master`.
+- Historical old Vercel flow: this entry updated `Silis-Aliya/sully-change` on `master`. That repo is no longer the normal deployment target; use private `Silis-Aliya/Sully-plus` instead.
 - Current documented release head: ef24df1 (`show together listening exits on the actor side`).
 
 ### Music Sharing
