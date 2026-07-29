@@ -32,6 +32,44 @@ Current known baseline:
 
 This section supersedes the stale repository/baseline bullets inside the copied Next-Window Prompt above. Do not edit that prompt block without first showing the full revised prompt to the user for confirmation.
 
+## 2026-07-29 Upstream Refresh to fc226b7 And Public Repo Rule
+
+- Fetched `upstream/master`; it advanced from `9753431` to `fc226b7`.
+- Merged upstream transfer-format hardening, chat avatar-above-group layout, Check Phone/PersonaSim life-log management, and instant-push classifier updates into `codex/merge-upstream-plus-maintenance`.
+- Merge commit: `0614261` (`Merge remote-tracking branch 'upstream/master' into codex/merge-upstream-plus-maintenance`).
+- Resolved conflicts in:
+  - `components/chat/MessageItem.tsx`
+  - `public/instant-worker.deno.bundle.js`
+  - `utils/chatParser.ts`
+  - `utils/chatPrompts.ts`
+  - `utils/sanitize.ts`
+  - `worker/instant-push/worker.bundle.js`
+  - `worker/instant-push/worker.deno.bundle.js`
+- Kept Plus fork behavior while resolving:
+  - music share / together-listening module-card ownership and avatar rules,
+  - fork music action helpers in `chatParser`,
+  - new upstream `transferFormat` parser as the single transfer command source,
+  - new sanitize rules for `[[记录:...]]` plus existing music wake/share/together tags.
+- Verification passed:
+  - `pnpm vitest run utils/transferFormat.test.ts utils/chatParser.transfer.test.ts utils/sanitize.test.ts utils/chatFineTuneCss.test.ts worker/instant-push/src/classifier.test.ts`
+  - `pnpm build`
+- The memory/VPS work-in-progress was intentionally not committed:
+  - `apps/MemoryPalaceApp.tsx`
+  - `utils/memoryPalace/db.ts`
+  - `utils/memoryPalace/export.ts`
+  - `utils/memoryPalace/index.ts`
+  - `utils/memoryPalace/ombreBridge.ts`
+  - `docs/ombre-memory-palace-integration.md`
+  - `VPS_README.md`
+- Pushed the private maintenance branch to `origin/codex/merge-upstream-plus-maintenance`.
+
+### Public/Vercel Repository Update
+
+- `Silis-Aliya/sully-change` / `vercel-target` has been deleted and is no longer a valid remote or deployment target.
+- The only public GitHub repo path is now `public-fork` = `https://github.com/Silis-Aliya/SullyOS.git`.
+- If Vercel is connected to the public repo, update it by pushing a public-safe snapshot to `public-fork master`.
+- Never push the private Plus line directly to `public-fork`: private history contains private Worker defaults. Public updates must be prepared from `public-fork/master` and must keep `utils/proxyWorker.ts` defaulting to `https://sullymeow.ccwu.cc`.
+
 ## 2026-07-28 Upstream Refresh to 9753431
 
 - Fetched `upstream/master`; it advanced from `835a4d7` to `9753431`.
@@ -82,12 +120,13 @@ This section supersedes the stale repository/baseline bullets inside the copied 
   - Contains the voice/Ears Lite work and the owner's private default Worker address unless intentionally changed.
   - Use this as the normal development target for private features and Vercel/private deployment work.
 - `public-fork` = `https://github.com/Silis-Aliya/SullyOS.git`
-  - Public fork. GitHub currently reports this repository moved to `https://github.com/Silis-Aliya/sully-change.git`; pushes to `public-fork` are accepted but may redirect.
+  - Public fork and the only public GitHub repository path after the old `sully-change` repository was deleted.
   - Public code must not expose the owner's private Worker URL.
   - Public default proxy worker must remain `https://sullymeow.ccwu.cc` or another explicit public/placeholder address.
 - `vercel-target` / `Silis-Aliya/sully-change`
-  - Deprecated historical deployment repo. Do not push here for normal work.
-  - The active private repo and expected Vercel source is `origin` / `Silis-Aliya/Sully-plus.git`.
+  - Deleted/deprecated historical deployment repo. Do not push here; no normal workflow should depend on it.
+  - If Vercel is attached to public code, use `public-fork` with a public-safe snapshot.
+  - If Vercel is attached to private Plus, use `origin/master` only after explicit production approval.
 
 ### Baseline Heads Before This Maintenance Note
 
@@ -112,14 +151,17 @@ This section supersedes the stale repository/baseline bullets inside the copied 
   - Implement, run focused tests plus `pnpm build`.
   - Push with `git push origin HEAD:master`.
 - Public fork update:
-  - Start from the desired private release commit.
+  - Start from `public-fork/master`; do not push the private Plus history directly to public.
+  - Port only the desired public-safe changes.
   - Ensure `utils/proxyWorker.ts` uses the public default Worker.
   - Search for private Worker URL leaks.
   - Run `pnpm build`.
   - Push with `git push public-fork HEAD:master`.
 - Vercel production update:
-  - The owner's current Vercel production source is private `Sully-plus`, so a normal production/Vercel update uses `git push origin HEAD:master`.
-  - Do not push `vercel-target`/`sully-change` for deployment.
+  - First identify whether Vercel is attached to private `Sully-plus` or public `SullyOS`.
+  - Private source: use `git push origin HEAD:master` only after explicit production approval.
+  - Public source: use the public fork update flow above.
+  - Do not push `vercel-target`/`sully-change`; that repo is deleted/deprecated.
   - Verify deployment separately before calling it live.
 
 ### Upstream Merge Check On 2026-07-27
