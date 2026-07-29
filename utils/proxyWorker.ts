@@ -18,7 +18,7 @@
  * 独立的 worker 地址输入框，走各自的持久化，不受这里影响。
  */
 
-export const DEFAULT_PROXY_WORKER = 'https://sullymeow.ccwu.cc';
+export const DEFAULT_PROXY_WORKER = 'https://sullyos-main-proxy.sully-aliya.workers.dev';
 
 const LS_KEY = 'sully_proxy_worker_url_v1';
 

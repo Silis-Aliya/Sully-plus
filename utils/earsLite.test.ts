@@ -89,7 +89,7 @@ describe('transcribeWithVolcengine', () => {
 
     expect(text).toBe('你好');
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://sullymeow.ccwu.cc/volcengine/asr',
+      'https://sullyos-main-proxy.sully-aliya.workers.dev/volcengine/asr',
       expect.objectContaining({ method: 'POST' }),
     );
     expect((headers as Record<string, string>).Authorization).toBe('Bearer volc_test');
