@@ -69,9 +69,10 @@ export function shouldRunXfyunVoiceProfile(options: {
   cloudShouldReview: boolean;
   speakerStatus?: string;
   hasAppId: boolean;
+  allowWorkerEnvAppId?: boolean;
   durationSec: number;
 }): boolean {
-  if (!options.hasAppId) return false;
+  if (!options.hasAppId && !options.allowWorkerEnvAppId) return false;
   if (options.durationSec > XFYUN_PROFILE_MAX_DURATION_SEC) return false;
   return options.cloudShouldReview || options.speakerStatus === 'unmatched';
 }

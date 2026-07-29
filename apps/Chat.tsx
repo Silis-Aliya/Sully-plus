@@ -1299,6 +1299,7 @@ const Chat: React.FC = () => {
                         cloudShouldReview: cloudReview.shouldReview,
                         speakerStatus: speakerVerification?.status,
                         hasAppId: hasXfyunAppId,
+                        allowWorkerEnvAppId: speakerVerification?.status === 'unmatched',
                         durationSec,
                     });
                     if (needsXfyun) {
@@ -1308,6 +1309,8 @@ const Chat: React.FC = () => {
                             console.warn('[ears-lite] Xfyun voice profile failed:', cloudErr);
                             addToast(`讯飞声音画像失败，已继续发送：${cloudErr?.message || '未知错误'}`, 'error');
                         }
+                    } else if (speakerVerification?.status === 'unmatched' && durationSec > 10) {
+                        addToast(`讯飞画像跳过：语音 ${durationSec.toFixed(1)} 秒，超过 10 秒`, 'info');
                     }
                     if (speakerVerification) {
                         const statusText = speakerVerification.status === 'matched'

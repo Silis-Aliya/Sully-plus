@@ -71,6 +71,16 @@ describe('shouldRunXfyunVoiceProfile', () => {
     })).toBe(true);
   });
 
+  it('can rely on Worker env AppId after Tencent says unmatched', () => {
+    expect(shouldRunXfyunVoiceProfile({
+      cloudShouldReview: false,
+      speakerStatus: 'unmatched',
+      hasAppId: false,
+      allowWorkerEnvAppId: true,
+      durationSec: 6,
+    })).toBe(true);
+  });
+
   it('skips when Xfyun is not configured or the sample is too long', () => {
     expect(shouldRunXfyunVoiceProfile({
       cloudShouldReview: true,
