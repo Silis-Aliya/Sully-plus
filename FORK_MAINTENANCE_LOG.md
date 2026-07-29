@@ -65,8 +65,9 @@ This section supersedes the stale repository/baseline bullets inside the copied 
 
 ### Public/Vercel Repository Update
 
-- `Silis-Aliya/sully-change` / `vercel-target` has been deleted and is no longer a valid remote or deployment target.
-- The only public GitHub repo path is now `public-fork` = `https://github.com/Silis-Aliya/SullyOS.git`.
+- The old dedicated `vercel-target` remote is gone from local git and must not be used.
+- User reports the old Vercel/`sully-change` setup was deleted/retired, but GitHub still returns a repository-moved redirect from `public-fork` pushes to `https://github.com/Silis-Aliya/sully-change.git`; treat `public-fork` as the local public remote name and verify the actual GitHub/Vercel dashboard before assuming the deployed source.
+- The intended public workflow path is `public-fork` = `https://github.com/Silis-Aliya/SullyOS.git`.
 - If Vercel is connected to the public repo, update it by pushing a public-safe snapshot to `public-fork master`.
 - Never push the private Plus line directly to `public-fork`: private history contains private Worker defaults. Public updates must be prepared from `public-fork/master` and must keep `utils/proxyWorker.ts` defaulting to `https://sullymeow.ccwu.cc`.
 
@@ -124,7 +125,8 @@ This section supersedes the stale repository/baseline bullets inside the copied 
   - Public code must not expose the owner's private Worker URL.
   - Public default proxy worker must remain `https://sullymeow.ccwu.cc` or another explicit public/placeholder address.
 - `vercel-target` / `Silis-Aliya/sully-change`
-  - Deleted/deprecated historical deployment repo. Do not push here; no normal workflow should depend on it.
+  - Deleted/retired local deployment target. Do not add or push a `vercel-target` remote; no normal workflow should depend on it.
+  - GitHub may still report a moved-repository redirect from `public-fork` to `sully-change`; verify the dashboard before treating that as an active Vercel source.
   - If Vercel is attached to public code, use `public-fork` with a public-safe snapshot.
   - If Vercel is attached to private Plus, use `origin/master` only after explicit production approval.
 
