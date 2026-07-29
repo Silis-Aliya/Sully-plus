@@ -70,6 +70,11 @@ describe('proxyWorker 中心配置', () => {
     localStorage.setItem(LS_KEY, 'https://sullymeow.ccwu213.cc');
     expect(getProxyWorkerUrl()).toBe(DEFAULT_PROXY_WORKER);
   });
+
+  it('old public sullymeow.ccwu.cc is migrated back to the private default', () => {
+    localStorage.setItem(LS_KEY, 'https://sullymeow.ccwu.cc');
+    expect(getProxyWorkerUrl()).toBe(DEFAULT_PROXY_WORKER);
+  });
 });
 
 // 已死的历史公共实例域名必须被迁到当前 worker，否则独立持久化的存量配置
@@ -82,6 +87,11 @@ describe('rewriteStaleWorkerUrl', () => {
   it('迁移已过期的 sullymeow.ccwu213.cc，保留路径', () => {
     expect(rewriteStaleWorkerUrl('https://sullymeow.ccwu213.cc')).toBe(DEFAULT_PROXY_WORKER);
     expect(rewriteStaleWorkerUrl('https://sullymeow.ccwu213.cc/api')).toBe(`${DEFAULT_PROXY_WORKER}/api`);
+  });
+
+  it('migrates old public sullymeow.ccwu.cc URLs and keeps the path', () => {
+    expect(rewriteStaleWorkerUrl('https://sullymeow.ccwu.cc')).toBe(DEFAULT_PROXY_WORKER);
+    expect(rewriteStaleWorkerUrl('https://sullymeow.ccwu.cc/api')).toBe(`${DEFAULT_PROXY_WORKER}/api`);
   });
 
   it('迁移最早的 workers.dev 默认域名', () => {

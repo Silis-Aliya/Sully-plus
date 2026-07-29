@@ -27,7 +27,11 @@ const LS_KEY = 'sully_proxy_worker_url_v1';
 // MusicContext 的迁移逻辑一致：都指向同一个 worker，行为相同）。
 //   - sully-n.qegj567.workers.dev：最早的 workers.dev 默认域名（国内超时）
 //   - sullymeow.ccwu213.cc：旧公共自定义域名，注册已过期、DNS 无法解析（2026-07 起）
-const STALE_HOSTS = [/sully-n\.qegj567\.workers\.dev/i, /sullymeow\.ccwu213\.cc/i];
+const STALE_HOSTS = [
+  /sully-n\.qegj567\.workers\.dev/i,
+  /sullymeow\.ccwu213\.cc/i,
+  /sullymeow\.ccwu\.cc/i,
+];
 
 const normalize = (url: string): string => url.trim().replace(/\/+$/, '');
 
