@@ -2,11 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { shouldRunTencentSpeakerVerification, shouldRunXfyunVoiceProfile } from './voiceCloud';
 
 describe('shouldRunTencentSpeakerVerification', () => {
-  it('runs when Ears Lite requests cloud review after the baseline is ready', () => {
+  it('does not run from local baseline review alone', () => {
     expect(shouldRunTencentSpeakerVerification({
       cloudShouldReview: true,
       hasVoicePrintId: true,
       baselineProgress: 8,
+      confidence: 0.72,
+    })).toBe(false);
+  });
+
+  it('runs when local confidence is low', () => {
+    expect(shouldRunTencentSpeakerVerification({
+      cloudShouldReview: false,
+      hasVoicePrintId: true,
+      baselineProgress: 8,
+      confidence: 0.42,
     })).toBe(true);
   });
 

@@ -62,9 +62,7 @@ export function shouldRunTencentSpeakerVerification(options: {
   const confidence = typeof options.confidence === 'number' ? options.confidence : null;
   const lowConfidenceThreshold = options.lowConfidenceThreshold ?? VOICE_CLOUD_LOW_CONFIDENCE_THRESHOLD;
   if (confidence != null && Number.isFinite(confidence) && confidence < lowConfidenceThreshold) return true;
-  if (!options.cloudShouldReview) return false;
-  const target = options.baselineTarget ?? VOICE_CLOUD_BASELINE_TARGET;
-  return (options.baselineProgress || 0) >= target;
+  return false;
 }
 
 export function shouldRunXfyunVoiceProfile(options: {
