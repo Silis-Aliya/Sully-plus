@@ -10,7 +10,8 @@ Copy this block into a new Codex window when continuing maintenance:
 You are maintaining my SullyOS fork at D:\SullyOS-fork.
 
 Important rules:
-- Preserve my custom features first: music together, XHS Lite simple mode, XHS phone channel / Pixel MCP, WebDAV QuickSync, GitHub backup proxy, mobile restore batching, device detection, memory palace vector anomaly tools.
+- Preserve my custom features first: music together, XHS Lite simple mode, XHS phone channel / Pixel MCP, WebDAV QuickSync, GitHub backup proxy, mobile restore batching, device detection, memory palace vector anomaly tools, and the local Memory Hub / Ombre bridge WIP.
+- Memory Hub / Ombre bridge and VPS notes are local WIP unless I explicitly approve publishing them. Do not stage, commit, push, or merge them into production by accident. If later work changes this status, remind me to update `FORK_MAINTENANCE_LOG.md`.
 - When merging upstream, do not overwrite my OSContext / chat prompt / post-processing changes blindly.
 - If editing prompts, show me the full prompt first and wait for confirmation.
 - After changes, run pnpm build.
@@ -18,19 +19,73 @@ Important rules:
 - Keep this file updated with what changed, risk points, and follow-up checks.
 
 Current known baseline:
-- upstream/master checked through 7602a5b; the current fork is 64 commits ahead and 0 commits behind.
-- Current fork release branch is `codex/merge-upstream-20260721`.
-- Historical verified release commit was `4949d6b`; older notes may mention `Silis-Aliya/sully-change`, but that repo is no longer an active target. The active private deployment target is `origin/master` for `Silis-Aliya/Sully-plus.git`.
-- Last verified full suite passed at 147 files / 1284 tests.
-- Last verified production build passed after the together-listening, migration, PersonaSim parsing, clock/music rendering, and OS context isolation changes.
-- The active feature branch and private `origin/master` (`Silis-Aliya/Sully-plus.git`) should point to the same verified release commit when production is updated.
+- upstream/master is merged through `1d8e42b`.
+- Current fork release branch is `codex/merge-upstream-plus-maintenance`.
+- Current verified private Plus release commit is `6f85b8f`, pushed to both `origin/codex/merge-upstream-plus-maintenance` and `origin/master`.
+- The active private deployment target is `origin/master` for `Silis-Aliya/Sully-plus.git`; older notes may mention `Silis-Aliya/sully-change`, `vercel-target`, or `public-fork`, but those are not the normal private deployment target.
+- Last verified production build passed with `pnpm build` after the 2026-07-29 upstream merge through `1d8e42b`.
 - Vercel should auto-deploy from `master` after the push; verify the deployment dashboard before treating production as updated.
+- Local uncommitted WIP currently includes Memory Hub / Ombre bridge files and `VPS_README.md`; keep them out of public/production pushes unless I explicitly say otherwise.
 - Pre-context-split recovery tag: `backup/pre-context-split` at `e968fc3`. This tag includes the earlier fork features but predates the 2026-07-26 OS context split.
 ```
 
 ## 2026-07-27 Repository Map And Push Rules
 
 This section supersedes the stale repository/baseline bullets inside the copied Next-Window Prompt above. Do not edit that prompt block without first showing the full revised prompt to the user for confirmation.
+
+Current effective state after the 2026-07-30 upstream refresh:
+
+- Local branch `codex/merge-upstream-plus-maintenance` is at `5902531`.
+- `upstream/master` is merged through `2835b63`.
+- `origin/master` and `origin/codex/merge-upstream-plus-maintenance` still point at the previous published release until explicitly pushed.
+- Private Plus / Vercel publishing should use `origin/master` for `Silis-Aliya/Sully-plus.git`; verify the Vercel dashboard before treating production as updated.
+- Local Memory Hub / Ombre bridge and VPS notes are WIP-only and must stay uncommitted unless the user explicitly approves publishing them.
+
+## 2026-07-30 Upstream Refresh to 2835b63
+
+- Fetched `upstream/master`; it advanced from `1d8e42b` to `2835b63`.
+- Merged upstream schedule-context/private-chat alignment and large backup export stabilization into `codex/merge-upstream-plus-maintenance`.
+- Merge commit: `5902531` (`Merge remote-tracking branch 'upstream/master' into codex/merge-upstream-plus-maintenance`).
+- Upstream highlights:
+  - `b90557b` / PR #462 aligns schedule context with private chat and extracts prompt message cleanup helpers.
+  - `262ee5d` / PR #466 adds low-memory backup export paths, including streaming store reads, prewritten v2 backup shards, and chunked memory-vector backup encoding.
+- Resolved conflict in:
+  - `utils/chatRequestPayload.ts`
+- Kept Plus fork behavior while resolving:
+  - preserved `shouldInjectMusicMigrationEnded`,
+  - preserved Code-surface gating for HTML/thinking/MCP/McD/Luckin blocks,
+  - preserved Plus music snapshot / track-change request payload behavior,
+  - adopted upstream `promptMessageCleanup` extraction.
+- Verification passed:
+  - `pnpm build`
+- Not pushed yet. Push to `origin/codex/merge-upstream-plus-maintenance` and `origin/master` only after user approval.
+- Local Memory Hub / Ombre bridge and VPS WIP remains excluded from the merge commit and must be restored only as worktree WIP unless the user explicitly approves publishing it.
+
+## 2026-07-29 Upstream Refresh to 1d8e42b And Plus Master Push
+
+- Fetched `upstream/master`; it advanced from `fc226b7` to `1d8e42b`.
+- Merged upstream backup/chat feedback fixes, memory-palace high-water-mark recovery, API call log reliability fixes, group relative-time context, phone evidence normalization, and PR labeler test-file exclusion into `codex/merge-upstream-plus-maintenance`.
+- Merge commit: `6f85b8f` (`Merge remote-tracking branch 'upstream/master' into codex/merge-upstream-plus-maintenance`).
+- Resolved conflicts in:
+  - `utils/chatPrompts.ts`
+  - `utils/memoryPalace/pipeline.ts`
+- Kept Plus fork behavior while resolving:
+  - private group-context wording stayed on the Plus wording, but now includes upstream relative age text (`about N days ago` style) so characters do not treat old group chat as current speech.
+  - memory-palace pipeline keeps the Plus `hidden` / `noMemory` message filter while using upstream's reliable high-water-mark storage.
+- Verification passed:
+  - `pnpm build`
+- Pushed the verified clean release to:
+  - `origin/codex/merge-upstream-plus-maintenance`
+  - `origin/master` for Vercel/private Plus deployment.
+- The local Memory Hub / Ombre bridge work remains intentionally uncommitted and was not included in the pushed release:
+  - `apps/MemoryPalaceApp.tsx`
+  - `utils/memoryPalace/db.ts`
+  - `utils/memoryPalace/export.ts`
+  - `utils/memoryPalace/index.ts`
+  - `utils/memoryPalace/ombreBridge.ts`
+  - `docs/ombre-memory-palace-integration.md`
+  - `VPS_README.md`
+- After the push, the local Memory Hub settings panel had its test-read button restored as a worktree-only change; do not stage it into the public/production release unless the user explicitly asks.
 
 ## 2026-07-29 Upstream Refresh to fc226b7 And Public Repo Rule
 
