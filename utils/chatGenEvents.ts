@@ -42,9 +42,29 @@ export interface ChatGenDetail {
 }
 
 export function announceChatGen(event: string, detail: ChatGenDetail): void {
+    if (event === CHAT_GEN_EVENTS.replyStart) {
+        activeReplyChars.set(detail.charId, { charName: detail.charName, startedAt: Date.now() });
+    } else if (event === CHAT_GEN_EVENTS.replyEnd) {
+        activeReplyChars.delete(detail.charId);
+    }
     try {
         window.dispatchEvent(new CustomEvent(event, { detail }));
     } catch { /* SSR / 测试环境无 window */ }
+}
+
+interface ActiveReplyEntry {
+    charName: string;
+    startedAt: number;
+}
+
+const activeReplyChars = new Map<string, ActiveReplyEntry>();
+
+export function isChatReplyGenerating(charId: string | null | undefined): boolean {
+    return !!charId && activeReplyChars.has(charId);
+}
+
+export function getActiveChatReplyCharIds(): string[] {
+    return [...activeReplyChars.keys()];
 }
 
 // ─── 当前聊天视图快照 ───

@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
     announceChatGen,
     CHAT_GEN_EVENTS,
+    getActiveChatReplyCharIds,
     setChatViewSnapshot,
     getChatViewSnapshot,
+    isChatReplyGenerating,
 } from './chatGenEvents';
 
 // node 环境无 window —— 派发函数必须静默降级（生成闭包/评估函数在测试与
@@ -19,6 +21,14 @@ describe('chatGenEvents', () => {
         expect(getChatViewSnapshot()).toEqual({ chatOpen: true, charId: 'c1' });
         setChatViewSnapshot(false, null);
         expect(getChatViewSnapshot()).toEqual({ chatOpen: false, charId: null });
+    });
+
+    it('主回复生成快照随 replyStart / replyEnd 更新', () => {
+        announceChatGen(CHAT_GEN_EVENTS.replyStart, { charId: 'c1', charName: '小角色' });
+        expect(isChatReplyGenerating('c1')).toBe(true);
+        expect(getActiveChatReplyCharIds()).toContain('c1');
+        announceChatGen(CHAT_GEN_EVENTS.replyEnd, { charId: 'c1', charName: '小角色' });
+        expect(isChatReplyGenerating('c1')).toBe(false);
     });
 
     it('事件名稳定（ChatBroadcast / OSContext / useChatAI 三方约定）', () => {

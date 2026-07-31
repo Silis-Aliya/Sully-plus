@@ -53,6 +53,7 @@ import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
 import { collectVoiceBatchSubtitle, isPoisonedVoiceSubtitle } from '../utils/voiceSubtitle';
 import { synthesizeSpeechDetailed, characterHasVoice } from '../utils/ttsRouter';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
+import { CHAT_GEN_EVENTS, isChatReplyGenerating } from '../utils/chatGenEvents';
 import { resolveFishAudioApiKey, stripFishMarkupForDisplay, cleanTextForTtsFish } from '../utils/fishAudioTts';
 import { resolveTtsProvider } from '../utils/ttsProvider';
 import { isInstantConfigReady, loadInstantConfig } from '../utils/instantPushClient';
@@ -96,6 +97,7 @@ const Chat: React.FC = () => {
         memoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters,
     } = useSystemConfig();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
+    const [globalReplyComposing, setGlobalReplyComposing] = useState(() => isChatReplyGenerating(activeCharacterId));
     const localDateKey = useLocalDateKey();
 
     // 记忆宫殿高水位（用于清空聊天时的安全检查）
@@ -148,6 +150,17 @@ const Chat: React.FC = () => {
     const soundSyncRef = useRef<{ charId: string | null; maxId: number | null; lastAt: number | null }>({ charId: null, maxId: null, lastAt: null });
     // 回合去重阈值：气泡间最大间隔 = clamp(字数×50,500,2000)=2s，取 3s 安全合并同一轮，跨轮(LLM 延迟)一般远大于此。
     const SOUND_ROUND_GAP_MS = 3000;
+
+    useEffect(() => {
+        const sync = () => setGlobalReplyComposing(isChatReplyGenerating(activeCharacterId));
+        sync();
+        window.addEventListener(CHAT_GEN_EVENTS.replyStart, sync);
+        window.addEventListener(CHAT_GEN_EVENTS.replyEnd, sync);
+        return () => {
+            window.removeEventListener(CHAT_GEN_EVENTS.replyStart, sync);
+            window.removeEventListener(CHAT_GEN_EVENTS.replyEnd, sync);
+        };
+    }, [activeCharacterId]);
 
     // Reply Logic
     const [replyTarget, setReplyTarget] = useState<Message | null>(null);
@@ -3504,11 +3517,17 @@ const Chat: React.FC = () => {
                         ))}
                     </>
                 )}
-                {(isTyping || recallStatus || searchStatus || diaryStatus || isProactiveComposing) && !selectionMode && (
+                {(isTyping || recallStatus || searchStatus || diaryStatus || isProactiveComposing || globalReplyComposing) && !selectionMode && (
                     <div className="flex items-end gap-3 px-3 mb-6 animate-fade-in">
                         <img src={char.avatar} className={chatPendingAvatarClass} />
                         <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">
-                            {isProactiveComposing && !isTyping && !recallStatus && !searchStatus && !diaryStatus ? (
+                            {globalReplyComposing && !isTyping && !recallStatus && !searchStatus && !diaryStatus ? (
+                                <div className="flex gap-1" aria-label={`${char.name} 正在输入`}>
+                                    <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></div>
+                                    <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-75"></div>
+                                    <div className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce delay-150"></div>
+                                </div>
+                            ) : isProactiveComposing && !isTyping && !recallStatus && !searchStatus && !diaryStatus ? (
                                 <div className="flex items-center gap-2 text-xs text-teal-600 font-medium">
                                     <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                                     {char.name} 在给你写消息…
