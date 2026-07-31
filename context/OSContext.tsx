@@ -1202,9 +1202,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // 正文 44s 才灌完，卡片却记成 6.5s（实测误导排查）。clone 与调用方并行消费同一
               // 条流，text() 完成时刻 ≈ 真实收完时刻。
               if (urlStr.includes('/chat/completions')) {
-                  const meta = (config as any)?.__sullyMeta || ambientMetaAtStart;
-                  const requestId = (config as any)?.__sullyApiCallId;
-                  const body = (sendArgs[1] as any)?.body;
+                  const effectiveConfig = sendArgs[1] as any;
+                  const meta = effectiveConfig?.__sullyMeta || ambientMetaAtStart;
+                  const requestId = effectiveConfig?.__sullyApiCallId;
+                  const body = effectiveConfig?.body;
                   const status = response.status;
                   const ok = response.ok;
                   // clone 出来异步读 usage，不阻塞调用方拿 response
@@ -1225,7 +1226,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               if (!response.ok) {
                   // Only log if it's likely an API call (contains chat/completions or models)
                   if (urlStr.includes('/chat/completions') || urlStr.includes('/models')) {
-                      const suppressTransientHttpLog = !!(config as any)?.__sullySuppressTransientHttpLog
+                      const effectiveConfig = sendArgs[1] as any;
+                      const suppressTransientHttpLog = !!effectiveConfig?.__sullySuppressTransientHttpLog
                           && [429, 500, 502, 503, 504].includes(response.status);
                       if (suppressTransientHttpLog) {
                           return response;
