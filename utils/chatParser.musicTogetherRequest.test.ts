@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChatParser, type MusicActionHooks } from './chatParser';
 import { DB } from './db';
+import { rememberMusicWakePickableSongs } from './musicTrackChange';
 
 const createdIds: number[] = [];
 afterEach(async () => {
@@ -29,6 +30,49 @@ const collectCreated = async (charId: string) => {
 };
 
 describe('MUSIC_TOGETHER_REQUEST deduplication', () => {
+    it('creates a together invite card from the selected shareable song number', async () => {
+        const charId = `music-together-numbered-${Date.now()}`;
+        rememberMusicWakePickableSongs(charId, [
+            { id: 11, name: 'First Song', artists: 'First Artist', sourceLabel: 'TA的歌' },
+            { id: 22, name: 'Second Song', artists: 'Second Artist', albumPic: 'https://example.com/cover.jpg', sourceLabel: 'TA的歌' },
+        ]);
+
+        const content = await ChatParser.parseAndExecuteActions(
+            '这首给你 [[MUSIC_TOGETHER_REQUEST:2]]',
+            charId,
+            'Silis',
+            vi.fn(),
+            hooks(false),
+        );
+
+        const messages = await collectCreated(charId);
+        const invite = messages.find(message => message.metadata?.togetherRequestFromCharacter);
+        expect(content).toBe('这首给你');
+        expect(invite?.type).toBe('music_card');
+        expect(invite?.metadata?.intent).toBe('join');
+        expect(invite?.metadata?.song?.name).toBe('Second Song');
+        expect(invite?.metadata?.song?.albumPic).toBe('https://example.com/cover.jpg');
+    });
+
+    it('does not fall back to the current player when a numbered request is out of range', async () => {
+        const charId = `music-together-numbered-missing-${Date.now()}`;
+        rememberMusicWakePickableSongs(charId, [
+            { id: 11, name: 'First Song', artists: 'First Artist', sourceLabel: 'TA的歌' },
+        ]);
+
+        const content = await ChatParser.parseAndExecuteActions(
+            '这首给你 [[MUSIC_TOGETHER_REQUEST:9]]',
+            charId,
+            'Silis',
+            vi.fn(),
+            hooks(false),
+        );
+
+        const messages = await collectCreated(charId);
+        expect(content).toBe('这首给你');
+        expect(messages.filter(message => message.metadata?.togetherRequestFromCharacter)).toHaveLength(0);
+    });
+
     it('does not create another invite while already listening together', async () => {
         const charId = `music-together-active-${Date.now()}`;
         const content = await ChatParser.parseAndExecuteActions(

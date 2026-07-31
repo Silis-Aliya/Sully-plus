@@ -1501,9 +1501,11 @@ const MessageItem = React.memo(({
     const [musicRequestStatus, setMusicRequestStatus] = useState<'accepted' | 'rejected' | undefined>(() =>
         normalizeMusicInviteStatus(m.metadata?.inviteStatus || m.metadata?.status)
     );
+    const [musicRequestResolving, setMusicRequestResolving] = useState(false);
 
     useEffect(() => {
         setMusicRequestStatus(normalizeMusicInviteStatus(m.metadata?.inviteStatus || m.metadata?.status));
+        setMusicRequestResolving(false);
     }, [m.id, m.metadata?.inviteStatus, m.metadata?.status]);
 
     const clearLongPressTimer = () => {
@@ -2205,21 +2207,32 @@ const MessageItem = React.memo(({
 
         const resolveTogetherRequest = async (event: React.MouseEvent, status: 'accepted' | 'rejected') => {
             event.stopPropagation();
-            if (!isTogetherRequestFromCharacter || inviteStatus) return;
-            setMusicRequestStatus(status);
+            if (!isTogetherRequestFromCharacter || inviteStatus || musicRequestResolving) return;
+            setMusicRequestResolving(true);
             try {
-                await DB.updateMessageMetadata(m.id, (prev) => ({
-                    ...(prev || {}),
-                    inviteStatus: status,
-                    status,
-                    resolvedAt: Date.now(),
-                }));
-            } catch { /* UI state already updated; persistence failure is non-fatal here. */ }
-            if (status === 'accepted') {
-                const hooks = loadMusicHooks();
-                await hooks?.playSharedSong?.(song as any);
-                hooks?.setPlayMode?.('shuffle');
-                hooks?.joinListeningTogether?.(m.charId, 'character');
+                if (status === 'accepted') {
+                    const hooks = loadMusicHooks();
+                    if (!hooks?.playSharedSong || !hooks?.joinListeningTogether) {
+                        throw new Error('Music hooks are unavailable');
+                    }
+                    await hooks.playSharedSong(song as any);
+                    hooks.joinListeningTogether(m.charId, 'character');
+                }
+                try {
+                    await DB.updateMessageMetadata(m.id, (prev) => ({
+                        ...(prev || {}),
+                        inviteStatus: status,
+                        status,
+                        resolvedAt: Date.now(),
+                    }));
+                } catch (error) {
+                    console.warn('[MusicTogether] Failed to persist invite status:', error);
+                }
+                setMusicRequestStatus(status);
+            } catch (error) {
+                console.warn('[MusicTogether] Failed to accept invite:', error);
+            } finally {
+                setMusicRequestResolving(false);
             }
         };
 
@@ -2467,23 +2480,27 @@ const MessageItem = React.memo(({
                                 <button
                                     type="button"
                                     onClick={(event) => resolveTogetherRequest(event, 'accepted')}
+                                    disabled={musicRequestResolving}
                                     className="rounded-xl py-1.5 text-center text-[10px] font-semibold active:scale-[0.98]"
                                     style={{
                                         color: '#fff',
                                         background: 'linear-gradient(135deg, #8f84bd 0%, #c3b2ff 100%)',
                                         boxShadow: '0 2px 10px rgba(143,132,189,0.2)',
+                                        opacity: musicRequestResolving ? 0.68 : 1,
                                     }}
                                 >
-                                    接受
+                                    {musicRequestResolving ? '处理中' : '接受'}
                                 </button>
                                 <button
                                     type="button"
                                     onClick={(event) => resolveTogetherRequest(event, 'rejected')}
+                                    disabled={musicRequestResolving}
                                     className="rounded-xl py-1.5 text-center text-[10px] font-semibold active:scale-[0.98]"
                                     style={{
                                         color: '#7c6e9d',
                                         background: 'rgba(255,255,255,0.56)',
                                         border: '1px solid rgba(195,178,255,0.45)',
+                                        opacity: musicRequestResolving ? 0.68 : 1,
                                     }}
                                 >
                                     拒绝

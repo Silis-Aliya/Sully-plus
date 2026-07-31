@@ -109,8 +109,9 @@ pnpm workbench:bridge:startup
 
 - 音乐 Now Playing 页可以把当前歌曲分享给角色的普通聊天，角色也能从自己的可分享歌曲中主动发歌。
 - 分享卡片包含歌名、歌手、专辑、封面和播放信息；点击播放只切换自己的播放器，不会自动进入一起听。
-- 角色可以按音乐人格和当下情境把歌曲收藏进 `musicProfile.playlists`，也可以发送可接受或拒绝的一起听邀请。
-- 邀请卡、歌曲卡和退出记录按实际发送者或操作者显示；一起听期间展示双方头像，并阻止双方重复邀请。
+- 角色可以按音乐人格和当下情境把歌曲收藏进 `musicProfile.playlists`，也可以从可分享歌曲列表里直接选择一首歌发送可接受或拒绝的一起听邀请。
+- 角色发起的一起听邀请卡本身携带歌名、歌手、封面和播放数据；用户接受后才播放该歌曲并进入一起听，不会先发送一张普通分享卡再绑定邀请。
+- 邀请卡、歌曲卡和退出记录按实际发送者或操作者显示；一起听期间展示双方头像，并阻止双方重复邀请。接受角色邀请时会先确认歌曲可播放，再把卡片标记为已接受。
 - 角色读取歌曲资料和当前音乐上下文来回应，不读取或上传原始音频，也不会为每条聊天额外调用音乐分析模型。
 
 ### 数据、头像和备份
@@ -224,10 +225,14 @@ pnpm cap:android
 合并上游或 push 前建议检查：
 
 - 阅读 fork maintenance log，如果当前工作树里有。
+- Memory Hub / Ombre bridge、VPS 说明等本地 WIP 不要混入普通上游同步或一起听/聊天修复提交；如果它们后续状态变化，先更新 `FORK_MAINTENANCE_LOG.md`。
 - 重点看这些容易冲突的文件：
   - `context/OSContext.tsx`
   - `apps/Chat.tsx`
   - `apps/WorkbenchApp.tsx`
+  - `components/chat/MessageItem.tsx`
+  - `utils/chatParser.ts`
+  - `utils/context.ts`
   - `utils/chatPrompts.ts`
   - `utils/workbenchBridge.ts`
   - `worker/`

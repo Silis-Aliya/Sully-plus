@@ -35,11 +35,43 @@ This section supersedes the stale repository/baseline bullets inside the copied 
 
 Current effective state after the 2026-07-30 upstream refresh:
 
-- Local branch `codex/merge-upstream-plus-maintenance` is at `5902531`.
+- Local branch `codex/merge-upstream-plus-maintenance` is at `fd58d84` before the 2026-07-31 music/API/VR maintenance commit.
 - `upstream/master` is merged through `2835b63`.
-- `origin/master` and `origin/codex/merge-upstream-plus-maintenance` still point at the previous published release until explicitly pushed.
+- `origin/master` and `origin/codex/merge-upstream-plus-maintenance` are published at `fd58d84`, which records the upstream refresh through `2835b63`.
 - Private Plus / Vercel publishing should use `origin/master` for `Silis-Aliya/Sully-plus.git`; verify the Vercel dashboard before treating production as updated.
 - Local Memory Hub / Ombre bridge and VPS notes are WIP-only and must stay uncommitted unless the user explicitly approves publishing them.
+
+## 2026-07-31 Music Together, VR Music Room, and API Error Noise
+
+- Updated together-listening prompt and parser semantics:
+  - characters now use `[[MUSIC_TOGETHER_REQUEST:N]]` to choose the Nth shareable song and create one together-listening invite card with song name, artist, cover, and accept/reject controls.
+  - `[[MUSIC_SHARE:N]]` remains the plain music-share card path.
+  - the new prompt no longer teaches unnumbered `[[MUSIC_TOGETHER_REQUEST]]`; parser keeps it only as old-output compatibility.
+  - numbered together requests no longer fall back to the current player or an unrelated card when N is out of range.
+- Hardened character-initiated together invite acceptance:
+  - accepting first plays the invited song and joins together-listening only after playback hooks succeed,
+  - the invite card is marked accepted only after the successful playback/join path,
+  - accepting a character invite no longer forces shuffle mode, so a one-song invite stays focused on that selected song.
+- Fixed noisy API URL errors for retryable chat calls:
+  - intermediate retry attempts for `429`, `500`, `502`, `503`, and `504` are no longer logged as global URL errors while `safeFetchJson` still has retries left,
+  - final failures still surface normally.
+- Fixed VRWorld listening-room song mismatch:
+  - when the model writes a natural activity like `点了《Kamasutra》` but misses the strict `<点歌 序号="N"/>` tag, VR music parsing now falls back to matching the mentioned title against the character's pickable songs,
+  - if the mentioned title cannot be matched, the room no longer auto-randomizes a different song and produces a misleading now-playing card.
+- Verification passed:
+  - `pnpm vitest run utils/chatParser.musicTogetherRequest.test.ts utils/chatParser.musicShareNumbering.test.ts utils/chatParser.musicActionOutcome.test.ts`
+  - `pnpm vitest run utils/vrWorld/vrWorld.test.ts`
+  - `pnpm build`
+- Known unrelated test note:
+  - `utils/messageItemModuleLayout.test.ts` still has pre-existing layout assertions around outer avatar markup (`alt="avatar"`). The failure is not from the together-listening accept/playback logic.
+- Memory Hub / Ombre bridge and VPS WIP remains excluded from this maintenance commit. Do not stage:
+  - `apps/MemoryPalaceApp.tsx`
+  - `utils/memoryPalace/db.ts`
+  - `utils/memoryPalace/export.ts`
+  - `utils/memoryPalace/index.ts`
+  - `utils/memoryPalace/ombreBridge.ts`
+  - `docs/ombre-memory-palace-integration.md`
+  - `VPS_README.md`
 
 ## 2026-07-30 Upstream Refresh to 2835b63
 
@@ -58,7 +90,7 @@ Current effective state after the 2026-07-30 upstream refresh:
   - adopted upstream `promptMessageCleanup` extraction.
 - Verification passed:
   - `pnpm build`
-- Not pushed yet. Push to `origin/codex/merge-upstream-plus-maintenance` and `origin/master` only after user approval.
+- Pushed as `fd58d84` to `origin/codex/merge-upstream-plus-maintenance` and `origin/master`.
 - Local Memory Hub / Ombre bridge and VPS WIP remains excluded from the merge commit and must be restored only as worktree WIP unless the user explicitly approves publishing it.
 
 ## 2026-07-29 Upstream Refresh to 1d8e42b And Plus Master Push

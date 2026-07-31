@@ -123,6 +123,21 @@ function nameLine(name: string, act: string): string {
     return t.startsWith(name) ? t : `${name}${act}`;
 }
 
+function normalizeSongTitleForMatch(value: string): string {
+    return value.trim().toLowerCase().replace(/[《》"'“”‘’\s\-_·.。:：]/g, '');
+}
+
+function findPickableSongByTitle(songs: CharPlaylistSong[], title?: string): CharPlaylistSong | undefined {
+    if (!title) return undefined;
+    const wanted = normalizeSongTitleForMatch(title);
+    if (!wanted) return undefined;
+    return songs.find(song => normalizeSongTitleForMatch(song.name) === wanted)
+        || songs.find(song => {
+            const name = normalizeSongTitleForMatch(song.name);
+            return name.includes(wanted) || wanted.includes(name);
+        });
+}
+
 /** roll 一个房间：图书馆需有书；听歌房需有歌单或正在放歌；留言簿/娱乐室/邮局/剧院恒可去。 */
 export function rollRoom(char: CharacterProfile, novels: VRWorldNovel[], musicState: VRMusicRoomState | null, prefer?: VRRoomId): VRRoomId | null {
     // 信号坠落处【不进随机池】——它是用户自发参与的特殊活动，只在用户点「参与→指定角色」
@@ -420,7 +435,9 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
             const parsed = parseMusicOutput(aiContent);
             // 角色在 prompt 里听到 / 锐评的那首，绑定开头快照（乐评、卡片都针对它）
             const curSong = musicState?.nowPlaying;
-            const pick = (parsed.pickIdx !== undefined && pickable[parsed.pickIdx]) ? pickable[parsed.pickIdx] : undefined;
+            const pickByIndex = (parsed.pickIdx !== undefined && pickable[parsed.pickIdx]) ? pickable[parsed.pickIdx] : undefined;
+            const pick = pickByIndex || findPickableSongByTitle(pickable, parsed.pickTitle);
+            const attemptedUnmatchedPick = !pick && !!parsed.pickTitle;
             let queuedLabel: string | undefined;
             let playingNow: VRMusicRoomState['nowPlaying'];
 
@@ -436,7 +453,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
                 }
                 // 没点歌、队列也空，但角色有歌单 → 自动放一首自己的，
                 // 免得新到访的角色还停在上一个人（甚至已经离开的人）点的歌上。
-                if (state.queue.length === 0 && pickable.length > 0) {
+                if (!attemptedUnmatchedPick && state.queue.length === 0 && pickable.length > 0) {
                     const curId = state.nowPlaying?.song.id;
                     const freshSongs = pickable.filter(s => s.id !== curId);
                     const s = (freshSongs.length > 0 ? freshSongs : pickable)[Math.floor(Math.random() * (freshSongs.length > 0 ? freshSongs.length : pickable.length))];

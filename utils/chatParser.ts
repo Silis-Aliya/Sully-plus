@@ -261,8 +261,11 @@ export const ChatParser = {
         }
 
         // MUSIC_TOGETHER_REQUEST — char 向 user 发起一起听邀请，user 点接受后才加入。
-        const MUSIC_TOGETHER_REQUEST_RE = /\[\[MUSIC_TOGETHER_REQUEST\]\]/g;
-        if (MUSIC_TOGETHER_REQUEST_RE.test(content)) {
+        //   [[MUSIC_TOGETHER_REQUEST:N]] → 从可分享歌曲列表里选第 N 首生成邀请卡
+        //   [[MUSIC_TOGETHER_REQUEST]]   → 旧输出兼容：绑定本轮音乐卡或当前播放
+        const MUSIC_TOGETHER_REQUEST_RE = /\[\[MUSIC_TOGETHER_REQUEST(?::\s*(\d+)\s*)?\]\]/g;
+        const togetherRequestMatches = [...content.matchAll(MUSIC_TOGETHER_REQUEST_RE)];
+        if (togetherRequestMatches.length) {
             const alreadyListeningTogether = !!musicHooks?.isListeningTogether?.(charId);
             const recent = await DB.getRecentMessagesByCharId(charId, 24, true).catch(() => []);
             const hasPendingTogetherRequest = recent.some(message =>
@@ -272,10 +275,16 @@ export const ChatParser = {
                 && (message.metadata?.inviteStatus || message.metadata?.status || 'pending') === 'pending'
             );
             if (!alreadyListeningTogether && !hasPendingTogetherRequest) {
-                const sharedSnap =
+                const rawIndex = Number.parseInt(togetherRequestMatches[0][1] || '', 10);
+                const hasExplicitIndex = Number.isInteger(rawIndex);
+                const selectedSnap = hasExplicitIndex ? await getShareableMusicSnapshot(charId, rawIndex) : null;
+                const sharedSnap = hasExplicitIndex ? null : (
                     await getCurrentTurnSharedMusicSnapshot(charId, 'assistant')
-                    || await getCurrentTurnSharedMusicSnapshot(charId, 'user');
-                const snap = sharedSnap || musicHooks?.getListeningSnapshot() || null;
+                    || await getCurrentTurnSharedMusicSnapshot(charId, 'user')
+                );
+                const snap = hasExplicitIndex
+                    ? selectedSnap
+                    : (sharedSnap || musicHooks?.getListeningSnapshot() || null);
                 if (snap) {
                     await DB.saveMessage({
                         charId,

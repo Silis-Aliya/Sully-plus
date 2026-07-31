@@ -1224,6 +1224,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               if (!response.ok) {
                   // Only log if it's likely an API call (contains chat/completions or models)
                   if (urlStr.includes('/chat/completions') || urlStr.includes('/models')) {
+                      const suppressTransientHttpLog = !!(config as any)?.__sullySuppressTransientHttpLog
+                          && [429, 500, 502, 503, 504].includes(response.status);
+                      if (suppressTransientHttpLog) {
+                          return response;
+                      }
                       try {
                           const clone = response.clone();
                           const text = await clone.text();

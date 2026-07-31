@@ -739,16 +739,21 @@ ${pickableBlock}
             : [];
         if (char) rememberMusicWakePickableSongs(char.id, shareableSongs);
         const shareableBlock = formatMusicWakePickableSongs(shareableSongs) || '暂无可分享歌曲';
-        const dailyShareGuide = `### 【日常音乐分享】
-你可以偶尔从【可分享歌曲】主动分享一首歌：
+        const dailyShareGuide = `### 【日常音乐分享 / 一起听邀请】
+你有自己的音乐品味，也可以主动把歌带进对话。
+当某首歌让你想到${userName || '对方'}、很想分享、想制造一点共同氛围，或你此刻就是想拉${userName || '对方'}一起听，可以使用隐藏指令：
 
-- \`[[MUSIC_SHARE:N]]\` — 选择第 N 首并发送音乐卡片
-- \`[[MUSIC_TOGETHER_REQUEST]]\` — 邀请对方一起听本轮分享的歌，可与分享指令同时使用
+- \`[[MUSIC_SHARE:N]]\` — 选择第 N 首并发送音乐分享卡片
+- \`[[MUSIC_TOGETHER_REQUEST:N]]\` — 选择第 N 首并发送一起听邀请卡片；对方接受后才会开始一起听
 
 【可分享歌曲】
 ${shareableBlock}
 
-没有分享歌曲时，不要单独使用一起听邀请。`;
+使用方式：
+- 只是想分享歌：只输出 \`[[MUSIC_SHARE:N]]\`。
+- 想邀请一起听某首歌：使用 \`[[MUSIC_TOGETHER_REQUEST:N]]\`。
+- 不用等${userName || '对方'}先聊音乐；不要为了使用工具而使用工具。只有当你真的想分享、想邀请、或这首歌贴合此刻气氛时再用。
+- 隐藏指令不要解释给${userName || '对方'}听，自然说话。`;
         if (!hasUserSharedMusicCard) return dailyShareGuide;
 
         return `### 【音乐互动工具】
@@ -764,7 +769,7 @@ ${shareableBlock}
 
 请优先选最贴合这首歌气质的现有歌单；都不合适、又确实想收，再考虑新建。收进来的歌会被打上“从对方那里听到”的标签，以后你单独听到这首时，会自然想起 ta。
 
-你想和对方一起听这首歌，可以先询问，或直接使用 \`[[MUSIC_TOGETHER_REQUEST]]\` 发送邀请；对方接受后才会开始一起听。
+如果你想主动邀请${userName || '对方'}一起听，请从【可分享歌曲】里选一首，使用 \`[[MUSIC_TOGETHER_REQUEST:N]]\` 发送带歌名、封面和接受/拒绝按钮的一起听邀请卡片。
 
 ${dailyShareGuide}
 `;

@@ -130,6 +130,12 @@ describe('parseMusicOutput', () => {
         expect(out.behavior).toBe('靠在角落放空');
         expect(out.activity).toBe('没什么想点的');
     });
+
+    it('infers a picked song title from natural activity text', () => {
+        const out = parseMusicOutput('<行为>缩在角落听歌</行为><动态>在听歌房点了《Kamasutra》然后被自己的选曲反噬。</动态>');
+        expect(out.pickIdx).toBeUndefined();
+        expect(out.pickTitle).toBe('Kamasutra');
+    });
 });
 
 describe('彼方手动指定房间', () => {

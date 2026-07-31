@@ -368,7 +368,14 @@ export async function safeFetchJson(
         const requestId = `api-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
         // 每次 attempt 建一个独立的 AbortController（仅用于 timeout）
         // 调用方自己的 options.signal 仍然有效，两者任一触发就 abort
-        let attemptOptions = { ...metaOptions, __sullyApiCallId: requestId } as RequestInit;
+        let attemptOptions = {
+            ...metaOptions,
+            __sullyApiCallId: requestId,
+            // The global fetch interceptor logs HTTP failures immediately, before
+            // safeFetchJson can retry. Suppress retry attempts there so a later
+            // successful retry does not leave a scary URL error popup behind.
+            __sullySuppressTransientHttpLog: attempt < maxRetries,
+        } as RequestInit;
         let timeoutHandle: any = null;
         if (timeoutMs > 0) {
             const ac = new AbortController();

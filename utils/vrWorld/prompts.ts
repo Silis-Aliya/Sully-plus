@@ -259,6 +259,7 @@ export function buildMusicRoomTurn(
 
 export interface ParsedMusicOutput {
     pickIdx?: number;
+    pickTitle?: string;
     review?: string;
     behavior?: string;
     activity: string;
@@ -268,6 +269,8 @@ export function parseMusicOutput(raw: string): ParsedMusicOutput {
     const out: ParsedMusicOutput = { activity: '' };
     const pick = raw.match(/<点歌[^>]*序号[^\d]{0,4}(\d+)/);
     if (pick) out.pickIdx = parseInt(pick[1], 10);
+    const titlePick = raw.match(/(?:点歌|点了|点播|放上|放一首|循环|单曲循环)[^《》]{0,30}《([^》]{1,80})》/);
+    if (titlePick && titlePick[1].trim()) out.pickTitle = titlePick[1].trim();
     const rev = raw.match(/<乐评>([\s\S]*?)<\/乐评>/);
     if (rev && rev[1].trim()) out.review = rev[1].trim();
     const beh = raw.match(/<行为>([\s\S]*?)<\/行为>/);
