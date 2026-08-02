@@ -33,13 +33,55 @@ Current known baseline:
 
 This section supersedes the stale repository/baseline bullets inside the copied Next-Window Prompt above. Do not edit that prompt block without first showing the full revised prompt to the user for confirmation.
 
-Current effective state after the 2026-07-30 upstream refresh:
+Current effective state after the 2026-08-02 upstream refresh:
 
-- Local branch `codex/merge-upstream-plus-maintenance` is at `fd58d84` before the 2026-07-31 music/API/VR maintenance commit.
-- `upstream/master` is merged through `2835b63`.
-- `origin/master` and `origin/codex/merge-upstream-plus-maintenance` are published at `fd58d84`, which records the upstream refresh through `2835b63`.
+- Local branch `codex/merge-upstream-plus-maintenance` is at `7088a48`.
+- `upstream/master` is merged through `8c640ec`.
+- `origin/master` and `origin/codex/merge-upstream-plus-maintenance` remain published at `13cc0be`; the 2026-08-02 Story Theater merge has not been pushed yet.
 - Private Plus / Vercel publishing should use `origin/master` for `Silis-Aliya/Sully-plus.git`; verify the Vercel dashboard before treating production as updated.
 - Local Memory Hub / Ombre bridge and VPS notes are WIP-only and must stay uncommitted unless the user explicitly approves publishing them.
+
+## 2026-08-02 Upstream Story Theater Refresh
+
+- Fetched `upstream/master`; it advanced from `b24709a` to `8c640ec`.
+- Merged upstream multi-character Story Theater mode and its memory-ownership follow-up into `codex/merge-upstream-plus-maintenance`.
+- Local merge commit: `7088a48` (`Merge upstream Story Theater update`). This commit has parents `13cc0be` (Plus fork) and `8c640ec` (upstream).
+- Resolved conflicts without dropping either feature line:
+  - `apps/Chat.tsx`: retained Plus hidden/system-card filters, added `story_theater_memory` isolation, and retained the upstream exhausted-history count clamp.
+  - `context/OSContext.tsx`: retained both Workbench and Story Theater stores in low-memory backup routing; Story Theater masks remain image-processed because masks can contain avatars.
+  - `utils/db.ts`: retained Workbench/Code and Story Theater types, stores, backup export, and restore paths; kept sanitized portable chat messages; advanced the merged IndexedDB schema to v72.
+- Verification passed:
+  - `pnpm vitest run utils/storyTheater.test.ts utils/storyTheaterVectorMemory.test.ts utils/db.storyTheater.test.ts utils/chatGenEvents.test.ts utils/safeApi.apiCallLog.test.ts utils/safeApi.stream.test.ts` (6 files, 53 tests)
+  - `pnpm build`
+- This merge has not been pushed to private Plus / Vercel yet.
+- Memory Hub / Ombre bridge and VPS WIP was stashed before merge and restored afterward; it remains uncommitted and excluded.
+
+## 2026-08-01 Upstream Hot-News Refresh and Chat/API Maintenance
+
+- Fetched `upstream/master`; it advanced to `b24709a`.
+- Merged upstream hot-news API migration into `codex/merge-upstream-plus-maintenance`.
+- Merge commit: `13cc0be` (`Merge remote-tracking branch 'upstream/master' into codex/merge-upstream-plus-maintenance`).
+- Upstream highlights:
+  - `59c66f5` / PR #471 migrates the hot-news API path.
+- Fork maintenance included before the merge:
+  - `d1a5f7d` keeps the normal chat reply three-dot typing bubble visible when the user manually triggers a reply, leaves the chat screen, and re-enters while generation is still running.
+  - `aaab4a0` suppresses transient retryable API URL error popups for intermediate `429`, `500`, `502`, `503`, and `504` attempts when `safeFetchJson` still has retries left; final failures still surface.
+- Verification passed:
+  - `pnpm vitest run utils/chatGenEvents.test.ts`
+  - `pnpm vitest run utils/safeApi.apiCallLog.test.ts utils/safeApi.stream.test.ts`
+  - `pnpm vitest run utils/realtimeContext.hotNews.test.ts`
+  - `pnpm build`
+- Pushed the verified release to:
+  - `origin/codex/merge-upstream-plus-maintenance`
+  - `origin/master` for Vercel/private Plus deployment.
+- Memory Hub / Ombre bridge and VPS WIP remains excluded. Do not stage:
+  - `apps/MemoryPalaceApp.tsx`
+  - `utils/memoryPalace/db.ts`
+  - `utils/memoryPalace/export.ts`
+  - `utils/memoryPalace/index.ts`
+  - `utils/memoryPalace/ombreBridge.ts`
+  - `docs/ombre-memory-palace-integration.md`
+  - `VPS_README.md`
 
 ## 2026-07-31 Music Together, VR Music Room, and API Error Noise
 

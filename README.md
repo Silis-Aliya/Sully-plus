@@ -114,6 +114,12 @@ pnpm workbench:bridge:startup
 - 邀请卡、歌曲卡和退出记录按实际发送者或操作者显示；一起听期间展示双方头像，并阻止双方重复邀请。接受角色邀请时会先确认歌曲可播放，再把卡片标记为已接受。
 - 角色读取歌曲资料和当前音乐上下文来回应，不读取或上传原始音频，也不会为每条聊天额外调用音乐分析模型。
 
+### 聊天生成与 API 错误提示
+
+- 手动触发角色回复后，即使先退出聊天页再回来，只要该角色仍在生成中，聊天界面会继续显示角色侧三个点输入气泡。
+- API 请求通过内部重试链路处理时，中间重试用的 `429` / `5xx` 不会再提前弹成全局 URL error；只有最终仍失败的请求才会显示错误。
+- API 调用日志仍会记录真实失败，方便区分“中间重试噪音”和“供应商额度/内容/网络导致的最终失败”。
+
 ### 数据、头像和备份
 
 Sully Plus 仍然是 local-first。
@@ -226,6 +232,7 @@ pnpm cap:android
 
 - 阅读 fork maintenance log，如果当前工作树里有。
 - Memory Hub / Ombre bridge、VPS 说明等本地 WIP 不要混入普通上游同步或一起听/聊天修复提交；如果它们后续状态变化，先更新 `FORK_MAINTENANCE_LOG.md`。
+- 当前本地维护线已合并上游 Story Theater 更新 through `8c640ec`（本地 merge `7088a48`）；私有 Plus / Vercel 发布点仍为 `origin/master` 上的 `13cc0be`，尚未发布本次剧场更新。
 - 重点看这些容易冲突的文件：
   - `context/OSContext.tsx`
   - `apps/Chat.tsx`
