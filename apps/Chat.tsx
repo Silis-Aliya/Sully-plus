@@ -759,9 +759,14 @@ const Chat: React.FC = () => {
             // 上下文截断仅作用于发给 LLM 的 prompt（在 chatPrompts.ts 里处理）。
             const chatScopeMsgs = recent
                 .filter(m => !m.metadata?.hidden)
-                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+                .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'story_theater_memory')
                 .filter(m => !(currentChar?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card' && m.type !== 'music_invite_result' && m.type !== 'code_card'));
-            setTotalMsgCount(totalCount);
+            // totalCount 走 charId 索引全量计数，包含群聊消息（以及上面被过滤的约会/通话
+            // 消息）——它们永远不会出现在单聊列表里。直接拿它算「加载历史消息」会出现
+            // 有计数、点击却加载不出任何东西的幽灵按钮。倒序游标没取满 fetchLimit 条
+            // 即说明该角色的单聊消息已全部在手，此时把总数钳到实际可展示的条数。
+            const exhausted = recent.length < fetchLimit;
+            setTotalMsgCount(exhausted ? chatScopeMsgs.length : totalCount);
             setMessages(chatScopeMsgs.slice(-requestedVisibleCount));
         };
         try {
@@ -2731,7 +2736,7 @@ const Chat: React.FC = () => {
     // windowed 模式：定位到旧消息时只渲染目标周围 51 条，避免 DOM 卡爆。
     const displayMessages = useMemo(() => {
         const base = messages
-            .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call')
+            .filter(m => m.metadata?.source !== 'date' && m.metadata?.source !== 'call' && m.metadata?.source !== 'story_theater_memory')
             .filter(m => !m.metadata?.proactiveHint)
             .filter(m => { if (char?.hideSystemLogs && m.role === 'system' && m.type !== 'score_card' && m.type !== 'code_card') return false; return true; });
         if (windowedFocusMsgId !== null) {
