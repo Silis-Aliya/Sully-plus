@@ -52,6 +52,8 @@ Current effective state after the 2026-08-03 upstream refresh:
   - retained split OS contexts, Ears/voice paths, Workbench + Story Theater backup data, portable message cleanup, GitHub/WebDAV backup UI, and device context;
   - retained the private default proxy worker `https://sullyos-main-proxy.sully-aliya.workers.dev`.
 - Active Message fire-pack prompts intentionally omit stale build-time time/weather/news/schedule/music/VR-room state and local browser-only scheduling instructions; the worker fills trigger-time state instead. Normal foreground chat keeps the existing music, schedule, device, and phone behavior.
+- Active Message 2.0 deployment and upgrades should follow the upstream [AMSG2 setup walkthrough](https://github.com/qegj567-cloud/SullyOS/blob/master/docs/amsg2-setup-walkthrough.md). It is the reference for the separate Cloudflare AMSG Worker deployment, D1 binding, Cron, `AMSG_MASTER_KEY`, VAPID keys, optional `AMSG_SERVER_TOKEN`, and connection verification.
+- A Vercel frontend deployment does not deploy or update the AMSG Worker. After upstream Worker changes, rebuild and deploy `worker/amsg/worker.bundle.js`, then verify the connection in Settings -> Active Message 2.0 before treating the backend update as complete.
 - Validation passed:
   - targeted music/parser/prompt/Active Message tests: 8 files, 124 tests;
   - follow-up layout/state-sync tests: 5 files, 43 tests;
