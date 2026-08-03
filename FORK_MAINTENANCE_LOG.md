@@ -35,6 +35,7 @@ This section supersedes the stale repository/baseline bullets inside the copied 
 
 Current effective state after the 2026-08-03 upstream refresh:
 
+- The reusable upstream merge, WIP isolation, Vercel publishing, and independent Worker deployment procedure is documented in [`FORK_UPDATE_GUIDE.md`](./FORK_UPDATE_GUIDE.md). Keep that guide procedural; keep dated commit and conflict details in this log.
 - Local upstream merge commit is `155a17f4` on `codex/merge-upstream-plus-maintenance`.
 - `upstream/master` is merged through `7fb5ccad`.
 - `origin/master` and `origin/codex/merge-upstream-plus-maintenance` remain published at `c5b69a36`; the 2026-08-03 merge has not been pushed yet.

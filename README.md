@@ -234,11 +234,13 @@ pnpm cap:android
 
 ## Fork 维护流程
 
+完整的上游合并、WIP 隔离、Vercel 发布和 Cloudflare Worker 更新步骤见 [`FORK_UPDATE_GUIDE.md`](./FORK_UPDATE_GUIDE.md)。
+
 合并上游或 push 前建议检查：
 
 - 阅读 fork maintenance log，如果当前工作树里有。
 - Memory Hub / Ombre bridge、VPS 说明等本地 WIP 不要混入普通上游同步或一起听/聊天修复提交；如果它们后续状态变化，先更新 `FORK_MAINTENANCE_LOG.md`。
-- 当前本地维护线已合并上游 Story Theater 更新 through `8c640ec`（本地 merge `7088a48`）；私有 Plus / Vercel 发布点仍为 `origin/master` 上的 `13cc0be`，尚未发布本次剧场更新。
+- 当前上游合并基线与私有 Plus / Vercel 发布点以本 README 顶部状态和 `FORK_MAINTENANCE_LOG.md` 最新记录为准，不沿用下方历史条目中的旧提交号。
 - 重点看这些容易冲突的文件：
   - `context/OSContext.tsx`
   - `apps/Chat.tsx`
