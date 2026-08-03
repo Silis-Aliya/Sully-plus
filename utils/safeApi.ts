@@ -25,6 +25,86 @@ export async function safeResponseJson(response: Response): Promise<any> {
     return parseRawBodyText(text, response.status, response.headers?.get?.('content-type'));
 }
 
+type VertexFunctionCall = {
+    name?: unknown;
+    args?: unknown;
+    id?: unknown;
+};
+
+/**
+ * Some OpenAI-compatible relays return their upstream Vertex/Gemini payload verbatim,
+ * occasionally even JSON-stringified inside choices[0].message.content. Normalize the
+ * functionCall parts here so callers only need to understand OpenAI tool_calls.
+ */
+export function normalizeChatCompletionResponse(data: any): any {
+    const parseEmbeddedVertexEnvelope = (value: unknown): any | null => {
+        if (value && typeof value === 'object') return value;
+        if (typeof value !== 'string') return null;
+        const trimmed = value.trim();
+        if (!trimmed.startsWith('{') || !trimmed.endsWith('}')
+            || !trimmed.includes('"candidates"') || !trimmed.includes('"functionCall"')) return null;
+        try { return JSON.parse(trimmed); } catch { return null; }
+    };
+
+    const toOpenAIMessage = (envelope: any): { message: any; finishReason?: unknown } | null => {
+        const response = envelope?.response && typeof envelope.response === 'object'
+            ? envelope.response
+            : envelope;
+        const candidate = Array.isArray(response?.candidates) ? response.candidates[0] : null;
+        const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+        if (!parts.some((part: any) => part?.functionCall && typeof part.functionCall === 'object')) return null;
+
+        const text = parts
+            .map((part: any) => typeof part?.text === 'string' ? part.text : '')
+            .filter(Boolean)
+            .join('');
+        const toolCalls = parts.flatMap((part: any, index: number) => {
+            const call = part?.functionCall as VertexFunctionCall | undefined;
+            if (!call || typeof call.name !== 'string' || !call.name.trim()) return [];
+            const rawArgs = call.args ?? {};
+            const args = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs);
+            return [{
+                id: typeof call.id === 'string' && call.id ? call.id : `call_vertex_${index}`,
+                type: 'function',
+                function: { name: call.name, arguments: args },
+            }];
+        });
+        if (!toolCalls.length) return null;
+        return {
+            message: { role: 'assistant', content: text, tool_calls: toolCalls },
+            finishReason: candidate?.finishReason,
+        };
+    };
+
+    const openAIMessage = data?.choices?.[0]?.message;
+    const embedded = parseEmbeddedVertexEnvelope(openAIMessage?.content);
+    const normalizedEmbedded = embedded ? toOpenAIMessage(embedded) : null;
+    if (normalizedEmbedded) {
+        const choices = [...data.choices];
+        choices[0] = {
+            ...choices[0],
+            message: { ...openAIMessage, ...normalizedEmbedded.message },
+            finish_reason: choices[0]?.finish_reason ?? normalizedEmbedded.finishReason ?? 'tool_calls',
+        };
+        return { ...data, choices };
+    }
+
+    const normalizedTopLevel = toOpenAIMessage(data);
+    if (!normalizedTopLevel) return data;
+    const response = data?.response && typeof data.response === 'object' ? data.response : data;
+    return {
+        id: response?.responseId || response?.id || data?.id || 'vertex-normalized',
+        object: 'chat.completion',
+        model: response?.modelVersion || data?.model || '',
+        choices: [{
+            index: 0,
+            message: normalizedTopLevel.message,
+            finish_reason: normalizedTopLevel.finishReason ?? 'tool_calls',
+        }],
+        usage: data?.usage ?? response?.usageMetadata,
+    };
+}
+
 /** 判断响应是否是 SSE；兼容 OpenRouter 在首个 data 事件前发送的 ": OPENROUTER PROCESSING" 注释。 */
 export function isSseResponseText(text: string, contentType?: string | null): boolean {
     const firstLine = text
@@ -72,7 +152,7 @@ function parseRawBodyText(text: string, status: number, contentType?: string | n
     }
 
     try {
-        return JSON.parse(text);
+        return normalizeChatCompletionResponse(JSON.parse(text));
     } catch (e) {
         // Show a snippet of what we got for debugging
         const preview = text.slice(0, 200);
@@ -96,7 +176,8 @@ export function parseSseToCompletion(raw: string): any | null {
     const asm = new SseAssembler();
     // 按行切，逐行找 "data: " 开头（允许 \r\n、空行分隔）
     for (const line of raw.split(/\r?\n/)) asm.feedLine(line);
-    return asm.finish();
+    const assembled = asm.finish();
+    return assembled ? normalizeChatCompletionResponse(assembled) : null;
 }
 
 /**
@@ -327,7 +408,7 @@ async function readBodyWithStreaming(
         consumeLines();
         if (pending.trim()) emit(asm.feedLine(pending.trim()));
         const assembled = asm.finish();
-        if (assembled) return assembled;
+        if (assembled) return normalizeChatCompletionResponse(assembled);
         // 一个 chunk 都没解析出来 → 按原始文本兜底（保留原 preview 报错行为）
     }
     return parseRawBodyText(raw, response.status, contentType);
