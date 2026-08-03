@@ -6,6 +6,7 @@ import {
   InstantPushPendingToolCall,
   InstantPushReasoningBufferEntry,
 } from '../types';
+import { ACTIVE_MSG_GLOBAL_CONFIG_MIRROR_READY_KEY } from './localSettingsBackup';
 
 const DB_NAME = 'ActiveMsg';
 // v2 (Phase 2 Round 1): added outbound_sessions / pending_tool_calls / reasoning_buffer
@@ -18,6 +19,7 @@ const STORE_OUTBOUND_SESSIONS = 'outbound_sessions';
 const STORE_PENDING_TOOL_CALLS = 'pending_tool_calls';
 const STORE_REASONING_BUFFER = 'reasoning_buffer';
 const GLOBAL_CONFIG_KEY = 'global-config';
+export const ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY = 'amsg2_global_config_v1';
 
 const EXPIRED_NOTICES_PREFIX = 'amsg2_expired_notices_';
 const EXPIRED_NOTICES_MAX = 10;
@@ -37,6 +39,29 @@ const capacitorDefaultWorkerUrl = import.meta.env.VITE_AMSG_NATIVE_PUSH === 'tru
 const defaultGlobalConfig: ActiveMsg2GlobalConfig = {
   userId: '',
   workerUrl: capacitorDefaultWorkerUrl,
+};
+
+const readPortableGlobalConfig = (): ActiveMsg2GlobalConfig | null => {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed as ActiveMsg2GlobalConfig : null;
+  } catch {
+    return null;
+  }
+};
+
+const writePortableGlobalConfig = (config: ActiveMsg2GlobalConfig): void => {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY, JSON.stringify(config));
+      localStorage.setItem(ACTIVE_MSG_GLOBAL_CONFIG_MIRROR_READY_KEY, '1');
+    }
+  } catch {
+    // IndexedDB remains authoritative when localStorage is unavailable or full.
+  }
 };
 
 // 单例连接缓存。同 utils/db.ts 的根因: 原本每个 op 都新开一条 ActiveMsg 连接且从不
@@ -188,13 +213,22 @@ const generateUuidV4 = () => {
 
 export const ActiveMsgStore = {
   async getGlobalConfig(): Promise<ActiveMsg2GlobalConfig> {
-    const stored = await getKv<ActiveMsg2GlobalConfig>(GLOBAL_CONFIG_KEY);
+    // The localStorage mirror is portable: full backup and QuickSync already
+    // transport allowed local settings. Existing installs without the mirror
+    // migrate lazily from the ActiveMsg IndexedDB record.
+    const portable = readPortableGlobalConfig();
+    const mirrorReady = typeof localStorage !== 'undefined'
+      && localStorage.getItem(ACTIVE_MSG_GLOBAL_CONFIG_MIRROR_READY_KEY) === '1';
+    const stored = portable || (!mirrorReady
+      ? await getKv<ActiveMsg2GlobalConfig>(GLOBAL_CONFIG_KEY)
+      : null);
     const config = { ...defaultGlobalConfig, ...(stored || {}) };
     // Older App installs may already have persisted an empty URL. Fill only
     // that empty value in the private build; an explicit non-empty URL wins.
     if (!config.workerUrl?.trim() && capacitorDefaultWorkerUrl) {
       config.workerUrl = capacitorDefaultWorkerUrl;
     }
+    if (!portable && stored) writePortableGlobalConfig(config);
     return config;
   },
 
@@ -206,6 +240,7 @@ export const ActiveMsgStore = {
       updatedAt: Date.now(),
     };
     await setKv(GLOBAL_CONFIG_KEY, next);
+    writePortableGlobalConfig(next);
     return next;
   },
 

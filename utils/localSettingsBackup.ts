@@ -23,6 +23,7 @@ export const BACKUP_LOCAL_STORAGE_EXACT_KEYS: readonly string[] = [
     'study_tutor_presets',
     'instant_push_config_v1',
     'push_vapid_v1',
+    'amsg2_global_config_v1',
     'proactive_push_enabled_v1',
     'chat_translate_source_lang',
     'chat_translate_lang',
@@ -73,6 +74,15 @@ export const BACKUP_LOCAL_STORAGE_EXACT_KEYS: readonly string[] = [
 ] as const;
 
 export const LOCAL_SETTINGS_IMPORTED_EVENT = 'sully-local-settings-imported';
+export const ACTIVE_MSG_GLOBAL_CONFIG_MIRROR_READY_KEY = 'amsg2_global_config_mirror_ready_v1';
+
+const ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY = 'amsg2_global_config_v1';
+
+const markActiveMsgGlobalConfigMirrorReady = (key: string): void => {
+    if (key === ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY) {
+        localStorage.setItem(ACTIVE_MSG_GLOBAL_CONFIG_MIRROR_READY_KEY, '1');
+    }
+};
 
 const BACKUP_LOCAL_STORAGE_PREFIXES: readonly string[] = [
     'mp_lastMsgId_',
@@ -145,6 +155,7 @@ export const importLocalStorageSettings = (data: Record<string, string> | null |
             if (typeof value !== 'string') continue;
             if (byteLength(value) > maxValueBytesForKey(key)) continue;
             localStorage.setItem(key, key === MUSIC_STATE_KEY ? stripMusicTogetherSession(value) : value);
+            markActiveMsgGlobalConfigMirrorReady(key);
             importedKeys.push(key);
         }
         if (importedKeys.length > 0 && typeof window !== 'undefined') {
@@ -175,6 +186,7 @@ export const replaceLocalStorageSettings = (data: Record<string, string> | null 
         for (const key of existingKeys) {
             if (!shouldBackupLocalStorageKey(key) || incomingKeys.has(key)) continue;
             localStorage.removeItem(key);
+            markActiveMsgGlobalConfigMirrorReady(key);
             removedKeys.push(key);
         }
     } catch {
@@ -197,6 +209,7 @@ export const applyLocalStorageSettingsPatch = (
         for (const key of deletes) {
             if (typeof key === 'string' && shouldBackupLocalStorageKey(key)) {
                 localStorage.removeItem(key);
+                markActiveMsgGlobalConfigMirrorReady(key);
                 removedKeys.push(key);
             }
         }

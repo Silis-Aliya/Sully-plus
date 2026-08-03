@@ -2,7 +2,9 @@
 
 ## Current Upstream Baseline
 
-- Upstream SullyOS is merged through `7fb5ccad` (2026-08-03), including Active Message 2.0 multitask/background tools, analytics, Story Theater follow-ups, voice autoplay controls, date-history improvements, and updated worker bundles.
+- Upstream SullyOS is merged through `5a14e1e4` (2026-08-03). The merged release point is `9967cd17`, published to `Silis-Aliya/Sully-plus` `master` for Vercel deployment.
+- This baseline includes Active Message 2.0 subscription self-repair and diagnostics, background tool continuation, Deno proxy support, optional Capacitor/FCM push, analytics updates, Story Theater V6.27 follow-ups, voice autoplay traffic savings, and updated worker bundles.
+- Plus also carries `22d4a4ff`, which normalizes Vertex/Gemini native tool-call responses before they reach chat rendering so raw provider JSON is not split into visible message bubbles.
 - Plus-specific music together behavior, XHS phone/Lite paths, split OS contexts, backup behavior, and the private proxy worker default remain preserved.
 - Local Memory Hub / Ombre bridge and VPS notes are work in progress and are intentionally excluded from release commits. If that status or behavior changes, update `FORK_MAINTENANCE_LOG.md` before publishing.
 
@@ -50,6 +52,8 @@ Code 是这支 fork 的重点。
 - 当前 Code 进度索引默认收起，需要时手动展开。
 - Code 长消息支持复制、引用、编辑、删除和多选删除。
 - Code 图片会作为视觉输入发送给支持图片的角色模型；连接电脑 Codex CLI 时，桥接会把最近的图片作为临时附件传入。
+- Code 输入栏的回形针支持在 iPhone/iPad 或桌面浏览器上传 `md`、`txt`、配置文件和常见代码文件。文件以可下载的文本文件卡保存，完整正文会进入同一 Code 会话，AI 助理、备用 API 和“一起工作”的角色都能读取。
+- 文本附件单个最多 64 KB，一次最多 4 个且总计不超过 128 KB；超限或疑似二进制文件会直接拒绝，不会静默截断后交给模型。上传正文随 `workbench_messages` / `workbench_artifacts` 进入完整备份与 QuickSync。
 - “正在思考”显示为聊天页一致的三个点输入状态。
 - Code 助理头像进入导入/导出和增量数据流程。
 
@@ -125,6 +129,7 @@ pnpm workbench:bridge:startup
 - 手动触发角色回复后，即使先退出聊天页再回来，只要该角色仍在生成中，聊天界面会继续显示角色侧三个点输入气泡。
 - API 请求通过内部重试链路处理时，中间重试用的 `429` / `5xx` 不会再提前弹成全局 URL error；只有最终仍失败的请求才会显示错误。
 - API 调用日志仍会记录真实失败，方便区分“中间重试噪音”和“供应商额度/内容/网络导致的最终失败”。
+- Vertex/Gemini 兼容接口返回原生 `functionCall` / `functionResponse` 时，会先转换成 SullyOS 的统一工具调用结构再进入后续处理；角色聊天不再把整段供应商响应 JSON 拆成多条气泡。转换只处理可确认的工具调用结构，普通文本回复保持原样。
 
 ### 数据、头像和备份
 
@@ -135,7 +140,9 @@ Sully Plus 仍然是 local-first。
 - 普通角色头像、Code 助理头像、小红书卡片、上传媒体等需要进入导入/导出和增量迁移流程。
 - 角色音乐歌单、聊天音乐事件、`songs`、`vr_music`、生成音频资源、世界书和 Code / Workbench 数据均进入全局备份与 QuickSync 清单。
 - 当前一起听会话只在本机刷新时作为最长 12 小时有效的短时现场快照恢复。完整备份和 QuickSync 仅迁移队列、当前歌曲与播放模式，不迁移参与角色、会话时间、切歌临时状态、角色选歌归属或下一次主动唤醒计划；导入成功会主动结束目标设备上的现有一起听会话。
-- Code 连接的真实项目文件内容不会打包进应用备份。
+- Code 连接的真实电脑项目文件内容不会打包进应用备份；用户从手机主动上传的小型文本附件属于 Code 对话数据，会随备份与 QuickSync 迁移。
+- 主动消息 2.0 的角色开关、任务、副模型配置、已落库消息，以及全局 Worker 地址、用户 ID 和服务 token 都进入完整备份与 QuickSync。浏览器 PushSubscription、设备推送端点、待续跑工具调用和运行队列属于设备现场，不跨设备恢复；新设备导入后仍需重新授权通知并注册订阅。
+- QuickSync 按 IndexedDB 记录主键和内容哈希比较：只传新增、修改、删除的记录；但某条记录一旦变化，会传这条记录的完整内容，并不是在一段文字内部制作字节补丁。
 - QuickSync 对同一条记录采用后写覆盖，多设备同时修改同一记录时仍有覆盖风险。
 - QuickSync 拉取 Code store 后会通知已经打开的 Code 页面刷新当前会话；完整导入对现代备份中的便携设置采用替换语义，备份里缺失的旧设置会在目标设备删除，旧版无设置区块的备份仍保持非破坏性导入。
 - WebDAV / GitHub 备份应指向你自己的账号和私有空间。
@@ -201,6 +208,36 @@ pnpm build
 
 涉及私有 token、cookie、额度、用户数据的 worker，建议部署到自己的账号，不要长期依赖上游作者或别人的公共实例。
 
+### 当前 owner 的主动消息 2.0 部署
+
+截至 2026-08-03，主动消息 2.0 后端已经部署到 owner 自己的 Cloudflare 账号，并启用了 GitHub 构建部署：
+
+| 项目 | 当前配置 |
+|---|---|
+| Worker | `sullyos-amsg` |
+| Worker 源仓库 | `Silis-Aliya/sullyos-workers` |
+| 生产分支 | `main` |
+| Root directory | `/amsg` |
+| Build command | `sh ./deploy-prepare.sh` |
+| Deploy command | `npx wrangler deploy` |
+| 构建变量 | `D1_DATABASE_ID` 已在 Cloudflare Build Variables 中配置，且未加密 |
+| 数据库绑定 | `DB` -> owner 自己的 D1 数据库 |
+| 定时触发器 | `* * * * *`，每分钟检查一次任务 |
+| 验证状态 | Cloudflare 生产构建成功，`/config-check` 返回 HTTP 200 |
+
+密钥值不写入仓库。`AMSG_MASTER_KEY`、VAPID 密钥和可选的 `AMSG_SERVER_TOKEN` 只保存在 Cloudflare Variables and Secrets 与 SullyOS 本地设置中；VAPID 公私钥和共享 token 两端必须一致。
+
+这里有两层“自动更新”，不要混在一起：
+
+1. `Silis-Aliya/sullyos-workers` 的 `main` 出现新提交后，Cloudflare 会自动构建并重新部署 `sullyos-amsg`。
+2. 作者上游发布新 Worker 后，GitHub fork 默认不会自己追上上游；仍需在 `Silis-Aliya/sullyos-workers` 点击 **Sync fork -> Update branch**。同步产生提交后，Cloudflare 才会接着自动部署。
+
+因此日常更新不再需要复制粘贴 `worker.bundle.js`，但仍要主动同步一次 fork。部署完成后检查 Cloudflare 最新 Production build、`DB` binding、Cron 和 `/config-check`，再回 SullyOS 的“主动消息 2.0”确认连接、通知订阅及角色任务均已启用。
+
+完整首次部署与排障步骤见 [`docs/amsg2-setup-walkthrough.md`](./docs/amsg2-setup-walkthrough.md)，本 fork 的统一更新顺序见 [`FORK_UPDATE_GUIDE.md`](./FORK_UPDATE_GUIDE.md)。Vercel 前端与该 Worker 是两套部署：push `origin/master` 只会更新 Sully Plus 前端，不会更新 Cloudflare Worker。
+
+当前前端已经吸收上游的 AMSG2 订阅自愈、推送诊断、后台工具续跑和 Deno 代理支持。要让 Cloudflare 后端同时获得对应能力，仍需单独同步 `Silis-Aliya/sullyos-workers` 并等待 `sullyos-amsg` 生产部署完成；只看到 Vercel 构建成功不能代表 Worker 已更新。
+
 ## Android / Capacitor
 
 ```bash
@@ -210,6 +247,8 @@ pnpm cap:android
 ```
 
 然后在 Android Studio 里运行或打包 APK。
+
+当前上游基线还加入了可选的 AMSG2 原生 FCM 通道。普通浏览器/PWA 构建不会加载 Capacitor Push Notifications，也不会因此改变现有 Web Push；只有 Capacitor 模式显式启用 `VITE_AMSG_NATIVE_PUSH=true` 时才注册原生 FCM token。Worker 端需要另行配置 Firebase 服务账号相关 Secrets，完整步骤见 [`docs/capacitor-fcm-tiao.md`](./docs/capacitor-fcm-tiao.md)。
 
 ## 设置入口
 
@@ -268,7 +307,7 @@ Instant Push（发完消息就能锁屏走人、角色回复好了自己以推�
 - **本 Fork 以跨设备体验连续性为边界**：用户和角色后续仍需使用的持久数据、配置、操作结果及创作内容，必须同时覆盖完整导入导出与 QuickSync；新增、修改、删除遵守同一迁移语义。
 - 用户生成且不可轻易重建的作品和素材属于存档，必须迁移真实数据；可重新抓取或重新生成的搜索结果、接口结果、TTS 等缓存不迁移。
 - 当前歌曲、队列和播放模式可以迁移；一起听关系、会话时间、切歌临时状态、角色选歌归属、主动唤醒计划、播放秒数和播放/暂停状态不迁移。
-- Code 项目文件正文留在桥接电脑，SullyOS 只迁移会话、摘要、记忆和文件卡片元数据。
+- Code 项目文件正文留在桥接电脑，SullyOS 只迁移会话、摘要、记忆和文件卡片元数据；从手机上传并归属 Code 对话的小型文本附件则迁移完整正文。
 - QuickSync 使用后写覆盖，目标是轻量且接近完整恢复，不承担实时多设备协同合并。
 
 - 用户、角色、角色分组及其新增、修改和删除，都必须同时进入完整导出/导入与 QuickSync 增量。

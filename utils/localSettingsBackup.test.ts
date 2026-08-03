@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+    ACTIVE_MSG_GLOBAL_CONFIG_MIRROR_READY_KEY,
     exportLocalStorageSettings,
     applyLocalStorageSettingsPatch,
     importLocalStorageSettings,
@@ -112,6 +113,34 @@ describe('localSettingsBackup', () => {
             fallbackApiName: '备用助手',
         });
         expect(localStorage.getItem('workbench_mode_v1')).toBe('sully');
+    });
+
+    it('backs up and incrementally restores the Active Message 2.0 connection identity', () => {
+        const config = JSON.stringify({
+            userId: 'amsg-user-1',
+            workerUrl: 'https://amsg.example.workers.dev',
+            serverToken: 'amsg-secret',
+            initializedAt: 123,
+            updatedAt: 456,
+        });
+        localStorage.setItem('amsg2_global_config_v1', config);
+
+        const snapshot = exportLocalStorageSettings();
+        expect(snapshot?.amsg2_global_config_v1).toBe(config);
+
+        localStorage.clear();
+        applyLocalStorageSettingsPatch({ amsg2_global_config_v1: config }, []);
+        expect(localStorage.getItem('amsg2_global_config_v1')).toBe(config);
+    });
+
+    it('marks a synced Active Message config deletion so stale device data stays deleted', () => {
+        localStorage.setItem('amsg2_global_config_v1', '{"userId":"old"}');
+
+        applyLocalStorageSettingsPatch({}, ['amsg2_global_config_v1']);
+
+        expect(localStorage.getItem('amsg2_global_config_v1')).toBeNull();
+        expect(localStorage.getItem(ACTIVE_MSG_GLOBAL_CONFIG_MIRROR_READY_KEY)).toBe('1');
+        expect(exportLocalStorageSettings()).not.toHaveProperty(ACTIVE_MSG_GLOBAL_CONFIG_MIRROR_READY_KEY);
     });
 
     it('backs up Ears Lite API settings through os_api_config', () => {

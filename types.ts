@@ -97,7 +97,9 @@ export interface WorkbenchArtifact {
   size: number;
   sha256?: string;
   preview?: string;
-  storageKind: 'bridge' | 'blob';
+  /** 手机/浏览器上传的小型文本文件正文；受上传大小上限保护。 */
+  textContent?: string;
+  storageKind: 'bridge' | 'blob' | 'inline';
   blobRef?: string;
   createdAt: number;
   updatedAt: number;

@@ -1,5 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
-import { ActiveMsgStore } from './activeMsgStore';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY, ActiveMsgStore } from './activeMsgStore';
+import { ACTIVE_MSG_GLOBAL_CONFIG_MIRROR_READY_KEY } from './localSettingsBackup';
 import type { Amsg2ExpiredNoticeRecord, InstantPushReasoningBufferEntry } from '../types';
 
 // fake-indexeddb 已通过 test-setup.ts 自动注入. activeMsgStore.openDB 每次
@@ -188,5 +189,56 @@ describe('ActiveMsgStore 作废回执台账', () => {
     const list = await ActiveMsgStore.getExpiredNotices(charId);
     expect(list.find((r) => r.id === 'fresh')).toBeTruthy();
     expect(list.length).toBeLessThanOrEqual(10);
+  });
+});
+
+describe('ActiveMsgStore portable global config', () => {
+  beforeEach(() => {
+    localStorage.removeItem(ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY);
+    localStorage.removeItem(ACTIVE_MSG_GLOBAL_CONFIG_MIRROR_READY_KEY);
+  });
+
+  it('mirrors saved Worker identity and token into the portable settings layer', async () => {
+    localStorage.removeItem(ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY);
+    const saved = await ActiveMsgStore.saveGlobalConfig({
+      userId: uniqueSid('portable-user'),
+      workerUrl: 'https://amsg.example.workers.dev',
+      serverToken: 'portable-token',
+    });
+
+    expect(JSON.parse(localStorage.getItem(ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY) || '{}')).toMatchObject({
+      userId: saved.userId,
+      workerUrl: 'https://amsg.example.workers.dev',
+      serverToken: 'portable-token',
+    });
+  });
+
+  it('prefers a restored portable config over stale device-local IndexedDB config', async () => {
+    localStorage.setItem(ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY, JSON.stringify({
+      userId: uniqueSid('restored-user'),
+      workerUrl: 'https://restored.example.workers.dev',
+      serverToken: 'restored-token',
+      updatedAt: Date.now(),
+    }));
+
+    await expect(ActiveMsgStore.getGlobalConfig()).resolves.toMatchObject({
+      workerUrl: 'https://restored.example.workers.dev',
+      serverToken: 'restored-token',
+    });
+  });
+
+  it('does not revive stale IndexedDB config after a synced deletion', async () => {
+    await ActiveMsgStore.saveGlobalConfig({
+      userId: uniqueSid('deleted-user'),
+      workerUrl: 'https://stale.example.workers.dev',
+      serverToken: 'stale-token',
+    });
+    localStorage.removeItem(ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY);
+    localStorage.setItem(ACTIVE_MSG_GLOBAL_CONFIG_MIRROR_READY_KEY, '1');
+
+    await expect(ActiveMsgStore.getGlobalConfig()).resolves.toMatchObject({
+      userId: '',
+      workerUrl: '',
+    });
   });
 });

@@ -1230,3 +1230,30 @@ Last recorded stable deployment was `ecc01ab` on remote `master` from 2026-07-21
 - QuickSync dispatches the changed store list after applying a delta. An already-open Workbench reloads its current conversation when any `workbench_*` store changed, so users no longer need to leave and re-enter Code.
 - Modern full backups carry an explicit local-settings section even when it is empty. Full import replaces portable settings and removes allowed target keys absent from that section; legacy backups without the section remain non-destructive. QuickSync continues to use explicit setting upserts and deletes rather than replacement.
 - Progress-card structured-output hardening remains proposed only. The current progress-card prompts and parser were not changed in this batch.
+
+# 2026-08-03 Code Mobile Text File Upload
+
+- Added a paperclip upload entry to the Code composer for iOS/iPadOS and desktop browsers.
+- Supported input covers Markdown, plain text, configuration files, and common source-code extensions. Binary-looking files are rejected.
+- Uploads are complete or rejected: 64 KB per file, up to 4 files and 128 KB per batch. No partial text is silently sent to a model.
+- User-uploaded files use inline `workbench_artifacts` and `file` messages. The file card keeps name, MIME type, size, preview, and full text, and can be downloaded locally without the computer bridge.
+- `workbenchContentForContext` serializes the full file body. The existing CLI bridge, fallback API, and character Code consultation paths all consume that same serializer, so the AI assistant and participating character see the same attachment.
+- Inline text travels with the existing Workbench full-backup and QuickSync stores. This is intentionally different from large bridge/project artifacts, whose bodies remain on the computer.
+- No static character or assistant prompt was changed.
+- Verification passed:
+  - `pnpm vitest run utils/workbenchFileUpload.test.ts utils/workbenchWebpageSharing.test.ts` (7 tests)
+  - `pnpm vitest run utils/workbenchFileUpload.test.ts utils/workbenchWebpageSharing.test.ts utils/backupRoundtrip.test.ts utils/quickSync.test.ts` (26 tests)
+  - all 16 `utils/workbench*.test.ts` files (45 tests)
+  - `pnpm build`
+
+# 2026-08-03 Backup Coverage Audit: Code Files And Active Message 2.0
+
+- Re-audited full export/import and QuickSync against the fork continuity rule. QuickSync is a record-level delta: unchanged rows are omitted, while a changed row is transferred in full and deletions use explicit keys/tombstones. It is not a byte-level diff within one row.
+- User-uploaded Code text files remain complete inline `workbench_messages` / `workbench_artifacts` data and therefore carry their full text through both backup paths. Bridge/project artifacts remain metadata-only; their large file bodies stay on the connected computer because they are processing inputs rather than SullyOS-owned memory or creations.
+- Character-level Active Message 2.0 switches, schedules and secondary-model config already travel inside `characters`; delivered chat messages travel inside `messages`.
+- Added a portable mirror for Active Message 2.0 global `workerUrl`, `serverToken`, `userId` and timestamps. Full backup and QuickSync now include additions, changes and deletion of this connection identity. Existing installs lazily seed the mirror from the legacy `ActiveMsg` IndexedDB record.
+- A synced deletion is marked locally so an older stale IndexedDB value cannot revive a Worker URL or token that the source device explicitly removed.
+- Browser `PushSubscription`, device push endpoint, inbox, outbound sessions, pending tool calls, reasoning buffers, wake/runtime queues and expired-notice bookkeeping remain intentionally device-local. They describe an in-flight browser/Worker session, not portable user data; a restored device must grant notification permission and register its own subscription.
+- Focused backup verification: `pnpm vitest run utils/activeMsgStore.test.ts utils/localSettingsBackup.test.ts utils/quickSync.test.ts utils/backupRoundtrip.test.ts utils/workbenchFileUpload.test.ts` (52 tests passed).
+- Active Message client/runtime regression verification: 7 files, 221 tests passed.
+- Production build: `pnpm build` passed.

@@ -57,6 +57,10 @@ import {
     setWorkbenchBackgroundApproval,
     subscribeWorkbenchBackgroundTasks,
 } from '../utils/workbenchBackgroundTasks';
+import {
+    prepareWorkbenchTextFiles,
+    WORKBENCH_TEXT_FILE_ACCEPT,
+} from '../utils/workbenchFileUpload';
 import { QUICK_SYNC_APPLIED_EVENT } from '../utils/quickSync';
 import WebpageShareCard from '../components/chat/WebpageShareCard';
 
@@ -567,7 +571,9 @@ const workbenchMessageTextForCopy = (message: WorkbenchMessage) => {
             `文件：${artifact.name}`,
             artifact.relativePath ? `路径：${artifact.relativePath}` : '',
             artifact.mimeType ? `类型：${artifact.mimeType}` : '',
-            artifact.preview ? `预览：\n${artifact.preview}` : '',
+            typeof artifact.textContent === 'string'
+                ? `正文：\n${artifact.textContent}`
+                : artifact.preview ? `预览：\n${artifact.preview}` : '',
         ].filter(Boolean).join('\n');
     }
 
@@ -917,6 +923,7 @@ const WorkbenchApp: React.FC = () => {
     const pinBottomAfterIndexResizeRef = useRef(true);
     const codexAvatarInputRef = useRef<HTMLInputElement | null>(null);
     const imageInputRef = useRef<HTMLInputElement | null>(null);
+    const textFileInputRef = useRef<HTMLInputElement | null>(null);
     const messagePressTimerRef = useRef<number | null>(null);
     const messagePressMovedRef = useRef(false);
     const workbenchXhsCachesRef = useRef(createWorkbenchXhsCaches());
@@ -2584,6 +2591,64 @@ const WorkbenchApp: React.FC = () => {
         }
     };
 
+    const sendTextFiles = async (files?: FileList | null) => {
+        if (!files?.length || busy) return;
+        setBusy(true);
+        setEmojiPanelOpen(false);
+        try {
+            const preparedFiles = await prepareWorkbenchTextFiles(files);
+            if (!preparedFiles.length) return;
+            let s = session || await createWorkbenchSession(activeSpace);
+            if (s.title === '新对话' || s.title === WORKBENCH_SPACES[activeSpace].title) {
+                s = { ...s, title: deriveConversationTitle(`文件：${preparedFiles[0].name}`) };
+                await DB.saveWorkbenchSession(s);
+            }
+            setSession(s);
+
+            const baseTime = Date.now();
+            for (const [index, prepared] of preparedFiles.entries()) {
+                const messageId = makeId('wbm');
+                const now = baseTime + index;
+                const artifact: WorkbenchArtifact = {
+                    id: makeId('wba'),
+                    sessionId: s.id,
+                    messageId,
+                    name: prepared.name,
+                    mimeType: prepared.mimeType,
+                    size: prepared.size,
+                    preview: prepared.preview,
+                    textContent: prepared.textContent,
+                    storageKind: 'inline',
+                    createdAt: now,
+                    updatedAt: now,
+                };
+                await DB.saveWorkbenchArtifact(artifact);
+                await appendMessage({
+                    id: messageId,
+                    sessionId: s.id,
+                    role: 'user',
+                    type: 'file',
+                    kind: 'chat',
+                    mode: 'codex',
+                    content: prepared.name,
+                    createdAt: now,
+                    status: 'sent',
+                    metadata: {
+                        source: 'user-upload',
+                        artifact,
+                    },
+                });
+            }
+            setConversations(await loadConversations());
+            addToast(`已上传 ${preparedFiles.length} 个文件`, 'success');
+        } catch (error: any) {
+            addToast(error?.message || '文件读取失败', 'error');
+        } finally {
+            if (textFileInputRef.current) textFileInputRef.current.value = '';
+            setBusy(false);
+        }
+    };
+
     const deleteConversation = async (sessionId: string) => {
         const target = conversations.find(item => item.id === sessionId);
         if (!target) return;
@@ -3046,6 +3111,26 @@ const WorkbenchApp: React.FC = () => {
                                     accept="image/*"
                                     className="hidden"
                                     onChange={event => void sendImage(event.target.files?.[0])}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => textFileInputRef.current?.click()}
+                                    disabled={busy}
+                                    className="h-8 w-8 rounded-lg flex items-center justify-center active:scale-95 disabled:opacity-35 bg-white/70 text-slate-500 border border-slate-200"
+                                    aria-label="上传文本或代码文件"
+                                    title="上传文件"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M21.4 11.6 12 21a6 6 0 0 1-8.5-8.5l10-10a4 4 0 0 1 5.7 5.7l-10 10a2 2 0 1 1-2.8-2.8l9.3-9.3" />
+                                    </svg>
+                                </button>
+                                <input
+                                    ref={textFileInputRef}
+                                    type="file"
+                                    accept={WORKBENCH_TEXT_FILE_ACCEPT}
+                                    multiple
+                                    className="hidden"
+                                    onChange={event => void sendTextFiles(event.target.files)}
                                 />
                                 <button
                                     onClick={() => void send()}

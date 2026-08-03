@@ -647,8 +647,18 @@ export const sendWorkbenchFallbackMessage = async (
 
 export const downloadWorkbenchArtifact = async (
     config: WorkbenchBridgeConfig,
-    artifact: Pick<WorkbenchArtifact, 'name' | 'relativePath'>,
+    artifact: WorkbenchArtifact,
 ): Promise<void> => {
+    if (artifact.storageKind === 'inline' && typeof artifact.textContent === 'string') {
+        const blob = new Blob([artifact.textContent], { type: artifact.mimeType || 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = artifact.name || 'download.txt';
+        anchor.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+        return;
+    }
     if (!config.bridgeUrl.trim() || !artifact.relativePath) throw new Error('电脑桥接未连接或文件路径无效');
     const base = config.bridgeUrl.trim().replace(/\/+$/, '');
     const projectQuery = config.activeWorkbenchProjectId ? `&projectId=${encodeURIComponent(config.activeWorkbenchProjectId)}` : '';
@@ -1051,6 +1061,17 @@ const formatWorkbenchXhsNoteForContext = (note: any): string => {
 };
 
 export const workbenchContentForContext = (m: WorkbenchMessage): string => {
+    if (m.type === 'file' && m.metadata?.artifact) {
+        const artifact = m.metadata.artifact as WorkbenchArtifact;
+        const textContent = typeof artifact.textContent === 'string' ? artifact.textContent : '';
+        return [
+            '[Code 文件]',
+            `文件名：${artifact.name || m.content || '未命名文件'}`,
+            artifact.mimeType ? `类型：${artifact.mimeType}` : '',
+            Number.isFinite(artifact.size) ? `大小：${artifact.size} bytes` : '',
+            textContent ? `正文开始\n${textContent}\n正文结束` : artifact.preview ? `预览：\n${artifact.preview}` : '正文：未保存在本机',
+        ].filter(Boolean).join('\n');
+    }
     if (m.type === 'webpage_card') {
         const webpage = m.metadata?.webpage || {};
         const sender = m.metadata?.sharedBy === 'user'
