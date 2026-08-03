@@ -43,4 +43,35 @@ describe('workbenchToChatMessages hidden receipts', () => {
             },
         });
     });
+
+    it('keeps completed Codex output visible through relay-compatible user context', () => {
+        const char = { id: 'char-1', name: 'Silis' } as any;
+        const messages = workbenchToChatMessages([
+            {
+                id: 'codex-result',
+                sessionId: 'session-1',
+                role: 'codex',
+                kind: 'chat',
+                type: 'text',
+                mode: 'codex',
+                content: '已完成文件检查，测试全部通过。',
+                createdAt: 1,
+                status: 'sent',
+                metadata: {
+                    speakerName: 'Codex',
+                },
+            },
+        ] as any, char, '');
+
+        expect(messages).toHaveLength(1);
+        expect(messages[0]).toMatchObject({
+            role: 'user',
+            metadata: {
+                source: 'workbench',
+                workbenchRole: 'codex',
+            },
+        });
+        expect(messages[0].content).toContain('外部 AI 助理 Code 已完成的输出');
+        expect(messages[0].content).toContain('测试全部通过');
+    });
 });

@@ -1306,18 +1306,19 @@ export const workbenchToChatMessages = (
         const isCliAgent = m.role === 'codex';
         const isHiddenContextReceipt = m.role === 'system' && m.metadata?.hidden === true;
         if (m.role !== 'user' && !isCurrentCharacter && !isCliAgent && !isHiddenContextReceipt) return null;
-        // Keep all three speakers structurally distinct. CLI/Codex is external
-        // system context, never user text or the character's assistant history.
-        // Hidden Code receipts are also system context: invisible in the UI, but
-        // readable by both the CLI agent and the character on later turns.
+        // Keep the current character as assistant history. External CLI output is
+        // carried in a compatibility-safe user-role envelope because several
+        // OpenAI-compatible relays discard system messages that appear mid-thread.
+        // The envelope explicitly preserves authorship, so it is not mistaken for
+        // either the user or the character. Hidden receipts remain system context.
         const role: Message['role'] = isCurrentCharacter
             ? 'assistant'
-            : isCliAgent || isHiddenContextReceipt
+            : isHiddenContextReceipt
                 ? 'system'
                 : 'user';
         const sourceContent = workbenchContentForContext(m);
         const contentText = isCliAgent
-            ? `AI 助手 ${workbenchSpeaker(m)} 的发言：${sourceContent}`
+            ? `[Code 区记录：以下是外部 AI 助理 ${workbenchSpeaker(m)} 已完成的输出，不是用户发言，也不是你说过的话。]\n${sourceContent}`
             : sourceContent;
         return {
             id: WORKBENCH_SYNTHETIC_ID_BASE - index,

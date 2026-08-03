@@ -2543,9 +2543,10 @@ const WorkbenchApp: React.FC = () => {
         setSession(s);
         setEmojiPanelOpen(false);
         try {
-            const recent = messages
-                .filter(message => message.sessionId === s.id)
-                .slice(-80);
+            // Read the persisted thread at generation time. A Codex result may
+            // already be visible/saved while this render still holds an older
+            // React messages snapshot.
+            const recent = (await DB.getWorkbenchMessages(s.id, Number.MAX_SAFE_INTEGER)).slice(-80);
             if (!recent.length) {
                 addToast('先在 Code 里写一点内容，再催动角色回应', 'info');
                 return;

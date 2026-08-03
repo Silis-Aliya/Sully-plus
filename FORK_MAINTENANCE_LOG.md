@@ -66,6 +66,13 @@ Current effective state after the 2026-08-03 upstream refresh:
 - Authentication failures, expired jobs, explicit bridge errors, cancellations, and invalid repeated status payloads now all leave the running state instead of silently continuing the one-hour poll loop.
 - This change touches only Workbench bridge task lifecycle code and tests; Memory Hub / Ombre bridge and VPS WIP remain excluded.
 
+## 2026-08-03 Character Reads Completed Code Output
+
+- Character generation in Code now reloads the current Workbench thread directly from IndexedDB before building its request, rather than trusting a potentially stale React `messages` closure after a background Codex result arrives.
+- Completed Codex messages are carried as an explicitly attributed external-AI context envelope using a relay-compatible user role. This avoids OpenAI-compatible relays that discard mid-thread `system` messages while still telling the character the content was written by Code, not by the user or itself.
+- Existing hidden Code action receipts remain system context. Parallel generations still cannot receive messages created after their API request began; a later character generation now reliably receives the persisted Codex result.
+- Memory Hub / Ombre bridge and VPS WIP remain untouched and excluded.
+
 ## 2026-08-03 Upstream Active Message 2.0 Refresh
 
 - Fetched and merged `upstream/master` through `7fb5ccad`; local merge commit is `155a17f4` (`Merge upstream Active Message 2.0 update`).

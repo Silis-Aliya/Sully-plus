@@ -51,6 +51,12 @@ describe('Workbench foreground UX', () => {
         expect(workbenchSource).not.toContain('disabled={!input.trim() || busy}');
     });
 
+    it('reloads the persisted Code thread before a character generation starts', () => {
+        expect(workbenchSource).toContain(
+            "const recent = (await DB.getWorkbenchMessages(s.id, Number.MAX_SAFE_INTEGER)).slice(-80)",
+        );
+    });
+
     it('restores the current conversation before the async database refresh finishes', () => {
         expect(workbenchSource).toContain('let workbenchViewSnapshot: WorkbenchViewSnapshot | null = null');
         expect(workbenchSource).toContain(
