@@ -1,5 +1,11 @@
 # Sully Plus
 
+## Current Upstream Baseline
+
+- Upstream SullyOS is merged through `7fb5ccad` (2026-08-03), including Active Message 2.0 multitask/background tools, analytics, Story Theater follow-ups, voice autoplay controls, date-history improvements, and updated worker bundles.
+- Plus-specific music together behavior, XHS phone/Lite paths, split OS contexts, backup behavior, and the private proxy worker default remain preserved.
+- Local Memory Hub / Ombre bridge and VPS notes are work in progress and are intentionally excluded from release commits. If that status or behavior changes, update `FORK_MAINTENANCE_LOG.md` before publishing.
+
 > **维护状态：主维护线。**
 >
 > 以后 SullyOS 二改的主要开发、语音/Ears Lite、上游合并和私有部署准备都以 `Silis-Aliya/Sully-plus` 为准。公开 fork 只保留当前快照，不再作为主要开发线。

@@ -33,13 +33,32 @@ Current known baseline:
 
 This section supersedes the stale repository/baseline bullets inside the copied Next-Window Prompt above. Do not edit that prompt block without first showing the full revised prompt to the user for confirmation.
 
-Current effective state after the 2026-08-02 upstream refresh:
+Current effective state after the 2026-08-03 upstream refresh:
 
-- Local branch `codex/merge-upstream-plus-maintenance` is at `7088a48`.
-- `upstream/master` is merged through `8c640ec`.
-- `origin/master` and `origin/codex/merge-upstream-plus-maintenance` remain published at `13cc0be`; the 2026-08-02 Story Theater merge has not been pushed yet.
+- Local upstream merge commit is `155a17f4` on `codex/merge-upstream-plus-maintenance`.
+- `upstream/master` is merged through `7fb5ccad`.
+- `origin/master` and `origin/codex/merge-upstream-plus-maintenance` remain published at `c5b69a36`; the 2026-08-03 merge has not been pushed yet.
 - Private Plus / Vercel publishing should use `origin/master` for `Silis-Aliya/Sully-plus.git`; verify the Vercel dashboard before treating production as updated.
 - Local Memory Hub / Ombre bridge and VPS notes are WIP-only and must stay uncommitted unless the user explicitly approves publishing them.
+
+## 2026-08-03 Upstream Active Message 2.0 Refresh
+
+- Fetched and merged `upstream/master` through `7fb5ccad`; local merge commit is `155a17f4` (`Merge upstream Active Message 2.0 update`).
+- Main upstream additions include Active Message 2.0 multitask/background tools and MCP support, analytics, Story Theater fixes, voice autoplay controls, date-history/memory improvements, worker deployment updates, and regenerated worker bundles.
+- Conflict resolution preserved Plus behavior:
+  - retained together-listening numbered song selection, share/invite cards, leave receipts, live playback snapshots, and play-before-accept semantics;
+  - kept music invite cards on the sender side with the sender's outer avatar, while HTML cards remain standalone modules;
+  - retained XHS Lite simple mode and the local XHS phone/Pixel MCP path for foreground chat; fire-pack prompts expose only worker-reachable services;
+  - retained split OS contexts, Ears/voice paths, Workbench + Story Theater backup data, portable message cleanup, GitHub/WebDAV backup UI, and device context;
+  - retained the private default proxy worker `https://sullyos-main-proxy.sully-aliya.workers.dev`.
+- Active Message fire-pack prompts intentionally omit stale build-time time/weather/news/schedule/music/VR-room state and local browser-only scheduling instructions; the worker fills trigger-time state instead. Normal foreground chat keeps the existing music, schedule, device, and phone behavior.
+- Validation passed:
+  - targeted music/parser/prompt/Active Message tests: 8 files, 124 tests;
+  - follow-up layout/state-sync tests: 5 files, 43 tests;
+  - full `pnpm vitest run` suite;
+  - `pnpm build`, including all worker bundle generation and the production Vite build.
+- Memory Hub / Ombre bridge and VPS WIP was stashed before the merge and restored afterward without conflict. It remains uncommitted and excluded from the merge. If its status or behavior changes later, update this maintenance log before publishing.
+- This merge has not been pushed to private Plus / Vercel yet.
 
 ## 2026-08-02 Upstream Story Theater Refresh
 
