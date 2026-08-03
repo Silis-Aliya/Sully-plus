@@ -1,10 +1,13 @@
 import type {
     WorkbenchBridgeApproval,
     WorkbenchBridgeApprovalDecision,
+    WorkbenchBridgeApprovalRecord,
+    WorkbenchBridgeJobProgress,
 } from './workbenchBridge';
+import { isWorkbenchTaskCancelledError } from './workbenchBridge';
 
 export type WorkbenchBackgroundSpeaker = 'codex' | 'character';
-export type WorkbenchBackgroundStatus = 'running' | 'waiting_approval' | 'done' | 'error';
+export type WorkbenchBackgroundStatus = 'running' | 'waiting_approval' | 'cancelling' | 'done' | 'cancelled' | 'error';
 
 export interface WorkbenchBackgroundTaskSnapshot {
     id: string;
@@ -14,6 +17,12 @@ export interface WorkbenchBackgroundTaskSnapshot {
     startedAt: number;
     finishedAt?: number;
     error?: string;
+    phase?: string;
+    activity?: string;
+    activityDetail?: string;
+    lastActivityAt?: number;
+    approvalHistory?: WorkbenchBridgeApprovalRecord[];
+    cancel?: () => Promise<void>;
     approval?: {
         request: WorkbenchBridgeApproval;
         decide: (decision: WorkbenchBridgeApprovalDecision) => Promise<void>;
@@ -37,11 +46,15 @@ const emit = (snapshot: WorkbenchBackgroundTaskSnapshot) => {
     listeners.forEach(listener => listener({ ...snapshot }));
 };
 
-export const getRunningWorkbenchTask = (sessionId?: string | null) => {
+export const getRunningWorkbenchTask = (
+    sessionId?: string | null,
+    speaker?: WorkbenchBackgroundSpeaker,
+) => {
     if (!sessionId) return null;
     return Array.from(tasks.values()).find(task => (
         task.sessionId === sessionId
-        && (task.status === 'running' || task.status === 'waiting_approval')
+        && (!speaker || task.speaker === speaker)
+        && (task.status === 'running' || task.status === 'waiting_approval' || task.status === 'cancelling')
     )) || null;
 };
 
@@ -54,13 +67,29 @@ export const setWorkbenchBackgroundApproval = (
     sessionId: string,
     approval: WorkbenchBackgroundTaskSnapshot['approval'] | null,
 ) => {
-    const task = Array.from(tasks.values()).find(item => (
-        item.sessionId === sessionId
-        && (item.status === 'running' || item.status === 'waiting_approval')
-    ));
+    const task = getRunningWorkbenchTask(sessionId, 'codex');
     if (!task) return;
     task.approval = approval || undefined;
-    task.status = approval ? 'waiting_approval' : 'running';
+    if (task.status !== 'cancelling') {
+        task.status = approval ? 'waiting_approval' : 'running';
+    }
+    emit(task);
+};
+
+export const updateWorkbenchBackgroundProgress = (
+    sessionId: string,
+    progress: WorkbenchBridgeJobProgress,
+    cancel: () => Promise<void>,
+) => {
+    const task = getRunningWorkbenchTask(sessionId, 'codex');
+    if (!task) return;
+    task.status = progress.status;
+    task.phase = progress.phase;
+    task.activity = progress.activity;
+    task.activityDetail = progress.activityDetail;
+    task.lastActivityAt = progress.lastActivityAt;
+    task.approvalHistory = progress.approvalHistory;
+    task.cancel = cancel;
     emit(task);
 };
 
@@ -69,7 +98,9 @@ export const runWorkbenchBackgroundTask = async <T>(
     speaker: WorkbenchBackgroundSpeaker,
     runner: () => Promise<T>,
 ): Promise<T> => {
-    if (getRunningWorkbenchTask(sessionId)) throw new Error('当前 Code 对话仍有回复正在生成');
+    if (getRunningWorkbenchTask(sessionId, speaker)) {
+        throw new Error(speaker === 'codex' ? '当前 Code 对话已有 AI 助理任务正在运行' : '当前角色仍在生成回复');
+    }
 
     const snapshot: WorkbenchBackgroundTaskSnapshot = {
         id: `workbench_task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -77,6 +108,9 @@ export const runWorkbenchBackgroundTask = async <T>(
         speaker,
         status: 'running',
         startedAt: Date.now(),
+        activity: speaker === 'codex' ? '正在连接 Code 助理' : '正在等待角色回应',
+        lastActivityAt: Date.now(),
+        approvalHistory: [],
     };
     tasks.set(snapshot.id, snapshot);
     emit(snapshot);
@@ -88,7 +122,7 @@ export const runWorkbenchBackgroundTask = async <T>(
         emit(snapshot);
         return result;
     } catch (error: any) {
-        snapshot.status = 'error';
+        snapshot.status = isWorkbenchTaskCancelledError(error) ? 'cancelled' : 'error';
         snapshot.finishedAt = Date.now();
         snapshot.error = error?.message || '后台回复失败';
         emit(snapshot);

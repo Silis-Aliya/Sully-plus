@@ -21,6 +21,7 @@ import {
     fetchWorkbenchModels,
     fetchWorkbenchFallbackModels,
     importWorkbenchProjectsToBridge,
+    isWorkbenchTaskCancelledError,
     loadWorkbenchProjectsSnapshot,
     loadWorkbenchBridgeConfig,
     saveWorkbenchProjectsSnapshot,
@@ -56,13 +57,18 @@ import {
     setActiveWorkbenchSessionSnapshot,
     setWorkbenchBackgroundApproval,
     subscribeWorkbenchBackgroundTasks,
+    updateWorkbenchBackgroundProgress,
 } from '../utils/workbenchBackgroundTasks';
+import type { WorkbenchBackgroundTaskSnapshot } from '../utils/workbenchBackgroundTasks';
 import {
     prepareWorkbenchTextFiles,
     WORKBENCH_TEXT_FILE_ACCEPT,
 } from '../utils/workbenchFileUpload';
 import { QUICK_SYNC_APPLIED_EVENT } from '../utils/quickSync';
 import WebpageShareCard from '../components/chat/WebpageShareCard';
+import Modal from '../components/os/Modal';
+import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
+import { buildWorkbenchForwardData } from '../utils/workbenchForward';
 
 type WorkbenchSpace = 'work' | 'inspiration';
 type WorkbenchConversationItem = WorkbenchSession & { messageCount: number };
@@ -70,6 +76,27 @@ type WorkbenchViewSnapshot = {
     session: WorkbenchSession | null;
     messages: WorkbenchMessage[];
     conversations: WorkbenchConversationItem[];
+};
+
+const formatRunDuration = (milliseconds: number): string => {
+    const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+};
+
+const approvalDecisionLabel = (decision: WorkbenchBridgeApprovalDecision): string => {
+    if (decision === 'acceptForSession') return '本次对话允许';
+    if (decision === 'accept') return '允许一次';
+    return '已拒绝';
+};
+
+const codexTaskStatusLabel = (task: WorkbenchBackgroundTaskSnapshot | null, canExecute: boolean): string => {
+    if (!task) return canExecute ? '待命' : '电脑未连接';
+    if (task.status === 'waiting_approval') return '等待批准';
+    if (task.status === 'cancelling') return '正在取消';
+    if (task.phase === 'starting') return '等待 Codex 进程';
+    return task.activity || '正在执行';
 };
 
 let workbenchViewSnapshot: WorkbenchViewSnapshot | null = null;
@@ -773,11 +800,13 @@ const WorkbenchIndex: React.FC<{
     usageText: string;
     open: boolean;
     canExecute: boolean;
+    codexTask: WorkbenchBackgroundTaskSnapshot | null;
+    onOpenAssistantPanel: () => void;
     onNewConversation: () => void;
     onSelectConversation: (sessionId: string) => void;
     onRenameConversation: (sessionId: string, title: string) => void;
     onDeleteConversation: (sessionId: string) => void;
-}> = ({ activeSessionId, conversations, usageText, open, canExecute, onNewConversation, onSelectConversation, onRenameConversation, onDeleteConversation }) => {
+}> = ({ activeSessionId, conversations, usageText, open, canExecute, codexTask, onOpenAssistantPanel, onNewConversation, onSelectConversation, onRenameConversation, onDeleteConversation }) => {
 
     return (
         <aside
@@ -794,11 +823,30 @@ const WorkbenchIndex: React.FC<{
                     </button>
                 </div>
 
-                <div className="border-b border-slate-200/55 pb-3">
+                <div className="space-y-2 border-b border-slate-200/55 pb-3">
                     <div className="flex items-center gap-2 rounded-lg bg-slate-200/70 px-2 py-2">
                         <span className={`h-2 w-2 rounded-full ${canExecute ? 'bg-emerald-500' : 'bg-amber-400'}`} />
                         <span className="text-xs font-semibold text-slate-700">{canExecute ? '电脑已连接' : '仅聊天'}</span>
                     </div>
+                    <button
+                        type="button"
+                        onClick={onOpenAssistantPanel}
+                        className={`flex w-full items-center gap-2 rounded-lg border px-2 py-2 text-left transition-colors active:scale-[0.99] ${codexTask?.status === 'waiting_approval' ? 'border-amber-200 bg-amber-50/90' : 'border-white/70 bg-white/66 hover:bg-white/85'}`}
+                        aria-label="打开 AI 助理运行面板"
+                    >
+                        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${codexTask ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="m5 7 4 4-4 4M12 16h7" />
+                            </svg>
+                        </span>
+                        <span className="min-w-0 flex-1">
+                            <span className="block text-xs font-semibold text-slate-700">AI 助理</span>
+                            <span className={`block truncate text-[10px] ${codexTask?.status === 'waiting_approval' ? 'text-amber-600' : 'text-slate-400'}`}>
+                                {codexTaskStatusLabel(codexTask, canExecute)}
+                            </span>
+                        </span>
+                        {codexTask && <span className={`h-2 w-2 shrink-0 rounded-full ${codexTask.status === 'waiting_approval' ? 'bg-amber-400' : 'bg-emerald-500 animate-pulse'}`} />}
+                    </button>
                 </div>
 
 
@@ -863,6 +911,7 @@ const WorkbenchApp: React.FC = () => {
         activeCharacterId,
         userProfile,
         groups,
+        characterGroups,
         realtimeConfig,
         theme: osTheme,
     } = useOS();
@@ -877,8 +926,12 @@ const WorkbenchApp: React.FC = () => {
     const [testResult, setTestResult] = useState('');
     const [testing, setTesting] = useState(false);
     const [input, setInput] = useState('');
-    const [busy, setBusy] = useState(false);
-    const [thinkingSpeaker, setThinkingSpeaker] = useState<'codex' | 'character' | null>(null);
+    const [codexTask, setCodexTask] = useState<WorkbenchBackgroundTaskSnapshot | null>(null);
+    const [characterTask, setCharacterTask] = useState<WorkbenchBackgroundTaskSnapshot | null>(null);
+    const [assistantPanelOpen, setAssistantPanelOpen] = useState(false);
+    const [runClock, setRunClock] = useState(Date.now());
+    const [cancelSubmitting, setCancelSubmitting] = useState(false);
+    const [fileUploadBusy, setFileUploadBusy] = useState(false);
     const [bridgeApproval, setBridgeApproval] = useState<{
         request: WorkbenchBridgeApproval;
         decide: (decision: WorkbenchBridgeApprovalDecision) => Promise<void>;
@@ -907,6 +960,9 @@ const WorkbenchApp: React.FC = () => {
     const [quotedMessage, setQuotedMessage] = useState<WorkbenchMessage | null>(null);
     const [selectionMode, setSelectionMode] = useState(false);
     const [selectedMessageIds, setSelectedMessageIds] = useState<Set<string>>(() => new Set());
+    const [forwardModalOpen, setForwardModalOpen] = useState(false);
+    const [forwardGroupId, setForwardGroupId] = useState(GROUP_FILTER_ALL);
+    const [forwardBusy, setForwardBusy] = useState(false);
     const [modelOptions, setModelOptions] = useState<WorkbenchModelOption[]>([]);
     const [modelStatus, setModelStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
     const [fallbackModelOptions, setFallbackModelOptions] = useState<WorkbenchModelOption[]>([]);
@@ -928,6 +984,10 @@ const WorkbenchApp: React.FC = () => {
     const messagePressMovedRef = useRef(false);
     const workbenchXhsCachesRef = useRef(createWorkbenchXhsCaches());
     const workbenchLastXhsNotesRef = useRef<{ current: XhsNote[] }>({ current: [] });
+
+    const codexBusy = !!codexTask;
+    const characterBusy = !!characterTask;
+    const busy = codexBusy || characterBusy;
 
     const spaceMeta = WORKBENCH_SPACES[activeSpace];
     const bridgeReady = !!config.bridgeUrl.trim();
@@ -996,14 +1056,6 @@ const WorkbenchApp: React.FC = () => {
             || (characterId ? characters.find(c => c.id === characterId)?.avatar : '')
             || '';
     };
-    const thinkingAvatar = thinkingSpeaker === 'codex'
-        ? config.codexAvatar || ''
-        : thinkingSpeaker === 'character'
-            ? selectedParticipant?.avatar || ''
-            : '';
-    const thinkingInitial = thinkingSpeaker === 'character'
-        ? String(selectedParticipant?.name || '角').slice(0, 1)
-        : 'C';
     const currentMode: WorkbenchMode = participantEnabled ? 'sully' : 'codex';
     const workExecutable = bridgeStatus === 'online';
     const bridgeConfigured = !!config.bridgeUrl.trim();
@@ -1266,22 +1318,36 @@ const WorkbenchApp: React.FC = () => {
 
     useEffect(() => subscribeWorkbenchBackgroundTasks(task => {
         if (task.sessionId !== session?.id) return;
-        const running = task.status === 'running' || task.status === 'waiting_approval';
-        setBusy(running);
-        setThinkingSpeaker(running ? task.speaker : null);
-        setBridgeApproval(task.approval || null);
+        const running = task.status === 'running' || task.status === 'waiting_approval' || task.status === 'cancelling';
+        if (task.speaker === 'codex') {
+            setCodexTask(running ? task : null);
+            setBridgeApproval(task.approval || null);
+        } else {
+            setCharacterTask(running ? task : null);
+        }
         if (!running) {
+            setCancelSubmitting(false);
+            if (task.speaker === 'codex') setAssistantPanelOpen(false);
             void refresh();
-            if (task.status === 'done') addToast('Code 后台回复已完成', 'success');
+            if (task.status === 'done' && task.speaker === 'codex') addToast('Code 后台回复已完成', 'success');
+            if (task.status === 'cancelled') addToast('Code 任务已取消', 'info');
         }
     }), [session?.id]);
 
     useEffect(() => {
-        const task = getRunningWorkbenchTask(session?.id);
-        setBusy(!!task);
-        setThinkingSpeaker(task?.speaker || null);
-        setBridgeApproval(task?.approval || null);
+        const nextCodexTask = getRunningWorkbenchTask(session?.id, 'codex');
+        const nextCharacterTask = getRunningWorkbenchTask(session?.id, 'character');
+        setCodexTask(nextCodexTask);
+        setCharacterTask(nextCharacterTask);
+        setBridgeApproval(nextCodexTask?.approval || null);
     }, [session?.id]);
+
+    useEffect(() => {
+        if (!codexTask) return;
+        setRunClock(Date.now());
+        const timer = window.setInterval(() => setRunClock(Date.now()), 1_000);
+        return () => window.clearInterval(timer);
+    }, [codexTask?.id]);
 
     useEffect(() => {
         if (settingsOpen) void loadCodeMemories();
@@ -1961,6 +2027,42 @@ const WorkbenchApp: React.FC = () => {
         await deleteMessagesById(ids);
     };
 
+    const openForwardModal = () => {
+        if (!selectedMessageIds.size) return;
+        setForwardModalOpen(true);
+    };
+
+    const forwardSelectedToCharacter = async (targetCharId: string) => {
+        if (!session || forwardBusy) return;
+        const selected = messages.filter(message => selectedMessageIds.has(message.id));
+        if (!selected.length) return;
+        const target = characters.find(character => character.id === targetCharId);
+        if (!target) return;
+
+        setForwardBusy(true);
+        try {
+            const forwardData = buildWorkbenchForwardData(
+                selected,
+                userProfile.name || '用户',
+                session.title || 'Code 对话',
+            );
+            await DB.saveMessage({
+                charId: targetCharId,
+                role: 'user',
+                type: 'chat_forward',
+                content: JSON.stringify(forwardData),
+            });
+            setForwardModalOpen(false);
+            setSelectionMode(false);
+            setSelectedMessageIds(new Set());
+            addToast(`已将 ${selected.length} 条 Code 区记录转发给 ${target.name}`, 'success');
+        } catch (error: any) {
+            addToast(error?.message || 'Code 区记录转发失败', 'error');
+        } finally {
+            setForwardBusy(false);
+        }
+    };
+
     const canEditMessage = (message: WorkbenchMessage) => (
         message.type !== 'emoji'
         && message.type !== 'image'
@@ -2203,6 +2305,9 @@ const WorkbenchApp: React.FC = () => {
                         setBridgeApproval(null);
                         setWorkbenchBackgroundApproval(s.id, null);
                     },
+                    onProgress: (progress, cancel) => {
+                        updateWorkbenchBackgroundProgress(s.id, progress, cancel);
+                    },
                 });
                 setBridgeApproval(null);
                 setWorkbenchBackgroundApproval(s.id, null);
@@ -2280,7 +2385,7 @@ const WorkbenchApp: React.FC = () => {
         const text = (options?.type || 'text') === 'text'
             ? cleanWorkbenchContent(rawText)
             : rawText.trim();
-        if (!text || busy) return;
+        if (!text) return;
         const readableText = options?.type === 'emoji'
             ? `[表情: ${options.metadata?.emojiName || '表情包'}]`
             : text;
@@ -2300,7 +2405,6 @@ const WorkbenchApp: React.FC = () => {
             }
             : undefined;
         setQuotedMessage(null);
-        setBusy(true);
         const messageMetadata = options?.metadata ? { ...options.metadata } : undefined;
         const xhsNote = (options?.type || 'text') === 'text'
             ? await resolveWorkbenchXhsNote(text, realtimeConfig, addToast)
@@ -2380,10 +2484,11 @@ const WorkbenchApp: React.FC = () => {
             : [userMessage];
         try {
             if (userMessage.type !== 'emoji' && hasAssistantMention(text)) {
-                if (!assistantAvailable) {
+                if (codexBusy) {
+                    addToast('消息已记入当前对话；Code 助理仍在执行上一项任务', 'info');
+                } else if (!assistantAvailable) {
                     addToast('电脑未连接，备用聊天 API 也未配置', 'info');
                 } else {
-                    setThinkingSpeaker('codex');
                     const recent = [
                         ...messages.filter(message => message.sessionId === s.id),
                         ...savedTurnMessages,
@@ -2397,16 +2502,14 @@ const WorkbenchApp: React.FC = () => {
             }
             setConversations(await loadConversations());
         } catch (e: any) {
+            if (isWorkbenchTaskCancelledError(e)) return;
             if (isSilentBridgeOfflineError(e)) return;
             addToast(e?.message || '消息保存失败', 'error');
-        } finally {
-            setBusy(false);
-            setThinkingSpeaker(null);
         }
     };
 
     const nudgeAssistant = async () => {
-        if (busy) return;
+        if (codexBusy) return;
         if (!assistantAvailable) {
             addToast('电脑未连接，备用聊天 API 也未配置', 'info');
             return;
@@ -2414,8 +2517,6 @@ const WorkbenchApp: React.FC = () => {
         const s = session || await createWorkbenchSession(activeSpace);
         setSession(s);
         setEmojiPanelOpen(false);
-        setThinkingSpeaker('codex');
-        setBusy(true);
         try {
             const recent = messages
                 .filter(message => message.sessionId === s.id)
@@ -2426,16 +2527,14 @@ const WorkbenchApp: React.FC = () => {
             }
             await runWorkbenchBackgroundTask(s.id, 'codex', () => runAssistantReply(s, recent));
         } catch (e: any) {
+            if (isWorkbenchTaskCancelledError(e)) return;
             if (isSilentBridgeOfflineError(e)) return;
             addToast(e?.message || 'AI 助理回应失败', 'error');
-        } finally {
-            setBusy(false);
-            setThinkingSpeaker(null);
         }
     };
 
     const nudgeParticipant = async () => {
-        if (busy) return;
+        if (characterBusy) return;
         if (!participantEnabled || !selectedParticipant) {
             addToast('请先打开一起工作并选择角色', 'info');
             return;
@@ -2443,8 +2542,6 @@ const WorkbenchApp: React.FC = () => {
         const s = session || await createWorkbenchSession(activeSpace);
         setSession(s);
         setEmojiPanelOpen(false);
-        setThinkingSpeaker('character');
-        setBusy(true);
         try {
             const recent = messages
                 .filter(message => message.sessionId === s.id)
@@ -2532,23 +2629,22 @@ const WorkbenchApp: React.FC = () => {
             if (mentionedAssistant) {
                 if (!assistantAvailable) {
                     addToast('角色已 @AI 助理，但电脑未连接，备用聊天 API 也未配置', 'info');
+                } else if (getRunningWorkbenchTask(s.id, 'codex')) {
+                    addToast('角色已 @AI 助理；当前 Codex 任务完成后可再次请它回应', 'info');
                 } else {
-                    setThinkingSpeaker('codex');
-                    await runAssistantReply(
-                        s,
-                        [...recent, ...characterReplies, ...(codexMentionMessage ? [codexMentionMessage] : [])].slice(-10),
-                        `一起工作的角色 ${selectedParticipant.name} 在 Code 对话里 @ 了 AI 助理，请回应角色刚才 @ 你的内容。`,
-                    );
+                    await runWorkbenchBackgroundTask(s.id, 'codex', () => runAssistantReply(
+                            s,
+                            [...recent, ...characterReplies, ...(codexMentionMessage ? [codexMentionMessage] : [])].slice(-10),
+                            `一起工作的角色 ${selectedParticipant.name} 在 Code 对话里 @ 了 AI 助理，请回应角色刚才 @ 你的内容。`,
+                        ));
                 }
             }
             setConversations(await loadConversations());
             });
         } catch (e: any) {
+            if (isWorkbenchTaskCancelledError(e)) return;
             if (isSilentBridgeOfflineError(e)) return;
             addToast(e?.message || '角色回应失败', 'error');
-        } finally {
-            setBusy(false);
-            setThinkingSpeaker(null);
         }
     };
 
@@ -2572,6 +2668,17 @@ const WorkbenchApp: React.FC = () => {
         }
     };
 
+    const cancelActiveCodeTask = async () => {
+        if (!codexTask?.cancel || cancelSubmitting) return;
+        setCancelSubmitting(true);
+        try {
+            await codexTask.cancel();
+        } catch (error: any) {
+            setCancelSubmitting(false);
+            addToast(error?.message || '取消 Code 任务失败', 'error');
+        }
+    };
+
     const sendImage = async (file?: File | null) => {
         if (!file) return;
         try {
@@ -2592,8 +2699,8 @@ const WorkbenchApp: React.FC = () => {
     };
 
     const sendTextFiles = async (files?: FileList | null) => {
-        if (!files?.length || busy) return;
-        setBusy(true);
+        if (!files?.length || fileUploadBusy) return;
+        setFileUploadBusy(true);
         setEmojiPanelOpen(false);
         try {
             const preparedFiles = await prepareWorkbenchTextFiles(files);
@@ -2645,7 +2752,7 @@ const WorkbenchApp: React.FC = () => {
             addToast(error?.message || '文件读取失败', 'error');
         } finally {
             if (textFileInputRef.current) textFileInputRef.current.value = '';
-            setBusy(false);
+            setFileUploadBusy(false);
         }
     };
 
@@ -2863,74 +2970,27 @@ const WorkbenchApp: React.FC = () => {
                                 </div>
                                 );
                             })}
-                            {bridgeApproval && (
-                                <div className="ml-0 sm:ml-11 max-w-[min(34rem,calc(100vw-2rem))] rounded-lg border border-amber-200 bg-white px-3 py-3 shadow-sm">
-                                    <div className="text-sm font-semibold text-slate-800">
-                                        {bridgeApproval.request.kind === 'command' ? 'Codex 请求执行命令' : 'Codex 请求修改文件'}
-                                    </div>
-                                    {(bridgeApproval.request.command || bridgeApproval.request.grantRoot || bridgeApproval.request.reason) && (
-                                        <div className="mt-2 max-h-28 overflow-auto rounded-md bg-slate-50 px-2.5 py-2 text-xs text-slate-600 whitespace-pre-wrap break-all">
-                                            {bridgeApproval.request.command
-                                                || bridgeApproval.request.grantRoot
-                                                || bridgeApproval.request.reason}
-                                        </div>
-                                    )}
-                                    <div className="mt-3 flex flex-wrap gap-2">
-                                        {(!bridgeApproval.request.availableDecisions || bridgeApproval.request.availableDecisions.includes('accept')) && (
-                                            <button
-                                                type="button"
-                                                disabled={bridgeApproval.submitting}
-                                                onClick={() => void decideBridgeApproval('accept')}
-                                                className="h-8 rounded-md bg-slate-900 px-3 text-xs font-medium text-white disabled:opacity-50"
-                                            >
-                                                允许一次
-                                            </button>
-                                        )}
-                                        {bridgeApproval.request.availableDecisions?.includes('acceptForSession') && (
-                                            <button
-                                                type="button"
-                                                disabled={bridgeApproval.submitting}
-                                                onClick={() => void decideBridgeApproval('acceptForSession')}
-                                                className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 disabled:opacity-50"
-                                            >
-                                                本次对话允许
-                                            </button>
-                                        )}
-                                        <button
-                                            type="button"
-                                            disabled={bridgeApproval.submitting}
-                                            onClick={() => void decideBridgeApproval('decline')}
-                                            className="h-8 rounded-md border border-rose-200 bg-white px-3 text-xs font-medium text-rose-600 disabled:opacity-50"
-                                        >
-                                            拒绝
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-                            {busy && thinkingSpeaker && !bridgeApproval && (
-                                <div className={`flex gap-2.5 ${avatarRowAlign}`}>
-                                    {showAssistantAvatar && (thinkingAvatar ? (
+                            {characterTask && (
+                                <div className={`flex gap-2.5 ${avatarRowAlign}`} aria-label={`${selectedParticipant?.name || '角色'} 正在输入`} role="status">
+                                    {showAssistantAvatar && (selectedParticipant?.avatar ? (
                                         <WorkbenchAvatarImage
-                                            src={thinkingAvatar}
+                                            src={selectedParticipant.avatar}
                                             alt="avatar"
                                             style={{ transform: `translateY(${avatarOffsetY}px)` }}
-                                            fallbackLabel={thinkingInitial}
-                                            fallbackClassName={thinkingSpeaker === 'character' ? 'bg-violet-100 text-violet-700' : 'bg-slate-900 text-white'}
+                                            fallbackLabel={String(selectedParticipant?.name || '角').slice(0, 1)}
+                                            fallbackClassName="bg-violet-100 text-violet-700"
                                             className={`${avatarSizeClass} ${avatarRadiusClass} object-cover shadow-sm ring-1 ring-black/5 shrink-0`}
                                         />
                                     ) : (
-                                        <div
-                                            style={{ transform: `translateY(${avatarOffsetY}px)` }}
-                                            className={`${avatarSizeClass} ${avatarRadiusClass} ${thinkingSpeaker === 'character' ? 'bg-violet-100 text-violet-700' : 'bg-slate-900 text-white'} flex items-center justify-center text-[11px] font-semibold shrink-0`}
-                                        >
-                                            {thinkingInitial}
+                                        <div style={{ transform: `translateY(${avatarOffsetY}px)` }} className={`${avatarSizeClass} ${avatarRadiusClass} bg-violet-100 text-violet-700 flex items-center justify-center text-[11px] font-semibold shrink-0`}>
+                                            {String(selectedParticipant?.name || '角').slice(0, 1)}
                                         </div>
                                     ))}
-                                    <div className="rounded-2xl rounded-bl-sm bg-white border border-black/5 shadow-sm px-4 py-3">
-                                        <span className="flex items-center gap-1" aria-label="正在输入" role="status">
-                                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" />
-                                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce delay-75" />
-                                            <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce delay-150" />
+                                    <div className="rounded-2xl rounded-bl-sm border border-black/5 bg-white px-4 py-3 shadow-sm">
+                                        <span className="flex items-center gap-1">
+                                            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400" />
+                                            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400 delay-75" />
+                                            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400 delay-150" />
                                         </span>
                                     </div>
                                 </div>
@@ -2951,9 +3011,17 @@ const WorkbenchApp: React.FC = () => {
                                 <span className="text-xs font-semibold text-slate-600">已选 {selectedMessageIds.size} 条</span>
                                 <button
                                     type="button"
+                                    onClick={openForwardModal}
+                                    disabled={selectedMessageIds.size === 0 || forwardBusy}
+                                    className="ml-auto h-8 px-3 rounded-lg bg-slate-800 text-white text-xs font-semibold active:scale-95 disabled:opacity-40"
+                                >
+                                    转发
+                                </button>
+                                <button
+                                    type="button"
                                     onClick={deleteSelectedMessages}
                                     disabled={selectedMessageIds.size === 0}
-                                    className="ml-auto h-8 px-3 rounded-lg bg-rose-500 text-white text-xs font-semibold active:scale-95 disabled:opacity-40"
+                                    className="h-8 px-3 rounded-lg bg-rose-500 text-white text-xs font-semibold active:scale-95 disabled:opacity-40"
                                 >
                                     删除
                                 </button>
@@ -2992,9 +3060,8 @@ const WorkbenchApp: React.FC = () => {
                                                     key={`${emoji.name}-${emoji.url}`}
                                                     type="button"
                                                     onClick={() => sendEmoji(emoji)}
-                                                    disabled={busy}
                                                     title={emoji.name}
-                                                    className="aspect-square rounded-2xl bg-white p-2 shadow-sm relative flex flex-col items-center active:scale-95 disabled:opacity-40"
+                                                    className="aspect-square rounded-2xl bg-white p-2 shadow-sm relative flex flex-col items-center active:scale-95"
                                                 >
                                                     <span className="aspect-square w-full min-h-0">
                                                         <img
@@ -3055,7 +3122,7 @@ const WorkbenchApp: React.FC = () => {
                                     <button
                                         type="button"
                                         onClick={() => void nudgeParticipant()}
-                                        disabled={busy || !selectedParticipant}
+                                        disabled={characterBusy || !selectedParticipant}
                                         className="h-8 w-8 rounded-lg flex items-center justify-center active:scale-95 disabled:opacity-35 bg-white/70 text-slate-500 border border-slate-200"
                                         aria-label="催动角色回应"
                                         title="催动角色回应"
@@ -3068,7 +3135,7 @@ const WorkbenchApp: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={() => void nudgeAssistant()}
-                                    disabled={busy || !assistantAvailable}
+                                    disabled={codexBusy || !assistantAvailable}
                                     className="h-8 w-8 rounded-lg flex items-center justify-center active:scale-95 disabled:opacity-35 bg-white/70 text-slate-500 border border-slate-200"
                                     aria-label="请 AI 助理回应"
                                     title={assistantAvailable ? (workExecutable ? '请 CLI AI 助理回应' : '请备用 AI 助理回应') : 'AI 助理不可用'}
@@ -3094,8 +3161,7 @@ const WorkbenchApp: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={() => imageInputRef.current?.click()}
-                                    disabled={busy}
-                                    className="h-8 w-8 rounded-lg flex items-center justify-center active:scale-95 disabled:opacity-35 bg-white/70 text-slate-500 border border-slate-200"
+                                    className="h-8 w-8 rounded-lg flex items-center justify-center active:scale-95 bg-white/70 text-slate-500 border border-slate-200"
                                     aria-label="发送图片"
                                     title="发送图片"
                                 >
@@ -3115,7 +3181,7 @@ const WorkbenchApp: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={() => textFileInputRef.current?.click()}
-                                    disabled={busy}
+                                    disabled={fileUploadBusy}
                                     className="h-8 w-8 rounded-lg flex items-center justify-center active:scale-95 disabled:opacity-35 bg-white/70 text-slate-500 border border-slate-200"
                                     aria-label="上传文本或代码文件"
                                     title="上传文件"
@@ -3134,7 +3200,7 @@ const WorkbenchApp: React.FC = () => {
                                 />
                                 <button
                                     onClick={() => void send()}
-                                    disabled={!input.trim() || busy}
+                                    disabled={!input.trim()}
                                     className="ml-auto h-8 w-8 rounded-lg bg-slate-900 text-white flex items-center justify-center active:scale-95 disabled:opacity-35"
                                     aria-label="发送"
                                 >
@@ -3165,12 +3231,128 @@ const WorkbenchApp: React.FC = () => {
                     usageText={usageText}
                     open={indexOpen}
                     canExecute={workExecutable}
+                    codexTask={codexTask}
+                    onOpenAssistantPanel={() => setAssistantPanelOpen(true)}
                     onNewConversation={newConversation}
                     onSelectConversation={selectConversation}
                     onRenameConversation={renameConversation}
                     onDeleteConversation={deleteConversation}
                 />
             </div>
+
+            {assistantPanelOpen && (
+                <section
+                    className="absolute left-3 right-3 top-[calc(var(--safe-top)+4.5rem)] z-40 mx-auto max-h-[min(68vh,34rem)] max-w-md overflow-hidden rounded-lg border border-slate-200 bg-white/96 shadow-2xl backdrop-blur-xl"
+                    aria-label="AI 助理运行面板"
+                >
+                    <header className="flex min-h-14 items-center gap-3 border-b border-slate-100 px-4 py-3">
+                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${codexTask ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="m5 7 4 4-4 4M12 16h7" />
+                            </svg>
+                        </span>
+                        <span className="min-w-0 flex-1">
+                            <span className="block text-sm font-semibold text-slate-800">AI 助理</span>
+                            <span className={`block truncate text-[11px] ${codexTask?.status === 'waiting_approval' ? 'text-amber-600' : 'text-slate-500'}`}>
+                                {codexTaskStatusLabel(codexTask, workExecutable)}
+                            </span>
+                        </span>
+                        {codexTask && (
+                            <span className="shrink-0 font-mono text-[11px] text-slate-400">
+                                {formatRunDuration(runClock - codexTask.startedAt)}
+                            </span>
+                        )}
+                        <button
+                            type="button"
+                            onClick={() => setAssistantPanelOpen(false)}
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:scale-95"
+                            aria-label="关闭 AI 助理运行面板"
+                            title="关闭面板"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M18 6 6 18M6 6l12 12" />
+                            </svg>
+                        </button>
+                    </header>
+
+                    <div className="workbench-index-scroll max-h-[calc(min(68vh,34rem)-3.5rem)] overflow-y-auto px-4 py-4">
+                        {!codexTask ? (
+                            <div className="rounded-md bg-slate-50 px-3 py-4 text-center text-xs text-slate-500">
+                                {workExecutable ? 'AI 助理当前待命' : '电脑未连接；仍可使用角色聊天和已配置的备用 API'}
+                            </div>
+                        ) : (
+                            <>
+                                <div className="rounded-md bg-slate-50 px-3 py-3">
+                                    <div className="flex items-center gap-2">
+                                        <span className={`h-2 w-2 rounded-full ${codexTask.status === 'waiting_approval' ? 'bg-amber-400' : codexTask.status === 'cancelling' ? 'bg-rose-400' : 'bg-emerald-500 animate-pulse'}`} />
+                                        <span className="text-xs font-semibold text-slate-700">{codexTask.activity || '正在处理任务'}</span>
+                                    </div>
+                                    {codexTask.activityDetail && (
+                                        <div className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-all rounded-md bg-white px-2.5 py-2 font-mono text-[11px] leading-relaxed text-slate-600">
+                                            {codexTask.activityDetail}
+                                        </div>
+                                    )}
+                                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-slate-400">
+                                        <span>已运行 {formatRunDuration(runClock - codexTask.startedAt)}</span>
+                                        <span>
+                                            {codexTask.lastActivityAt
+                                                ? `最后活动 ${Math.max(0, Math.floor((runClock - codexTask.lastActivityAt) / 1000))} 秒前`
+                                                : '等待电脑状态'}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                {bridgeApproval && (
+                                    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50/75 px-3 py-3">
+                                        <div className="text-xs font-semibold text-slate-800">
+                                            {bridgeApproval.request.kind === 'command' ? '请求执行命令' : '请求修改文件'}
+                                        </div>
+                                        {(bridgeApproval.request.command || bridgeApproval.request.grantRoot || bridgeApproval.request.reason) && (
+                                            <div className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-all rounded-md bg-white/80 px-2.5 py-2 text-[11px] text-slate-600">
+                                                {bridgeApproval.request.command || bridgeApproval.request.grantRoot || bridgeApproval.request.reason}
+                                            </div>
+                                        )}
+                                        <div className="mt-2 flex flex-wrap gap-2">
+                                            {(!bridgeApproval.request.availableDecisions || bridgeApproval.request.availableDecisions.includes('accept')) && (
+                                                <button type="button" disabled={bridgeApproval.submitting} onClick={() => void decideBridgeApproval('accept')} className="h-8 rounded-md bg-slate-900 px-3 text-xs font-medium text-white disabled:opacity-50">允许一次</button>
+                                            )}
+                                            {bridgeApproval.request.availableDecisions?.includes('acceptForSession') && (
+                                                <button type="button" disabled={bridgeApproval.submitting} onClick={() => void decideBridgeApproval('acceptForSession')} className="h-8 rounded-md border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 disabled:opacity-50">本次对话允许</button>
+                                            )}
+                                            <button type="button" disabled={bridgeApproval.submitting} onClick={() => void decideBridgeApproval('decline')} className="h-8 rounded-md border border-rose-200 bg-white px-3 text-xs font-medium text-rose-600 disabled:opacity-50">拒绝</button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {!!codexTask.approvalHistory?.length && (
+                                    <div className="mt-3 border-t border-slate-100 pt-3">
+                                        <div className="text-[10px] font-semibold uppercase text-slate-400">本次操作记录</div>
+                                        <div className="mt-1.5 space-y-1.5">
+                                            {codexTask.approvalHistory.slice(-6).map(record => (
+                                                <div key={`${record.id}-${record.decidedAt}`} className="flex items-start gap-2 text-[11px] text-slate-500">
+                                                    <span className={record.decision === 'decline' ? 'text-rose-500' : 'text-emerald-600'}>{approvalDecisionLabel(record.decision)}</span>
+                                                    <span className="min-w-0 flex-1 truncate">{record.summary || (record.kind === 'file' ? '文件修改' : '命令执行')}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="mt-3 flex justify-end border-t border-slate-100 pt-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => void cancelActiveCodeTask()}
+                                        disabled={!codexTask.cancel || cancelSubmitting || codexTask.status === 'cancelling'}
+                                        className="h-8 rounded-md border border-rose-200 bg-white px-3 text-xs font-medium text-rose-600 active:bg-rose-50 disabled:opacity-40"
+                                    >
+                                        {cancelSubmitting || codexTask.status === 'cancelling' ? '正在取消…' : '停止任务'}
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </section>
+            )}
 
             {progressPanelOpen && (
                 <div className="absolute inset-0 z-50 bg-black/20 backdrop-blur-[2px] flex items-end sm:items-center justify-center p-3" onClick={() => { setProgressPanelOpen(false); setProgressModeMenuOpen(false); }}>
@@ -3341,6 +3523,53 @@ const WorkbenchApp: React.FC = () => {
                 </div>
             )}
 
+            <Modal
+                isOpen={forwardModalOpen}
+                title="转发 Code 区记录"
+                onClose={() => { if (!forwardBusy) setForwardModalOpen(false); }}
+            >
+                {(() => {
+                    const forwardCharacters = filterCharactersByGroup(characters, characterGroups, forwardGroupId);
+                    return (
+                        <div className="space-y-2">
+                            <p className="mb-3 text-xs text-slate-400">
+                                选择接收角色，聊天中会明确标记为来自 Code 区（已选 {selectedMessageIds.size} 条）
+                            </p>
+                            <CharacterGroupFilterBar
+                                characters={characters}
+                                groups={characterGroups}
+                                value={forwardGroupId}
+                                onChange={setForwardGroupId}
+                                className="mb-2 -mx-1 px-1"
+                            />
+                            {forwardCharacters.map(character => (
+                                <button
+                                    key={character.id}
+                                    type="button"
+                                    onClick={() => void forwardSelectedToCharacter(character.id)}
+                                    disabled={forwardBusy}
+                                    className="flex w-full items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-3 transition-all hover:bg-slate-100 active:scale-[0.98] disabled:opacity-50"
+                                >
+                                    <img src={character.avatar} alt="" className="h-10 w-10 rounded-xl object-cover" />
+                                    <span className="min-w-0 flex-1 text-left">
+                                        <span className="block truncate text-sm font-bold text-slate-700">{character.name}</span>
+                                        <span className="block truncate text-[10px] text-slate-400">{character.description}</span>
+                                    </span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="m9 18 6-6-6-6" />
+                                    </svg>
+                                </button>
+                            ))}
+                            {forwardCharacters.length === 0 && (
+                                <div className="py-8 text-center text-xs text-slate-400">
+                                    {characters.length === 0 ? '还没有可以接收记录的角色' : '该分组下没有角色'}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })()}
+            </Modal>
+
             {actionTarget && (
                 <div
                     className="absolute inset-0 z-40 bg-slate-950/20 flex items-center justify-center p-4 backdrop-blur-[2px]"
@@ -3357,7 +3586,7 @@ const WorkbenchApp: React.FC = () => {
                                 onClick={() => startMultiSelect(actionTarget)}
                                 className="w-full py-3 rounded-2xl bg-slate-50 text-sm font-medium text-slate-700 active:bg-slate-100 transition-colors flex items-center justify-center gap-2"
                             >
-                                多选 / 批量删除
+                                多选 / 批量操作
                             </button>
                             <button
                                 type="button"

@@ -189,6 +189,26 @@ export type WorkbenchBridgeApproval = {
     requestedAt: number;
     availableDecisions?: WorkbenchBridgeApprovalDecision[];
 };
+export type WorkbenchBridgeApprovalRecord = {
+    id: string;
+    kind: 'command' | 'file';
+    summary?: string;
+    decision: WorkbenchBridgeApprovalDecision;
+    decidedAt: number;
+};
+export type WorkbenchBridgeJobProgress = {
+    jobId: string;
+    status: 'running' | 'waiting_approval' | 'cancelling';
+    phase?: string;
+    activity?: string;
+    activityDetail?: string;
+    lastActivityAt?: number;
+    approvalHistory: WorkbenchBridgeApprovalRecord[];
+};
+
+export const isWorkbenchTaskCancelledError = (error: unknown): boolean => (
+    !!error && typeof error === 'object' && (error as { code?: string }).code === 'WORKBENCH_CANCELLED'
+);
 
 export const loadWorkbenchMode = (): WorkbenchMode => {
     try {
@@ -442,6 +462,15 @@ export const sendWorkbenchBridgeMessage = async (
         content: string;
         recentMessages: WorkbenchMessage[];
         taskIndex?: string;
+        onApproval?: (
+            approval: WorkbenchBridgeApproval,
+            decide: (decision: WorkbenchBridgeApprovalDecision) => Promise<void>,
+        ) => void;
+        onApprovalCleared?: () => void;
+        onProgress?: (
+            progress: WorkbenchBridgeJobProgress,
+            cancel: () => Promise<void>,
+        ) => void;
     },
 ): Promise<WorkbenchBridgeReply> => {
     if (!config.bridgeUrl.trim()) {
@@ -498,6 +527,16 @@ export const sendWorkbenchBridgeMessage = async (
                 window.clearTimeout(timeout);
                 const deadline = Date.now() + 60 * 60_000;
                 let notifiedApprovalId = '';
+                const cancel = async () => {
+                    const cancelResponse = await fetch(`${base}/jobs/${encodeURIComponent(jobId)}/cancel`, {
+                        method: 'POST',
+                        headers: bridgeHeaders(config),
+                    });
+                    if (!cancelResponse.ok) {
+                        const data = await cancelResponse.json().catch(() => null);
+                        throw new Error(String(data?.error || `Cancel failed (${cancelResponse.status})`));
+                    }
+                };
                 while (Date.now() < deadline) {
                     await new Promise(resolve => window.setTimeout(resolve, 1_500));
                     let poll: Response;
@@ -514,6 +553,22 @@ export const sendWorkbenchBridgeMessage = async (
                     }
                     const job = await poll.json().catch(() => null) as Record<string, any> | null;
                     if (job?.status === 'error') throw new Error(String(job.error || '电脑端 Code 后台任务失败'));
+                    if (job?.status === 'cancelled') {
+                        const error = new Error(String(job.error || 'Code 任务已取消')) as Error & { code?: string };
+                        error.code = 'WORKBENCH_CANCELLED';
+                        throw error;
+                    }
+                    if (job && ['running', 'waiting_approval', 'cancelling'].includes(String(job.status))) {
+                        args.onProgress?.({
+                            jobId: String(jobId),
+                            status: job.status,
+                            phase: typeof job.phase === 'string' ? job.phase : undefined,
+                            activity: typeof job.activity === 'string' ? job.activity : undefined,
+                            activityDetail: typeof job.activityDetail === 'string' ? job.activityDetail : undefined,
+                            lastActivityAt: Number(job.lastActivityAt || 0) || undefined,
+                            approvalHistory: Array.isArray(job.approvalHistory) ? job.approvalHistory : [],
+                        }, cancel);
+                    }
                     if (job?.status === 'waiting_approval' && job.approval?.id && job.approval.id !== notifiedApprovalId) {
                         notifiedApprovalId = String(job.approval.id);
                         const approval = job.approval as WorkbenchBridgeApproval;

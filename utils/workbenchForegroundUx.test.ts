@@ -29,6 +29,28 @@ describe('Workbench foreground UX', () => {
         expect(bridgeServerSource).toContain('if (item.approval?.timer) clearTimeout(item.approval.timer)');
     });
 
+    it('shows a session-scoped indexed AI assistant panel with activity, approvals, and cancellation', () => {
+        expect(workbenchSource).toContain('aria-label="打开 AI 助理运行面板"');
+        expect(workbenchSource).toContain('aria-label="AI 助理运行面板"');
+        expect(workbenchSource).toContain('aria-label="关闭 AI 助理运行面板"');
+        expect(workbenchSource).toContain('codexTask.approvalHistory.slice(-6)');
+        expect(workbenchSource).toContain('cancelActiveCodeTask');
+        expect(workbenchSource).toContain('formatRunDuration(runClock - codexTask.startedAt)');
+        expect(workbenchSource).not.toContain('aria-label="Code 运行状态"');
+        expect(bridgeServerSource).toContain("request('turn/interrupt', { threadId: turn.threadId, turnId: turn.turnId })");
+        expect(bridgeServerSource).toContain("url.pathname.match(/^\\/jobs\\/([^/]+)\\/cancel$/)");
+    });
+
+    it('keeps ordinary Code input and attachments available while one execution is running', () => {
+        expect(workbenchSource).toContain('if (!text) return;');
+        expect(workbenchSource).toContain('disabled={!input.trim()}');
+        expect(workbenchSource).toContain('disabled={fileUploadBusy}');
+        expect(workbenchSource).toContain('disabled={characterBusy || !selectedParticipant}');
+        expect(workbenchSource).toContain('disabled={codexBusy || !assistantAvailable}');
+        expect(workbenchSource).toContain('{characterTask && (');
+        expect(workbenchSource).not.toContain('disabled={!input.trim() || busy}');
+    });
+
     it('restores the current conversation before the async database refresh finishes', () => {
         expect(workbenchSource).toContain('let workbenchViewSnapshot: WorkbenchViewSnapshot | null = null');
         expect(workbenchSource).toContain(
@@ -59,5 +81,12 @@ describe('Workbench foreground UX', () => {
         expect(bridgeSource).toContain("requestKind: 'progress-summary'");
         expect(bridgeServerSource).toContain("body.requestKind === 'progress-summary'");
         expect(bridgeServerSource).toContain('[系统明确任务]');
+    });
+
+    it('forwards selected Code records through the normal chat forwarding path', () => {
+        expect(workbenchSource).toContain("type: 'chat_forward'");
+        expect(workbenchSource).toContain('buildWorkbenchForwardData');
+        expect(workbenchSource).toContain('转发 Code 区记录');
+        expect(workbenchSource).toContain('条 Code 区记录转发给');
     });
 });

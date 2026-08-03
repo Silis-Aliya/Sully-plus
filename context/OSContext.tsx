@@ -1801,7 +1801,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   }, [activeApp, activeCharacterId]);
 
   useEffect(() => subscribeWorkbenchBackgroundTasks(task => {
-      if (task.status === 'running' || task.status === 'waiting_approval') return;
+      if (task.status === 'running' || task.status === 'waiting_approval' || task.status === 'cancelling') return;
       const isViewingTask = activeAppRef.current === AppID.Workbench
           && getActiveWorkbenchSessionSnapshot() === task.sessionId;
       if (!isViewingTask) {
@@ -1811,6 +1811,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }));
       }
       if (task.status === 'done') addToast('Code 后台任务已完成', 'success', 1500);
+      else if (task.status === 'cancelled') addToast('Code 任务已取消', 'info', 1500);
       else addToast(`Code 后台任务失败：${task.error || '未知错误'}`, 'error');
   }), []);
   // 通话状态（含挂起到后台的通话）——主动消息流程读它来判断"是否正在通话"

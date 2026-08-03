@@ -198,6 +198,38 @@ const publicApproval = approval => approval ? {
   availableDecisions: approval.availableDecisions,
 } : undefined;
 
+const touchJob = (job, phase, activity, detail = '') => {
+  if (!job) return;
+  job.phase = phase;
+  job.activity = activity;
+  job.activityDetail = detail;
+  job.lastActivityAt = Date.now();
+};
+
+const summarizeCodexItem = item => {
+  const type = String(item?.type || '');
+  if (type === 'commandExecution') {
+    const command = Array.isArray(item.command) ? item.command.join(' ') : String(item.command || '');
+    return { phase: 'command', activity: '正在执行命令', detail: command.slice(0, 240) };
+  }
+  if (type === 'fileChange') {
+    const paths = Array.isArray(item.changes)
+      ? item.changes.map(change => change?.path).filter(Boolean).slice(0, 4).join('、')
+      : '';
+    return { phase: 'file', activity: '正在修改文件', detail: paths };
+  }
+  if (type === 'mcpToolCall' || type === 'dynamicToolCall') {
+    const tool = String(item.tool || item.name || item.server || '工具');
+    return { phase: 'tool', activity: '正在调用工具', detail: tool.slice(0, 160) };
+  }
+  if (type === 'webSearch') {
+    return { phase: 'tool', activity: '正在查询网页', detail: String(item.query || '').slice(0, 160) };
+  }
+  if (type === 'reasoning') return { phase: 'thinking', activity: '正在分析任务', detail: '' };
+  if (type === 'agentMessage') return { phase: 'responding', activity: '正在整理回复', detail: '' };
+  return { phase: 'working', activity: '正在处理任务', detail: '' };
+};
+
 const createCodexServer = project => {
   const child = spawn(CODEX_BIN, ['app-server', '--listen', 'stdio://'], {
     cwd: project.path,
@@ -273,6 +305,7 @@ const createCodexServer = project => {
       turn.approval = approval;
       turn.job.status = 'waiting_approval';
       turn.job.approval = publicApproval(approval);
+      touchJob(turn.job, 'waiting_approval', '等待手机批准', approval.command || approval.grantRoot || approval.reason || '');
       approval.timer = setTimeout(() => {
         if (turn.approval?.id !== approval.id) return;
         try {
@@ -283,13 +316,31 @@ const createCodexServer = project => {
         turn.approval = null;
         turn.job.status = 'running';
         delete turn.job.approval;
+        touchJob(turn.job, 'working', '审批已超时并拒绝，正在继续处理');
       }, APPROVAL_TIMEOUT_MS);
       approval.timer.unref?.();
       return;
     }
+    if (message.method === 'turn/started') {
+      const turnId = String(message.params?.turn?.id || message.params?.turnId || '');
+      const turn = turns.get(turnId);
+      if (turn) touchJob(turn.job, 'thinking', 'Codex 已开始处理');
+      return;
+    }
+    if (message.method === 'item/started') {
+      const turn = turns.get(String(message.params?.turnId || ''));
+      if (turn) {
+        const summary = summarizeCodexItem(message.params?.item);
+        touchJob(turn.job, summary.phase, summary.activity, summary.detail);
+      }
+      return;
+    }
     if (message.method === 'item/agentMessage/delta') {
       const turn = turns.get(String(message.params?.turnId || ''));
-      if (turn && typeof message.params?.delta === 'string') turn.reply += message.params.delta;
+      if (turn && typeof message.params?.delta === 'string') {
+        turn.reply += message.params.delta;
+        touchJob(turn.job, 'responding', '正在整理回复');
+      }
       return;
     }
     if (message.method === 'item/completed') {
@@ -297,6 +348,9 @@ const createCodexServer = project => {
       const item = message.params?.item;
       if (turn && item?.type === 'agentMessage' && !turn.reply) {
         turn.reply = String(item.text || item.content || '');
+      }
+      if (turn && item?.type !== 'agentMessage') {
+        touchJob(turn.job, 'thinking', '已完成一步，正在继续处理');
       }
       return;
     }
@@ -306,9 +360,14 @@ const createCodexServer = project => {
       if (!turn) return;
       turns.delete(turnId);
       if (turn.approval?.timer) clearTimeout(turn.approval.timer);
+      delete turn.job.approval;
       const status = String(message.params?.turn?.status || '');
       if (status === 'failed') {
         turn.reject(new Error(message.params?.turn?.error?.message || 'Codex turn failed'));
+      } else if (status === 'interrupted') {
+        const error = new Error('Code 任务已取消');
+        error.code = 'WORKBENCH_CANCELLED';
+        turn.reject(error);
       } else {
         turn.resolve(turn.reply);
       }
@@ -362,8 +421,9 @@ const createCodexServer = project => {
     });
     const turnId = String(startedTurn?.turn?.id || '');
     if (!turnId) throw new Error('Codex app-server did not return a turn id');
+    touchJob(job, 'thinking', 'Codex 已接收任务');
     return await new Promise((resolveTurn, rejectTurn) => {
-      turns.set(turnId, { resolve: resolveTurn, reject: rejectTurn, reply: '', job, approval: null });
+      turns.set(turnId, { resolve: resolveTurn, reject: rejectTurn, reply: '', job, approval: null, threadId, turnId });
     });
   };
 
@@ -376,10 +436,21 @@ const createCodexServer = project => {
     turn.approval = null;
     job.status = 'running';
     delete job.approval;
+    touchJob(job, 'working', decision === 'decline' ? '已拒绝操作，正在继续处理' : '已批准操作，正在继续处理');
     return true;
   };
 
-  return { run, approve };
+  const interrupt = async job => {
+    const turn = Array.from(turns.values()).find(item => item.job === job);
+    if (!turn) return false;
+    if (turn.approval?.timer) clearTimeout(turn.approval.timer);
+    touchJob(job, 'cancelling', '正在取消任务');
+    job.status = 'cancelling';
+    await request('turn/interrupt', { threadId: turn.threadId, turnId: turn.turnId });
+    return true;
+  };
+
+  return { run, approve, interrupt };
 };
 
 const getCodexServer = project => {
@@ -904,7 +975,7 @@ const decodeImageDataUri = value => {
   return { bytes, extension };
 };
 
-const runCli = async (command, prompt, project = resolveProject(''), imageData = [], agent = 'custom') => {
+const runCli = async (command, prompt, project = resolveProject(''), imageData = [], agent = 'custom', job = null) => {
   const tmpRoot = await mkdtemp(join(tmpdir(), 'sully-code-'));
   const promptFile = join(tmpRoot, 'prompt.txt');
   await writeFile(promptFile, prompt, 'utf8');
@@ -949,16 +1020,19 @@ const runCli = async (command, prompt, project = resolveProject(''), imageData =
       const stdout = [];
       const stderr = [];
       let settled = false;
+      let cancellationRequested = false;
       const settleReject = error => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (job) delete job.cancel;
         rejectRun(error);
       };
       const settleResolve = value => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (job) delete job.cancel;
         resolveRun(value);
       };
       const timer = setTimeout(() => {
@@ -966,12 +1040,33 @@ const runCli = async (command, prompt, project = resolveProject(''), imageData =
         settleReject(new Error(`CLI timed out after ${TIMEOUT_MS}ms`));
       }, TIMEOUT_MS);
 
-      child.stdout.on('data', chunk => stdout.push(chunk));
-      child.stderr.on('data', chunk => stderr.push(chunk));
+      if (job) {
+        touchJob(job, 'working', 'CLI 正在处理任务');
+        job.cancel = () => {
+          cancellationRequested = true;
+          touchJob(job, 'cancelling', '正在取消任务');
+          job.status = 'cancelling';
+          killCliProcessTree(child);
+        };
+      }
+      child.stdout.on('data', chunk => {
+        stdout.push(chunk);
+        touchJob(job, 'responding', 'CLI 正在输出结果');
+      });
+      child.stderr.on('data', chunk => {
+        stderr.push(chunk);
+        touchJob(job, 'working', 'CLI 仍在运行');
+      });
       child.on('error', error => {
         settleReject(error);
       });
       child.on('close', code => {
+        if (cancellationRequested) {
+          const error = new Error('Code 任务已取消');
+          error.code = 'WORKBENCH_CANCELLED';
+          settleReject(error);
+          return;
+        }
         const out = Buffer.concat(stdout).toString('utf8');
         const err = Buffer.concat(stderr).toString('utf8');
         if (DEBUG && err.trim()) console.warn(`[workbench-bridge] stderr:\n${err}`);
@@ -1023,7 +1118,7 @@ const executeMessage = async (body, job = null) => {
       : [];
     rawReply = agentInfo.agent === 'codex' && !body.customAgentCommand && job
       ? await getCodexServer(project).run(body, prompt, job)
-      : await runCli(agentInfo.command, prompt, project, imageData, agentInfo.agent);
+      : await runCli(agentInfo.command, prompt, project, imageData, agentInfo.agent, job);
   } finally {
     activeMessageRun = null;
   }
@@ -1166,6 +1261,10 @@ const server = createServer(async (req, res) => {
         projectId: resolveProject(body).id,
         status: 'running',
         createdAt: Date.now(),
+        phase: 'starting',
+        activity: '正在连接 Codex',
+        lastActivityAt: Date.now(),
+        approvalHistory: [],
       };
       messageJobs.set(jobId, job);
       if (clientTaskId) messageJobsByClientTaskId.set(clientTaskId, jobId);
@@ -1173,7 +1272,7 @@ const server = createServer(async (req, res) => {
         Object.assign(job, { status: 'done', finishedAt: Date.now(), result });
       }).catch(error => {
         Object.assign(job, {
-          status: 'error',
+          status: error.code === 'WORKBENCH_CANCELLED' ? 'cancelled' : 'error',
           finishedAt: Date.now(),
           error: error.message || 'Code 执行失败',
           statusCode: error.statusCode || 500,
@@ -1202,6 +1301,33 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    const cancelMatch = req.method === 'POST' ? url.pathname.match(/^\/jobs\/([^/]+)\/cancel$/) : null;
+    if (cancelMatch) {
+      const job = messageJobs.get(decodeURIComponent(cancelMatch[1]));
+      if (!job) {
+        json(res, 404, { error: 'Code background task is unavailable' });
+        return;
+      }
+      if (!['running', 'waiting_approval', 'cancelling'].includes(job.status)) {
+        json(res, 200, { status: job.status });
+        return;
+      }
+      const project = resolveProject(job.projectId || '');
+      let interrupted = false;
+      if (typeof job.cancel === 'function') {
+        job.cancel();
+        interrupted = true;
+      } else {
+        interrupted = await getCodexServer(project).interrupt(job);
+      }
+      if (!interrupted) {
+        json(res, 409, { error: 'Code task is no longer running' });
+        return;
+      }
+      json(res, 202, { status: 'cancelling' });
+      return;
+    }
+
     const approvalMatch = req.method === 'POST' ? url.pathname.match(/^\/jobs\/([^/]+)\/approval$/) : null;
     if (approvalMatch) {
       const job = messageJobs.get(decodeURIComponent(approvalMatch[1]));
@@ -1216,12 +1342,21 @@ const server = createServer(async (req, res) => {
         return;
       }
       const approvalId = String(body?.approvalId || '');
+      const approvalSnapshot = job.approval ? { ...job.approval } : null;
       const project = resolveProject(job.projectId || '');
       const accepted = getCodexServer(project).approve(job, approvalId, decision);
       if (!accepted) {
         json(res, 409, { error: 'This approval is no longer pending' });
         return;
       }
+      job.approvalHistory = Array.isArray(job.approvalHistory) ? job.approvalHistory : [];
+      job.approvalHistory.push({
+        id: approvalId,
+        kind: approvalSnapshot?.kind || 'command',
+        summary: approvalSnapshot?.command || approvalSnapshot?.grantRoot || approvalSnapshot?.reason || '',
+        decision,
+        decidedAt: Date.now(),
+      });
       json(res, 200, { status: 'running' });
       return;
     }

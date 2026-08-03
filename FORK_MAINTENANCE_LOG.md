@@ -42,6 +42,22 @@ Current effective state after the 2026-08-03 upstream refresh:
 - Private Plus / Vercel publishing should use `origin/master` for `Silis-Aliya/Sully-plus.git`; verify the Vercel dashboard before treating production as updated.
 - Local Memory Hub / Ombre bridge and VPS notes are WIP-only and must stay uncommitted unless the user explicitly approves publishing them.
 
+## 2026-08-03 Code Records Forwarded To Character Chat
+
+- Extended the existing Code long-press selection mode from delete-only to batch operations with a `转发` action and the normal character-group target picker.
+- Forwarded records are stored in the target private chat as the existing `chat_forward` message type, so Chat continues to own card rendering, expansion, persistence, and model-context conversion.
+- Code forwards carry `source: workbench`, a visible `Code 区记录` label, the source Code conversation title, and per-message sender names. Non-user text also retains its speaker label in the context payload so the target character can distinguish Codex, character, and system output.
+- Code-only webpage, XHS, and text-file cards are converted to readable text inside the forwarding payload; images and emoji retain the standard Chat forwarding behavior.
+- This change does not alter Memory Hub / Ombre bridge or VPS WIP files and has not been committed or pushed yet.
+
+## 2026-08-03 Indexed Code Runtime Panel And Parallel Character Chat
+
+- Moved the Codex runtime UI out of the Code message stream into an `AI 助理` entry below the computer connection state in the Code index. The entry remains the task-status source when the floating panel is closed.
+- The independent no-backdrop panel survives index collapse, has an SVG close button that only hides the panel, retains progress/approval history/approval actions, and can interrupt only the current Codex turn or CLI child process. It closes automatically when the Codex result is appended.
+- Split Workbench background-task locking by speaker: one Codex task and one character reply may coexist in the same Code session, while duplicate Codex tasks and duplicate character generations remain blocked.
+- Removed the Codex waiting avatar/dots from the message stream. Character generation keeps its own character-avatar typing indicator, and ordinary messages, emoji, images, files, and the character response action remain available while Codex runs.
+- Runtime status is not injected into the character model prompt in this change. Repository rules require the complete corresponding prompt to be shown and confirmed before that separate prompt adjustment.
+
 ## 2026-08-03 Upstream Active Message 2.0 Refresh
 
 - Fetched and merged `upstream/master` through `7fb5ccad`; local merge commit is `155a17f4` (`Merge upstream Active Message 2.0 update`).
@@ -1257,3 +1273,18 @@ Last recorded stable deployment was `ecc01ab` on remote `master` from 2026-07-21
 - Focused backup verification: `pnpm vitest run utils/activeMsgStore.test.ts utils/localSettingsBackup.test.ts utils/quickSync.test.ts utils/backupRoundtrip.test.ts utils/workbenchFileUpload.test.ts` (52 tests passed).
 - Active Message client/runtime regression verification: 7 files, 221 tests passed.
 - Production build: `pnpm build` passed.
+
+# 2026-08-03 Code Session Run Panel And Interrupt
+
+- Replaced the current-session three-dot-only execution state with one collapsible system run panel inside the Code message stream. It is scoped to the active Workbench session and disappears after the assistant output and artifacts are persisted.
+- The bridge job now exposes a compact phase, readable activity, optional command/file/tool detail, and `lastActivityAt`. Codex app-server `turn/started`, `item/started`, item completion, and agent-message deltas feed that state; raw command output and file bodies are not streamed into the panel.
+- Existing approval requests moved into the same panel. Decisions are recorded for the lifetime of the current job, showing whether the user allowed once, allowed for the session, or declined and what operation the decision covered.
+- Added `POST /jobs/:jobId/cancel`. Default Codex app-server jobs use the official `turn/interrupt` request for that exact thread/turn. Claude Code and custom CLI jobs terminate their own spawned process tree. Neither path stops the persistent bridge service.
+- Cancellation has its own `cancelling` / `cancelled` lifecycle and is not reported as a failed task. The panel remains visible while cancellation is being acknowledged, then clears.
+- The panel is non-modal. A running execution still blocks a second AI/character execution in the same session, while ordinary Code messages, images, emoji and mobile text-file uploads remain available.
+- Verification completed:
+  - `node --check scripts/workbench-cli-bridge.mjs`
+  - `pnpm vitest run utils/workbenchBackgroundTasks.test.ts utils/workbenchForegroundUx.test.ts` (12 tests passed)
+  - all 16 `utils/workbench*.test.ts` files (49 tests passed)
+  - `pnpm build`
+  - mobile viewport inspection at 390 x 844; Code header, conversation area, index handle, composer and attachment controls do not overlap.
