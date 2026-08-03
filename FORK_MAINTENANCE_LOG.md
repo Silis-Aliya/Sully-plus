@@ -58,6 +58,14 @@ Current effective state after the 2026-08-03 upstream refresh:
 - Removed the Codex waiting avatar/dots from the message stream. Character generation keeps its own character-avatar typing indicator, and ordinary messages, emoji, images, files, and the character response action remain available while Codex runs.
 - Runtime status is not injected into the character model prompt in this change. Repository rules require the complete corresponding prompt to be shown and confirmed before that separate prompt adjustment.
 
+## 2026-08-03 Code Task Slot Recovery
+
+- Added a 10-second timeout to each Code job status poll and cancellation request so a suspended request cannot hold the mobile task slot forever.
+- After three consecutive bridge poll failures, the phone attempts to cancel the computer job, marks the foreground task as failed, and immediately releases the Codex slot for a retry.
+- A job that remains `running` for five minutes without any new bridge activity is treated as stalled and released. `waiting_approval` is exempt from the inactivity rule so a legitimate approval card remains actionable.
+- Authentication failures, expired jobs, explicit bridge errors, cancellations, and invalid repeated status payloads now all leave the running state instead of silently continuing the one-hour poll loop.
+- This change touches only Workbench bridge task lifecycle code and tests; Memory Hub / Ombre bridge and VPS WIP remain excluded.
+
 ## 2026-08-03 Upstream Active Message 2.0 Refresh
 
 - Fetched and merged `upstream/master` through `7fb5ccad`; local merge commit is `155a17f4` (`Merge upstream Active Message 2.0 update`).

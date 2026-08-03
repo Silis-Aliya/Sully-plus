@@ -21,6 +21,32 @@ export const WORKBENCH_CONFIG_KEY = 'workbench_bridge_config_v1';
 export const WORKBENCH_MODE_KEY = 'workbench_mode_v1';
 export const WORKBENCH_PROJECTS_KEY = 'workbench_projects_v1';
 const WORKBENCH_BRIDGE_MESSAGE_TIMEOUT_MS = 135_000;
+const WORKBENCH_JOB_POLL_INTERVAL_MS = 1_500;
+const WORKBENCH_JOB_POLL_TIMEOUT_MS = 10_000;
+const WORKBENCH_JOB_MAX_POLL_FAILURES = 3;
+const WORKBENCH_JOB_STALE_TIMEOUT_MS = 5 * 60_000;
+
+export type WorkbenchJobReleaseReason = 'connection_lost' | 'stalled' | null;
+
+export const getWorkbenchJobReleaseReason = ({
+    status,
+    lastActivityAt,
+    consecutivePollFailures,
+    now = Date.now(),
+}: {
+    status?: string;
+    lastActivityAt?: number;
+    consecutivePollFailures: number;
+    now?: number;
+}): WorkbenchJobReleaseReason => {
+    if (consecutivePollFailures >= WORKBENCH_JOB_MAX_POLL_FAILURES) return 'connection_lost';
+    if (
+        status === 'running'
+        && lastActivityAt
+        && now - lastActivityAt >= WORKBENCH_JOB_STALE_TIMEOUT_MS
+    ) return 'stalled';
+    return null;
+};
 
 export type WorkbenchProjectsSnapshot = {
     version: 1;
@@ -528,30 +554,66 @@ export const sendWorkbenchBridgeMessage = async (
                 const deadline = Date.now() + 60 * 60_000;
                 let notifiedApprovalId = '';
                 const cancel = async () => {
-                    const cancelResponse = await fetch(`${base}/jobs/${encodeURIComponent(jobId)}/cancel`, {
-                        method: 'POST',
-                        headers: bridgeHeaders(config),
-                    });
-                    if (!cancelResponse.ok) {
-                        const data = await cancelResponse.json().catch(() => null);
-                        throw new Error(String(data?.error || `Cancel failed (${cancelResponse.status})`));
+                    const cancelController = new AbortController();
+                    const cancelTimeout = window.setTimeout(() => cancelController.abort(), WORKBENCH_JOB_POLL_TIMEOUT_MS);
+                    try {
+                        const cancelResponse = await fetch(`${base}/jobs/${encodeURIComponent(jobId)}/cancel`, {
+                            method: 'POST',
+                            headers: bridgeHeaders(config),
+                            signal: cancelController.signal,
+                        });
+                        if (!cancelResponse.ok) {
+                            const data = await cancelResponse.json().catch(() => null);
+                            throw new Error(String(data?.error || `Cancel failed (${cancelResponse.status})`));
+                        }
+                    } finally {
+                        window.clearTimeout(cancelTimeout);
                     }
                 };
+                const releaseFailedJob = async (reason: Exclude<WorkbenchJobReleaseReason, null>) => {
+                    await cancel().catch(() => undefined);
+                    if (reason === 'stalled') {
+                        throw new Error('Code 任务长时间没有新进度，已释放任务位。请稍后重试。');
+                    }
+                    throw new Error('手机与电脑端 Code 连接持续中断，已释放任务位。请检查连接后重试。');
+                };
+                let consecutivePollFailures = 0;
                 while (Date.now() < deadline) {
-                    await new Promise(resolve => window.setTimeout(resolve, 1_500));
+                    await new Promise(resolve => window.setTimeout(resolve, WORKBENCH_JOB_POLL_INTERVAL_MS));
                     let poll: Response;
+                    const pollController = new AbortController();
+                    const pollTimeout = window.setTimeout(() => pollController.abort(), WORKBENCH_JOB_POLL_TIMEOUT_MS);
                     try {
                         poll = await fetch(`${base}/jobs/${encodeURIComponent(jobId)}`, {
                             headers: bridgeHeaders(config),
+                            signal: pollController.signal,
                         });
                     } catch {
+                        consecutivePollFailures += 1;
+                        const releaseReason = getWorkbenchJobReleaseReason({ consecutivePollFailures });
+                        if (releaseReason) await releaseFailedJob(releaseReason);
                         continue;
+                    } finally {
+                        window.clearTimeout(pollTimeout);
                     }
                     if (!poll.ok) {
                         if (poll.status === 404) throw new Error('电脑端 Code 后台任务已过期');
+                        if (poll.status === 401 || poll.status === 403) {
+                            throw new Error('电脑端 Code 连接密钥无效，已释放任务位。请检查设置。');
+                        }
+                        consecutivePollFailures += 1;
+                        const releaseReason = getWorkbenchJobReleaseReason({ consecutivePollFailures });
+                        if (releaseReason) await releaseFailedJob(releaseReason);
                         continue;
                     }
                     const job = await poll.json().catch(() => null) as Record<string, any> | null;
+                    if (!job) {
+                        consecutivePollFailures += 1;
+                        const releaseReason = getWorkbenchJobReleaseReason({ consecutivePollFailures });
+                        if (releaseReason) await releaseFailedJob(releaseReason);
+                        continue;
+                    }
+                    consecutivePollFailures = 0;
                     if (job?.status === 'error') throw new Error(String(job.error || '电脑端 Code 后台任务失败'));
                     if (job?.status === 'cancelled') {
                         const error = new Error(String(job.error || 'Code 任务已取消')) as Error & { code?: string };
@@ -569,6 +631,12 @@ export const sendWorkbenchBridgeMessage = async (
                             approvalHistory: Array.isArray(job.approvalHistory) ? job.approvalHistory : [],
                         }, cancel);
                     }
+                    const releaseReason = getWorkbenchJobReleaseReason({
+                        status: String(job.status || ''),
+                        lastActivityAt: Number(job.lastActivityAt || 0) || undefined,
+                        consecutivePollFailures,
+                    });
+                    if (releaseReason) await releaseFailedJob(releaseReason);
                     if (job?.status === 'waiting_approval' && job.approval?.id && job.approval.id !== notifiedApprovalId) {
                         notifiedApprovalId = String(job.approval.id);
                         const approval = job.approval as WorkbenchBridgeApproval;
