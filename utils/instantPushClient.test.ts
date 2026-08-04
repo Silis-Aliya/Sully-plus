@@ -194,9 +194,33 @@ describe('postSsePayloadToServiceWorker ack 解析', () => {
     expect(res.businessError).toBeUndefined();
   });
 
-  it('无 controller 时返回 { ok:false }', async () => {
-    vi.stubGlobal('navigator', { serviceWorker: { controller: null } });
+  it('无 controller 时回退到 registration.active', async () => {
+    vi.stubGlobal('navigator', {
+      serviceWorker: {
+        controller: null,
+        ready: Promise.resolve({
+          active: {
+            postMessage: (_msg: any, transfer: any[]) => {
+              const port2 = transfer?.[0] as FakePort;
+              port2?.postMessage({ ok: true });
+            },
+          },
+        }),
+      },
+    });
     const res = await postSsePayloadToServiceWorker({ messageId: 'm3' });
+    expect(res.ok).toBe(true);
+    expect(res.businessError).toBeUndefined();
+  });
+
+  it('controller and registration.active both missing returns { ok:false }', async () => {
+    vi.stubGlobal('navigator', {
+      serviceWorker: {
+        controller: null,
+        ready: Promise.resolve({ active: null }),
+      },
+    });
+    const res = await postSsePayloadToServiceWorker({ messageId: 'm4' });
     expect(res.ok).toBe(false);
     expect(res.businessError).toBeUndefined();
   });

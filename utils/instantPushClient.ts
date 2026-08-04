@@ -847,8 +847,19 @@ export async function postSsePayloadToServiceWorker(
     return { ok: false };
   }
 
-  const controller = navigator.serviceWorker.controller;
-  if (!controller) {
+  let recipient = navigator.serviceWorker.controller;
+  if (!recipient) {
+    try {
+      // iOS PWA can have an active registration while the current window has no
+      // controller yet. The active worker can still receive the SSE bridge and
+      // broadcast the resulting inbox event back to uncontrolled clients.
+      const registration = await navigator.serviceWorker.ready;
+      recipient = registration.active;
+    } catch {
+      // Fall through to the same unavailable-channel result below.
+    }
+  }
+  if (!recipient) {
     return { ok: false };
   }
 
@@ -878,7 +889,7 @@ export async function postSsePayloadToServiceWorker(
     };
 
     try {
-      controller.postMessage({
+      recipient.postMessage({
         type: 'REI_AMSG_DELIVER',
         payload,
         source: 'sse',
