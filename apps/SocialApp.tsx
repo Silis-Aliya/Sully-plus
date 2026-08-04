@@ -6,7 +6,7 @@ import { CharacterProfile, SocialPost, SocialComment, SubAccount, SocialAppProfi
 import { ContextBuilder } from '../utils/context';
 import { processImage } from '../utils/file';
 import Modal from '../components/os/Modal';
-import { safeResponseJson } from '../utils/safeApi';
+import { extractJson, safeResponseJson } from '../utils/safeApi';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { House, User, Package, Warning } from '@phosphor-icons/react';
 import { mergeSocialComments, prependUniqueSocialPosts, updateSocialPost } from '../utils/socialFeedMerge';
@@ -78,16 +78,20 @@ const getRandomStyle = () => POST_STYLES[Math.floor(Math.random() * POST_STYLES.
 // --- Robust JSON Parser ---
 const safeParseJSON = (input: string) => {
     const clean = input.replace(/```json/g, '').replace(/```/g, '').trim();
-    try {
-        const parsed = JSON.parse(clean);
-        if (!Array.isArray(parsed) && typeof parsed === 'object' && parsed !== null) {
+    const unwrapArray = (parsed: any): any[] => {
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && typeof parsed === 'object') {
             const keys = Object.keys(parsed);
-            if (keys.length === 1 && Array.isArray(parsed[keys[0]])) {
-                return parsed[keys[0]];
-            }
+            if (keys.length === 1 && Array.isArray(parsed[keys[0]])) return parsed[keys[0]];
         }
-        return Array.isArray(parsed) ? parsed : [];
+        return [];
+    };
+    try {
+        return unwrapArray(JSON.parse(clean));
     } catch (e) {
+        const repaired = extractJson(clean);
+        const repairedArray = unwrapArray(repaired);
+        if (repairedArray.length > 0) return repairedArray;
         try {
             const start = clean.indexOf('[');
             if (start === -1) return [];

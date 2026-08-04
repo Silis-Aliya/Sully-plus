@@ -10,7 +10,7 @@ import type { MemoryRoom } from './memoryPalace/types';
 import type { DigestResult } from './memoryPalace/digestion';
 import { PixelLayoutDB } from '../apps/pixelHome/pixelHomeDb';
 import { ROOM_META, ALL_ROOMS } from '../apps/pixelHome/roomTemplates';
-import { safeFetchJson } from './safeApi';
+import { extractJson, safeFetchJson } from './safeApi';
 
 interface LLMConfig {
   baseUrl: string;
@@ -114,14 +114,12 @@ ${JSON.stringify(layoutSummary, null, 2)}
     );
 
     const reply = data.choices?.[0]?.message?.content || '';
-    const jsonMatch = reply.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
+    const parsed = extractJson(reply);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       console.log('🏠 [HomeDecoration] 角色决定不装修');
       return null;
     }
-
-    const parsed = JSON.parse(jsonMatch[0]);
-    const actions: DecorationAction[] = (parsed.actions || []).filter((a: any) =>
+    const actions: DecorationAction[] = (Array.isArray(parsed.actions) ? parsed.actions : []).filter((a: any) =>
       a.type && a.roomId && ALL_ROOMS.includes(a.roomId)
     );
 

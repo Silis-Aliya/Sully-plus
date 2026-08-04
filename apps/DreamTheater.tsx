@@ -8,7 +8,7 @@ import { injectMemoryPalace } from '../utils/memoryPalace/pipeline';
 import { isScheduleFeatureOn } from '../utils/scheduleGenerator';
 import { isDevDebugAvailable } from '../utils/devDebug';
 import { useDreamSim, dreamSimStore } from '../utils/dreamSimStore';
-import { safeResponseJson } from '../utils/safeApi';
+import { extractJson, safeResponseJson } from '../utils/safeApi';
 import CdnImg from '../components/os/CdnImg';
 import { trackEvent } from '../utils/analytics';
 import {
@@ -281,7 +281,13 @@ function parseDream(raw: string): DreamScript | null {
         return out;
     };
     try { return JSON.parse(s); } catch { }
-    try { return JSON.parse(repair(s)); } catch (e) { console.warn('dream parse failed', e); return null; }
+    try { return JSON.parse(repair(s)); } catch { }
+    const extracted = extractJson(s);
+    if (extracted && typeof extracted === 'object' && !Array.isArray(extracted)) {
+        return extracted as DreamScript;
+    }
+    console.warn('dream parse failed');
+    return null;
 }
 
 // ============================================================

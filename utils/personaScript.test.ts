@@ -28,6 +28,20 @@ describe('persona script parsing', () => {
         expect(parsed?.beats[0].monologue).toBe('line one\nline two\tend');
     });
 
+    it('repairs unescaped quotes inside narrative fields', () => {
+        const parsed = parsePersonaScript(
+            '```json\n{"title":"物流页","ending":"什么都没发","summary":"凌晨点开“物流”后写下"算了，别等了"","beats":[{"kind":"thought","monologue":"他发来一句"到了吗"，又撤回了"},{"kind":"end"}]}\n```',
+        );
+
+        expect(parsed).toMatchObject({
+            title: '物流页',
+            ending: '什么都没发',
+            summary: '凌晨点开“物流”后写下"算了，别等了"',
+        });
+        expect(parsed?.beats[0].monologue).toBe('他发来一句"到了吗"，又撤回了');
+        expect(parsed?.beats[1].kind).toBe('end');
+    });
+
     it('normalizes missing nested arrays used by app renderers', () => {
         const script = {
             beats: [

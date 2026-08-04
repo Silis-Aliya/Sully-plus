@@ -10,6 +10,7 @@
  */
 
 import type { CharacterProfile, WorldProfile, WorldHouse, WorldCharBeat, WorldHomeMode, WorldNarrativeStyle } from '../../types';
+import { extractJson as extractRobustJson } from '../safeApi';
 import { dmThreadsOf, groupThreadOf, formatThreadForPrompt } from './threads';
 import { nowInTimeZone, tzLabel } from '../timezone';
 
@@ -581,21 +582,7 @@ ${chapterAtmosphere ? `\n## 这段日子的氛围基调\n${chapterAtmosphere}` :
 
 /** 从 LLM 输出里捞出第一个 JSON 对象（支持 ```json 围栏 / 裸 JSON / 夹杂正文）。 */
 export function extractJson(raw: string): any | null {
-    const text = (raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-    // 1) 围栏代码块优先
-    const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    const candidates: string[] = [];
-    if (fence?.[1]) candidates.push(fence[1].trim());
-    // 2) 第一个 { 到最后一个 } 的贪婪截取
-    const first = text.indexOf('{');
-    const last = text.lastIndexOf('}');
-    if (first >= 0 && last > first) candidates.push(text.slice(first, last + 1));
-    for (const c of candidates) {
-        try { return JSON.parse(c); } catch { /* try next */ }
-        // 宽松修复：去掉尾逗号再试
-        try { return JSON.parse(c.replace(/,\s*([}\]])/g, '$1')); } catch { /* try next */ }
-    }
-    return null;
+    return extractRobustJson((raw || '').replace(/<think>[\s\S]*?<\/think>/gi, '').trim());
 }
 
 const clampNum = (v: any, lo: number, hi: number, fallback: number): number => {

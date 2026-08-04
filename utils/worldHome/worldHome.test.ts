@@ -63,6 +63,12 @@ describe('extractJson', () => {
     it('容忍尾逗号', () => {
         expect(extractJson('{"a":1,}')).toEqual({ a: 1 });
     });
+    it('修复叙事字段里的未转义引号', () => {
+        expect(extractJson('{"narrative":"她说"别等了"，然后关掉物流页","mood":"平静"}')).toEqual({
+            narrative: '她说"别等了"，然后关掉物流页',
+            mood: '平静',
+        });
+    });
     it('剥掉 <think> 块', () => {
         expect(extractJson('<think>{"x":9}</think>{"a":1}')).toEqual({ a: 1 });
     });

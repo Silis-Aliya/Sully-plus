@@ -1,4 +1,5 @@
 import type { SimScript } from '../types';
+import { extractJson } from './safeApi';
 
 export function normalizePersonaScript(script: SimScript): SimScript {
     if (!Array.isArray(script.beats)) return script;
@@ -73,8 +74,16 @@ export function parsePersonaScript(raw: string): SimScript | null {
     } catch {}
     try {
         return normalizePersonaScript(JSON.parse(repairPersonaJson(source)));
-    } catch (error) {
-        console.warn('persona parse failed', error);
-        return null;
+    } catch {}
+
+    // 演出正文经常引用聊天原话，模型偶尔会把内层引号原样写进 JSON
+    // （例如 `"summary":"他说"算了""`）。通用解析器能识别并转义这种裸引号，
+    // 同时仍会对真正截断、无法闭合的演出返回 null。
+    const extracted = extractJson(source);
+    if (extracted && typeof extracted === 'object' && !Array.isArray(extracted)) {
+        return normalizePersonaScript(extracted as SimScript);
     }
+
+    console.warn('persona parse failed');
+    return null;
 }
