@@ -975,13 +975,40 @@ describe('ActiveMsgClient.registerPushSubscription（② 订阅按用户登记�
 
     await expect(ActiveMsgClient.registerPushSubscription()).rejects.toThrow('worker 拒绝了订阅');
   });
+
+  it('云端已有 iPhone 接收端 → 电脑排任务时保留它，不覆盖登记', async () => {
+    vi.spyOn(ActiveMsgClient, 'getRemotePushSubscription').mockResolvedValue({
+      exists: true,
+      endpoint: 'https://web.push.apple.com/iphone',
+      updatedAt: 1,
+    });
+    const register = vi.spyOn(ActiveMsgClient, 'registerPushSubscription').mockResolvedValue(undefined);
+
+    await expect(ActiveMsgClient.ensurePushDeliveryTarget()).resolves.toBe('existing');
+
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('云端没有接收端 → 才用当前设备补登记', async () => {
+    vi.spyOn(ActiveMsgClient, 'getRemotePushSubscription').mockResolvedValue({
+      exists: false,
+      endpoint: null,
+      updatedAt: null,
+    });
+    const register = vi.spyOn(ActiveMsgClient, 'registerPushSubscription').mockResolvedValue(undefined);
+
+    await expect(ActiveMsgClient.ensurePushDeliveryTarget()).resolves.toBe('registered');
+
+    expect(register).toHaveBeenCalledTimes(1);
+  });
 });
 
 // 回归守卫：换一台 worker 就是换一个空的 D1，而浏览器这侧的订阅一个字都没变——
 // SW 的 pushsubscriptionchange 不会响，refreshPushSubscriptionIfMarked 也就没有标记
 // 可消费。于是面板全绿、连接验证通过，worker 到点却读不到那份用户级订阅，直接抛
 // PUSH_SUBSCRIPTION_MISSING：消息一条都发不出来，用户这侧看不到任何异常。
-// 连接这一步必须顺手把当前订阅覆盖写回去。
+// 连接这一步只在云端为空时补登记；云端已有另一台接收设备时必须保留，不能因为电脑
+// 打开设置或排任务就把 iPhone 顶掉。切换设备由设置页的显式重置负责。
 describe('ActiveMsgClient.connect（连接后补登记推送订阅）', () => {
   const stubConnectEnv = (permission: string, existing: any) => {
     vi.stubGlobal('navigator', {
@@ -1001,13 +1028,19 @@ describe('ActiveMsgClient.connect（连接后补登记推送订阅）', () => {
     }));
   };
 
-  beforeEach(() => { reiClient.init.mockReset().mockResolvedValue(undefined); });
+  beforeEach(() => {
+    reiClient.init.mockReset().mockResolvedValue(undefined);
+    reiClient.getPushSubscription.mockReset().mockResolvedValue({
+      success: true,
+      data: { exists: false, endpoint: null, updatedAt: null },
+    });
+  });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('浏览器已有订阅 → 连接后把它覆盖写到这台 worker 上', async () => {
+  it('云端已登记另一台设备 → 连接后保留原接收端', async () => {
     stubConnectEnv('granted', makeSub('https://fcm.googleapis.com/send/x', [1, 2, 3]));
     reiClient.getPushSubscription.mockResolvedValue({
       success: true,
@@ -1017,7 +1050,7 @@ describe('ActiveMsgClient.connect（连接后补登记推送订阅）', () => {
 
     await expect(ActiveMsgClient.connect()).resolves.toMatchObject({ ok: true });
 
-    expect(register).toHaveBeenCalledTimes(1);
+    expect(register).not.toHaveBeenCalled();
   });
 
   it('浏览器订阅与 worker 已一致 → 只对账，不重复覆盖登记', async () => {
@@ -1034,7 +1067,7 @@ describe('ActiveMsgClient.connect（连接后补登记推送订阅）', () => {
     expect(register).not.toHaveBeenCalled();
   });
 
-  it('worker 登记的是别的设备 → 自动覆盖成当前设备', async () => {
+  it('worker 登记的是别的设备 → 对账只报告 preserved，不自动抢占', async () => {
     stubConnectEnv('granted', makeSub('https://fcm.googleapis.com/send/current', [1, 2, 3]));
     reiClient.getPushSubscription.mockResolvedValue({
       success: true,
@@ -1042,9 +1075,9 @@ describe('ActiveMsgClient.connect（连接后补登记推送订阅）', () => {
     });
     const register = vi.spyOn(ActiveMsgClient, 'registerPushSubscription').mockResolvedValue(undefined);
 
-    await expect(ActiveMsgClient.reconcilePushSubscription()).resolves.toBe('registered');
+    await expect(ActiveMsgClient.reconcilePushSubscription()).resolves.toBe('preserved');
 
-    expect(register).toHaveBeenCalledTimes(1);
+    expect(register).not.toHaveBeenCalled();
   });
 
   it('通知权限还没授予 → 不补登记，连接时也不弹权限框', async () => {

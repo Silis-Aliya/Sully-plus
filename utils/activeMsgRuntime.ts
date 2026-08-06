@@ -1601,29 +1601,6 @@ export const refreshPushSubscriptionIfMarked = async (): Promise<'no-marker' | '
   }
 };
 
-let pushReconcileInFlight: Promise<void> | null = null;
-
-/**
- * 冷启动/回到前台时核对本机订阅和 worker 登记。
- *
- * iOS 上本机 endpoint 可以一直没变，因此不会产生 pushsubscriptionchange 标记；但同一
- * 用户在另一台浏览器登记后，worker 的用户级订阅会被覆盖。这里先读后比，只在不一致时
- * 覆盖写回当前可见设备。并发的 pageshow/visibilitychange 共用一次请求，避免重复登记。
- */
-export const reconcileVisiblePushSubscription = (): Promise<void> => {
-  if (pushReconcileInFlight) return pushReconcileInFlight;
-  pushReconcileInFlight = ActiveMsgClient.reconcilePushSubscription()
-    .then((result) => {
-      if (result === 'registered') log.info('当前设备的推送订阅已重新登记到 worker');
-      if (result === 'failed') log.warn('当前设备推送订阅对账失败，稍后回到前台时重试');
-    })
-    .catch((error) => {
-      log.warn('当前设备推送订阅对账异常，稍后回到前台时重试', { error });
-    })
-    .finally(() => { pushReconcileInFlight = null; });
-  return pushReconcileInFlight;
-};
-
 const handleDeepLink = () => {
   const currentUrl = new URL(window.location.href);
   const charId = currentUrl.searchParams.get('activeMsgCharId');
@@ -1732,7 +1709,6 @@ export const ActiveMsgRuntime = {
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
-        void reconcileVisiblePushSubscription();
         // 先秒收本地 Push，再补拉云端缺口，最后处理补回内容；正常到达不被网络请求拖慢。
         void (async () => {
           await flushInboxToChat();
@@ -1749,7 +1725,7 @@ export const ActiveMsgRuntime = {
     // 订阅自检兜底：后台期间 SW 收到 pushsubscriptionchange 写了标记、而通知丢失
     // （页面没开着）时，启动这里把它消费掉。fire-and-forget——它要打网络请求，
     // 不能拦着下面的 inbox flush。
-    void refreshPushSubscriptionIfMarked().then(() => reconcileVisiblePushSubscription());
+    void refreshPushSubscriptionIfMarked();
 
     // 冷启动点通知时也先跳进对应聊天，别让收件箱里的拟人打字节奏堵住页面导航。
     // KeepAlive.init 已等待 SW ready，通常此时 React/OSContext 已挂载；随后 flush 每落一段

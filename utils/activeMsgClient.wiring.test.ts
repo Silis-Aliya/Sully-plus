@@ -87,9 +87,10 @@ describe('② 订阅刷新接线（SW 标记 ↔ 主线程消费）', () => {
 });
 
 describe('④ 多设备说明文案', () => {
-  it('全局设置弹窗的通知区块里说明「推送跟着排程时所在的设备走」', () => {
+  it('全局设置弹窗说明接收设备不会被其他排程设备自动抢占', () => {
     const src = read('../components/settings/ActiveMsgGlobalSettingsModal.tsx');
-    expect(src).toContain('排程时所在的设备');
-    expect(src).toContain('重新保存一次');
+    expect(src).toContain('始终发给当前选定的一台接收设备');
+    expect(src).toContain('不会改掉手机');
+    expect(src).toContain('重置订阅');
   });
 });

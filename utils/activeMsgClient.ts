@@ -1123,6 +1123,24 @@ export const ActiveMsgClient = {
   },
 
   /**
+   * 为新任务确认云端有一个可投递目标，但绝不覆盖已经登记的另一台设备。
+   *
+   * 排程可以发生在电脑，真正接收通知的设备却是 iPhone。过去每次排程都无条件把当前
+   * 浏览器写进用户级订阅，导致电脑悄悄顶掉手机。只有云端完全没有订阅时，才用当前
+   * 设备补一份；切换接收设备必须由设置页的显式登记/重置动作完成。
+   */
+  async ensurePushDeliveryTarget(): Promise<'existing' | 'registered'> {
+    const remote = await this.getRemotePushSubscription();
+    if (!remote) throw new Error('无法确认主动消息的推送接收设备，请检查 Worker 连接。');
+    if (remote.exists && remote.endpoint) return 'existing';
+
+    const nativeToken = readNativePushToken();
+    if (nativeToken) await this.registerNativePushToken(nativeToken);
+    else await this.registerPushSubscription();
+    return 'registered';
+  },
+
+  /**
    * worker 上登记的那份订阅现状（不含密钥，只有 endpoint 和登记时间）。
    *
    * 问不到一律返回 null、不抛：设置页的状态面板会反复调它，断网或者对面是台没有
@@ -1244,10 +1262,10 @@ export const ActiveMsgClient = {
    * 只在**权限已授予且浏览器已有订阅**时补。没订阅说明用户还没走「开启通知与推送
    * 订阅」那步，那是引导流程该做的事——连接不替用户开推送，也不在这儿弹权限框。
    *
-   * 返回值只为单测断言：'matched' 已经一致 / 'registered' 补了 / 'skipped' 条件不满足 /
-   * 'failed' 问不到或补失败了。
+   * 返回值只为单测断言：'matched' 已经是本机 / 'preserved' 已登记其他设备且保持不动 /
+   * 'registered' 云端为空时补了 / 'skipped' 当前设备没有现成订阅 / 'failed' 问不到或补失败。
    */
-  async reconcilePushSubscription(): Promise<'matched' | 'registered' | 'skipped' | 'failed'> {
+  async reconcilePushSubscription(): Promise<'matched' | 'preserved' | 'registered' | 'skipped' | 'failed'> {
     let localEndpoint = '';
     try {
       if (describePushCapabilityGap()) return 'skipped';
@@ -1263,11 +1281,13 @@ export const ActiveMsgClient = {
     }
 
     try {
-      // iOS 的本机订阅没有变化时不会触发 pushsubscriptionchange，但 worker 上那一行仍
-      // 可能被另一台浏览器覆盖。启动/回前台对账必须主动比较，不能只等 SW 标记。
       const remote = await this.getRemotePushSubscription();
       if (!remote) return 'failed';
-      if (compareRemotePushSubscription(localEndpoint, remote) === 'matched') return 'matched';
+      const state = compareRemotePushSubscription(localEndpoint, remote);
+      if (state === 'matched') return 'matched';
+      // 连接 Worker、打开网页、同步上下文都不是“把通知改发到这台设备”的明确授权。
+      // 已登记另一台设备时保留它；用户要切换，去设置页点重置订阅。
+      if (state === 'other-endpoint') return 'preserved';
       await this.registerPushSubscription();
       return 'registered';
     } catch (error) {
@@ -1303,7 +1323,10 @@ export const ActiveMsgClient = {
     await ActiveMsgStore.saveGlobalConfig({ ...config, initializedAt: Date.now() });
     await this.reconcilePushSubscription();
     const nativeToken = readNativePushToken();
-    if (nativeToken) await this.registerNativePushToken(nativeToken);
+    if (nativeToken) {
+      const remote = await this.getRemotePushSubscription();
+      if (!remote?.exists || !remote.endpoint) await this.registerNativePushToken(nativeToken);
+    }
     // warnings 是「连上了，但有一块功能是哑的」——比如 VAPID 没配齐，任务能建、到点
     // 却一条都推不出去。连接本身算成功，交给调用方提示，别拦住流程。
     return { ok: true, userId: config.userId, warnings: report?.warnings ?? [] };
@@ -1450,10 +1473,9 @@ export const ActiveMsgClient = {
     const { char, config, task, replaceTaskUuid, userProfile, groups, realtimeConfig, apiConfig } = params;
     const globalConfig = await ensureWorkerReady();
     const client = await initializeClient(globalConfig);
-    // 任务体不带订阅，worker 到点读用户级那一份——所以建任务前先把它登记上去。
-    const nativeToken = readNativePushToken();
-    if (nativeToken) await this.registerNativePushToken(nativeToken);
-    else await this.registerPushSubscription();
+    // 任务体不带订阅，worker 到点读用户级那一份。这里只确认已有接收端，不能让
+    // 当前排程设备覆盖它（电脑排任务、iPhone 收通知是正常用法）。
+    await this.ensurePushDeliveryTarget();
 
     // 数量封顶：待触发任务（不含被替换的那个）满 5 个就拒绝，让角色/用户先清。
     const pendingOthers = getPendingTasks(config, Date.now())
@@ -1625,11 +1647,9 @@ export const ActiveMsgClient = {
     const globalConfig = await ensureWorkerReady();
     const client = await initializeClient(globalConfig);
 
-    // 未来任务最终仍靠这份用户级订阅送达。每次覆盖写是幂等的，也顺手修复换过
-    // endpoint 但 worker 还留着旧地址的状态。
-    const nativeToken = readNativePushToken();
-    if (nativeToken) await this.registerNativePushToken(nativeToken);
-    else await this.registerPushSubscription();
+    // 未来任务最终仍靠用户级订阅送达。桥只确认有接收端，不允许电脑上的普通聊天
+    // 顺手把原本登记好的 iPhone 顶掉。
+    await this.ensurePushDeliveryTarget();
 
     const firePack = await buildFirePack(
       char, userProfile, groups, realtimeConfig, undefined, config.experienceMode,

@@ -741,8 +741,8 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
             这是第二步。只有你真的想让角色在后台主动推送消息时，才需要点。
           </p>
           <p className="text-xs leading-relaxed text-slate-500">
-            推送跟着「排程时所在的设备」走：每条任务到点后，推给保存这条排程时用的那台设备。
-            换了设备（或者换了浏览器）之后，在新设备上把排程重新保存一次，之后的推送就发到这台。
+            推送始终发给当前选定的一台接收设备；在电脑上打开 SullyOS 或安排任务，不会改掉手机。
+            想换接收设备时，请在新设备的「推送订阅状态」里点一次「重置订阅」。
           </p>
           {pushStatus?.detail ? (
             <p className="text-xs leading-relaxed text-amber-600">{pushStatus.detail}</p>
