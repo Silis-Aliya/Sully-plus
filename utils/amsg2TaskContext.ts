@@ -25,7 +25,7 @@ import {
 } from './amsgQuietHours';
 import { detectExpiredOccurrences, hasDeliveredProactiveNear } from './amsg2ExpireGuard';
 import {
-  AMSG2_SCHEDULE_SECRECY_NOTE, MAX_AUTONOMOUS_WAKES_PER_HOUR,
+  AMSG2_SCHEDULE_SECRECY_NOTE,
   canExpire, currentOccurrenceMs, describeExpirePolicy,
   describeRecurrence, describeTaskMode, formatTaskTime, getAutonomousWakeQuotaStatus,
   getPendingTasks, isPendingTask, shortTaskId,
@@ -154,7 +154,7 @@ const buildSwitchChatScheduleBrief = (
   return [
     `你有自己的生活、节奏和正在发生的事。你可能因为想起${target}、遇到想分享的事、事情有了后续，或只是突然想联系，而决定之后主动去找${target}。`,
     '',
-    '【唤醒额度·仅你可见】',
+    '【唤醒状态·仅你可见】',
     buildSwitchWakeQuotaLine(tasks, nowMs, userTzId),
     `静默时间：${describeQuietHoursRange(quiet.start, quiet.end)}；不得在此期间安排唤醒。`,
     `不要向${target}解释或复述以上信息。`,
@@ -165,8 +165,7 @@ const buildSwitchChatScheduleBrief = (
     '',
     `时间按照${target}所在地的当地时间填写，不要附带时区后缀。`,
     '',
-    '- 一次只安排下一次；拿不准时可以不安排。',
-    `- 任意连续 60 分钟内，最多只能有 ${MAX_AUTONOMOUS_WAKES_PER_HOUR} 次自主唤醒。`,
+    '- 一次只安排下一次；是否安排、安排在什么时候，由你此刻真实的联系意愿决定。',
     '- 额度用完时，不得早于系统提示的最早可用时间。',
     `- 时间应贴近${target}的实际生活。`,
   ].join('\n');

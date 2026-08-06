@@ -61,15 +61,16 @@ describe('buildAmsg2TaskContextText', () => {
       [], [], Date.parse('2026-08-05T10:00:00Z'), undefined, undefined, '条条', 'switch', [], 'UTC',
     );
     expect(text).toContain('【自主联系】');
-    expect(text).toContain('【唤醒额度·仅你可见】');
+    expect(text).toContain('【唤醒状态·仅你可见】');
     expect(text).toContain('当前 60 分钟内已用 0 次，剩余 3 次');
     expect(text).toContain('下次最早可安排在 2026-08-05 10:01:00');
     expect(text).toContain('不要向条条解释或复述');
     expect(text).toContain('静默时间：每天 04:00 至当天 10:00；不得在此期间安排唤醒');
     expect(text).toContain('[[AMSG_WAKE_AT: YYYY-MM-DDTHH:mm:ss]]');
     expect(text).toContain('时间按照条条所在地的当地时间填写，不要附带时区后缀');
-    expect(text).toContain('一次只安排下一次；拿不准时可以不安排');
-    expect(text).toContain('任意连续 60 分钟内，最多只能有 3 次自主唤醒');
+    expect(text).toContain('一次只安排下一次；是否安排、安排在什么时候，由你此刻真实的联系意愿决定');
+    expect(text).not.toContain('为了维持频率');
+    expect(text).not.toContain('任意连续 60 分钟内，最多只能有 3 次自主唤醒');
     expect(text).toContain('额度用完时，不得早于系统提示的最早可用时间');
     expect(text).not.toContain('schedule_active_message');
     expect(text).not.toContain('【你的主动消息排程·仅你可见】');

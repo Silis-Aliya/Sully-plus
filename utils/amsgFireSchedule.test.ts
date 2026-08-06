@@ -181,10 +181,14 @@ describe('工具与说明块', () => {
     expect(classic).not.toContain('【自主唤醒】');
     expect(switched).toContain('【自主唤醒】');
     expect(switched).toContain('你现在正通过一次自主唤醒联系条条');
-    expect(switched).toContain('先结合最新的关系、聊天、记忆');
+    expect(switched).toContain('结合最新的关系、聊天、记忆、双方当前时间及本次唤醒缘由');
     expect(switched).toContain('当前 60 分钟内已用 1 次，剩余 2 次');
     expect(switched).toContain('[[AMSG_WAKE_AT: YYYY-MM-DDTHH:mm:ss]]');
-    expect(switched).toContain('没有下一次安排时，本次联系结束后就进入休眠');
+    expect(switched).toContain('【唤醒状态·仅你可见】');
+    expect(switched).toContain('是否安排及具体时间由你决定');
+    expect(switched).toContain('不安排时，本次联系结束后进入休眠，之后仍可在正常聊天中重新安排');
+    expect(switched).not.toContain('任意连续 60 分钟内，最多只能有 3 次自主唤醒');
+    expect(switched).not.toContain('为了维持唤醒链');
     expect(switched).toContain('（小红书浏览）');
     expect(switched).toContain('你可以自由决定是否浏览或搜索');
     expect(switched).toContain('[[XHS_DETAIL: noteId]]');
