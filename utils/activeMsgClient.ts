@@ -939,6 +939,33 @@ const fetchWithAuthRaw = async (
 const fetchWithAuth = async (path: string, config: ActiveMsg2GlobalConfig, init: RequestInit, phase = '接口') =>
   (await fetchWithAuthRaw(path, config, init, phase)).body;
 
+const fetchMailboxWithRetry = async (
+  path: string,
+  config: ActiveMsg2GlobalConfig,
+  init: RequestInit,
+  phase: string,
+) => {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      return await fetchWithAuth(path, config, {
+        ...init,
+        signal: controller.signal,
+        // iOS may cancel reconciliation while the PWA is still thawing. D1 keeps the message.
+        __sullySuppressNetworkFailureLog: true,
+      } as RequestInit, phase);
+    } catch (error) {
+      lastError = error;
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 1_200));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastError;
+};
+
 const encryptPayload = async (client: ReiClient, payload: unknown) => {
   return (client as unknown as ReiCryptoBridge)._encrypt(JSON.stringify(payload));
 };
@@ -965,22 +992,15 @@ export const ActiveMsgClient = {
   async pullDeliveryMailbox(): Promise<Array<Record<string, any>>> {
     const config = await ensureGlobalReady();
     if (!config.workerUrl.trim() || !config.userId) return [];
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8_000);
-    try {
-      const body = await fetchWithAuth('delivery-mailbox', config, {
-        method: 'GET',
-        signal: controller.signal,
-      }, '补拉云端消息');
-      if (!body?.success) throw new Error(body?.error?.message || '补拉云端消息失败。');
-      const messages = body?.data?.messages;
-      return Array.isArray(messages)
-        ? messages.filter((item: unknown): item is Record<string, any> =>
-          !!item && typeof item === 'object' && !Array.isArray(item))
-        : [];
-    } finally {
-      clearTimeout(timer);
-    }
+    const body = await fetchMailboxWithRetry('delivery-mailbox', config, {
+      method: 'GET',
+    }, '补拉云端消息');
+    if (!body?.success) throw new Error(body?.error?.message || '补拉云端消息失败。');
+    const messages = body?.data?.messages;
+    return Array.isArray(messages)
+      ? messages.filter((item: unknown): item is Record<string, any> =>
+        !!item && typeof item === 'object' && !Array.isArray(item))
+      : [];
   },
 
   /** 本地 Service Worker 已接收（或命中同 messageId 去重）后，批量确认云端信箱。 */
@@ -989,19 +1009,12 @@ export const ActiveMsgClient = {
     if (unique.length === 0) return;
     const config = await ensureGlobalReady();
     if (!config.workerUrl.trim() || !config.userId) return;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8_000);
-    try {
-      const body = await fetchWithAuth('delivery-mailbox/ack', config, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageIds: unique }),
-        signal: controller.signal,
-      }, '确认云端消息');
-      if (!body?.success) throw new Error(body?.error?.message || '确认云端消息失败。');
-    } finally {
-      clearTimeout(timer);
-    }
+    const body = await fetchMailboxWithRetry('delivery-mailbox/ack', config, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageIds: unique }),
+    }, '确认云端消息');
+    if (!body?.success) throw new Error(body?.error?.message || '确认云端消息失败。');
   },
 
   // 生成 worker env 用的 AMSG_MASTER_KEY（32 字节 → 64 位 hex）。
