@@ -5,7 +5,6 @@ import { ChatParser } from '../utils/chatParser';
 import { processImage } from '../utils/file';
 import { migrateDataUrlToRef, useBlobRefUrl } from '../utils/blobRef';
 import { resolveXhsShareLink } from '../utils/xhsShareLink';
-import { getXhsNoteOpenUrl } from '../utils/xhsOpenUrl';
 import { detectFirstUrl, extractWebpageContent, isXhsUrl, type ExtractedWebpage } from '../utils/webpageExtractor';
 import { isVideoShareUrl, parseVideoShareUrl } from '../utils/videoParser';
 import type { Emoji, EmojiCategory, Message, WorkbenchArtifact, WorkbenchBridgeConfig, WorkbenchMemory, WorkbenchMessage, WorkbenchMode, WorkbenchProject, WorkbenchSession, WorkbenchSummary } from '../types';
@@ -195,7 +194,15 @@ const resolveWorkbenchXhsNote = async (
     return resolved.note;
 };
 
-export const getWorkbenchXhsOpenUrl = getXhsNoteOpenUrl;
+export const getWorkbenchXhsOpenUrl = (note?: Record<string, any> | null): string => {
+    if (!note) return '';
+    const sourceUrl = String(note.sourceUrl || note.url || '').trim();
+    if (/^https?:\/\//i.test(sourceUrl)) return sourceUrl;
+    const noteId = String(note.noteId || note.note_id || note.id || '').trim();
+    if (!noteId) return sourceUrl ? `https://${sourceUrl}` : '';
+    const token = String(note.xsecToken || note.xsec_token || '').trim();
+    return `https://www.xiaohongshu.com/explore/${noteId}${token ? `?xsec_token=${encodeURIComponent(token)}&xsec_source=pc_feed` : ''}`;
+};
 
 const extractWorkbenchXhsShareComment = (text: string, note?: Record<string, any>) => {
     const title = String(note?.title || '').trim();
