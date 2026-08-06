@@ -13,6 +13,7 @@
 
 import { createCloudflareWorker } from '@rei-standard/amsg-instant/adapters/cloudflare';
 import { createD1BlobStore } from '@rei-standard/amsg-instant/blob/d1';
+import { ReiClient } from '@rei-standard/amsg-client';
 import {
   buildContentPush,
   buildToolRequestPush,
@@ -22,7 +23,18 @@ import {
 
 import { classifyLLMOutput } from './classifier';
 import { sanitizeIntoSegments, type Segment } from '../../../utils/sanitize';
+import { buildTaskInstruction, resolveSendAtMs } from '../../../utils/amsgFireSchedule';
+import type { ActiveMsg2TaskRecord, InstantAmsg2BridgeConfig } from '../../../types';
+import { validateSwitchWakeTime, wouldExceedAutonomousWakeRate } from '../../../utils/amsg2Tasks';
+import { buildAmsgQuietHoursMessage, isAmsgQuietHours } from '../../../utils/amsgQuietHours';
 import { INSTANT_WORKER_VERSION } from '../../../utils/instantWorkerVersion';
+import { ensureClaudeToolThinkingBudget } from '../../../utils/thinkingGate';
+import { ensureClaudeToolSchema } from '../../../utils/toolSchemaCompat';
+import {
+  AMSG_SWITCH_CONTROL_KEY,
+  amsgStateNamespace,
+  type AmsgSwitchControl,
+} from '../../../utils/amsgFirePack';
 
 export interface Env {
   VAPID_PUBLIC_KEY: string;
@@ -83,6 +95,33 @@ const D1_DELETE_EXPIRED_SQL = `DELETE FROM ${D1_BLOB_TABLE} WHERE expires_at < ?
 let d1SchemaReadyPromise: Promise<boolean> | null = null;
 let lastD1CleanupAt = 0;
 let d1CleanupPromise: Promise<void> | null = null;
+
+const AMSG2_TOOL_NAMES = new Set([
+  'schedule_active_message',
+  'cancel_active_message',
+  'renew_active_message',
+  'list_active_messages',
+]);
+const AMSG2_PLACEHOLDER_PROMPT =
+  'AMSG2_PLACEHOLDER_PROMPT（正式 prompt 到点由 worker onBeforeFire 下发；看到这条说明 fire hooks 未生效）';
+const MAX_ACTIVE_TASKS_PER_CHAR = 5;
+
+type InstantAmsgSession = {
+  bridge: InstantAmsg2BridgeConfig;
+  requestMessages: unknown[];
+  tools: unknown[];
+  tasks: ActiveMsg2TaskRecord[];
+  created: ActiveMsg2TaskRecord[];
+  cancelled: string[];
+  createdAt: number;
+  client?: ReiClient;
+  wakeScheduleRetries?: number;
+};
+
+// 单次 agentic loop 的短命状态。key 是随机 sessionId；onAfterLoop 必删，避免凭据在
+// isolate 里跨会话滞留。凭据不进 metadata，也不会进入任何 push payload。
+const instantAmsgSessions = new Map<string, InstantAmsgSession>();
+const INSTANT_AMSG_SESSION_TTL_MS = 10 * 60_000;
 
 /** Event types worth logging at error level — shared between cfWorker and emotion-eval handlers. */
 const ERROR_EVENT_TYPES = new Set([
@@ -390,8 +429,318 @@ async function handleCapabilitiesRequest(request: Request, env: Env): Promise<Re
   });
 }
 
+function isInstantAmsgBridge(value: unknown): value is InstantAmsg2BridgeConfig {
+  const v = value as Partial<InstantAmsg2BridgeConfig> | null;
+  return !!v
+    && typeof v.workerUrl === 'string' && /^https:\/\//i.test(v.workerUrl)
+    && typeof v.userId === 'string' && !!v.userId
+    && typeof v.charId === 'string' && !!v.charId
+    && typeof v.charName === 'string'
+    && typeof v.tzId === 'string' && !!v.tzId
+    && typeof v.userTzId === 'string' && !!v.userTzId
+    && typeof v.anchorMs === 'number'
+    && !!v.api && typeof v.api.baseUrl === 'string'
+    && typeof v.api.apiKey === 'string' && typeof v.api.model === 'string'
+    && Array.isArray(v.tasks);
+}
+
+function sanitizeInstantAmsgTools(value: unknown): unknown[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((tool: any) =>
+    tool?.type === 'function'
+    && AMSG2_TOOL_NAMES.has(tool?.function?.name)
+    && typeof tool?.function?.description === 'string'
+    && tool?.function?.parameters && typeof tool.function.parameters === 'object',
+  );
+}
+
+function messagePrefixMatches(candidate: unknown[], prefix: unknown[]): boolean {
+  if (candidate.length < prefix.length) return false;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (JSON.stringify(candidate[i]) !== JSON.stringify(prefix[i])) return false;
+  }
+  return true;
+}
+
+export function injectInstantAmsgTools(
+  body: any,
+  sessions: Array<Pick<InstantAmsgSession, 'requestMessages' | 'tools'>>,
+): any {
+  if (!body?.model || !Array.isArray(body.messages)) return body;
+  const state = sessions.find((entry) =>
+    entry.tools.length > 0 && messagePrefixMatches(body.messages, entry.requestMessages),
+  );
+  if (!state) return body;
+
+  // amsg-instant 发出的主体是 OpenAI chat/completions 形状，但部分 Claude 中转会把
+  // tools 原样交给 Anthropic 校验。请求出口与前台共用同一份 schema 适配。
+  const patched = ensureClaudeToolSchema({ ...body, tools: state.tools, tool_choice: 'auto' });
+  return ensureClaudeToolThinkingBudget(patched);
+}
+
+/**
+ * amsg-instant 0.9 的 agentic loop 会完整保留模型返回的 tool_calls，却没有把调用方
+ * 的 tools 字段拷进 OpenAI 请求。只在 messages 与本轮原始历史匹配时补上四个 AMSG
+ * 工具；Push、SSE、D1 和 AMSG Worker 请求都不会满足这个形状，因此不受影响。
+ */
+async function fetchWithInstantAmsgTools(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (typeof init?.body !== 'string') return globalThis.fetch(input, init);
+  let body: any;
+  try {
+    body = JSON.parse(init.body);
+  } catch {
+    return globalThis.fetch(input, init);
+  }
+  const patched = injectInstantAmsgTools(body, [...instantAmsgSessions.values()]);
+  if (patched === body) return globalThis.fetch(input, init);
+
+  return globalThis.fetch(input, {
+    ...init,
+    body: JSON.stringify(patched),
+  });
+}
+
+async function getAmsgClient(state: InstantAmsgSession): Promise<ReiClient> {
+  if (state.client) return state.client;
+  const client = new ReiClient({
+    baseUrl: state.bridge.workerUrl.replace(/\/+$/, ''),
+    userId: state.bridge.userId,
+    serverToken: state.bridge.serverToken || undefined,
+  });
+  await client.init();
+  state.client = client;
+  return client;
+}
+
+export async function cancelBridgeTask(client: ReiClient, taskUuid: string): Promise<void> {
+  const response = await client.cancelMessage(taskUuid);
+  if (response?.success) return;
+  // 一次性任务可能刚好已经触发并删行；远端不存在正是取消想达到的终态。
+  if (response?.error?.code === 'TASK_NOT_FOUND') return;
+  throw new Error(response?.error?.message || '主动消息任务取消失败');
+}
+
+function shortTaskId(uuid: string): string {
+  return uuid.slice(0, 8);
+}
+
+function findBridgeTask(state: InstantAmsgSession, rawId: unknown): ActiveMsg2TaskRecord | null {
+  const id = typeof rawId === 'string' ? rawId.trim() : '';
+  if (id) return state.tasks.find((task) => task.taskUuid === id || task.taskUuid.startsWith(id)) ?? null;
+  const pending = state.tasks.filter((task) => task.status === 'scheduled');
+  return pending.length === 1 ? pending[0] : null;
+}
+
+function describeBridgeTasks(state: InstantAmsgSession): string {
+  if (!state.tasks.length) return '当前角色没有任何定时主动消息任务。';
+  return `当前角色的任务列表：\n${state.tasks.map((task) => {
+    const recurrence = task.recurrenceType === 'daily' ? '每天' : task.recurrenceType === 'weekly' ? '每周' : '一次性';
+    const mode = task.mode === 'prompted' ? `提示方向「${task.promptHint || ''}」` : '自动生成';
+    return `- [${shortTaskId(task.taskUuid)}] ${task.firstSendTime} · ${recurrence} · ${mode}`;
+  }).join('\n')}`;
+}
+
+async function scheduleBridgeTask(
+  state: InstantAmsgSession,
+  args: Record<string, unknown>,
+  replaceTask?: ActiveMsg2TaskRecord,
+  keepReplaced = false,
+): Promise<string> {
+  if (state.bridge.enabled === false) return '主动消息已经关闭，这次不会建立新的唤醒。';
+  if (state.bridge.experienceMode === 'switch') {
+    const client = await getAmsgClient(state);
+    const response = await client.getClientState(amsgStateNamespace(state.bridge.charId));
+    if (!response?.success) {
+      return response?.error?.message
+        ? `无法确认主动唤醒当前开关状态：${response.error.message}`
+        : '无法确认主动唤醒当前开关状态，本次不会建立新的唤醒。';
+    }
+    if (response.success) {
+      const entries = (response.data?.entries ?? []) as Array<{ key?: string; value?: string }>;
+      const raw = entries.find((entry) => entry.key === AMSG_SWITCH_CONTROL_KEY)?.value;
+      if (raw) {
+        try {
+          const control = JSON.parse(raw) as AmsgSwitchControl;
+          if (control.enabled === false || control.experienceMode !== 'switch') {
+            return '主动唤醒已经关闭或切换到原版，这次不会建立新的唤醒。';
+          }
+        } catch {
+          console.warn('[instant-push] ignored malformed switch_control state');
+        }
+      }
+    }
+  }
+  if (state.bridge.experienceMode === 'switch' && !replaceTask) {
+    replaceTask = state.tasks.find((task) => task.status === 'scheduled' && !task.switchFallback);
+  }
+  if (state.tasks.filter((task) => task.status === 'scheduled' && task.taskUuid !== replaceTask?.taskUuid).length
+      >= MAX_ACTIVE_TASKS_PER_CHAR) {
+    return `该角色的待触发任务已达上限 ${MAX_ACTIVE_TASKS_PER_CHAR} 个，请先取消或合并已有任务。`;
+  }
+
+  const sendAtRaw = String(args.send_at || '').trim();
+  const sendAtMs = resolveSendAtMs(sendAtRaw, { tzId: state.bridge.tzId });
+  if (!Number.isFinite(sendAtMs)) return 'send_at 不是有效时间，请按 YYYY-MM-DDTHH:mm:ss 重新填写。';
+  if (sendAtMs <= Date.now()) return 'send_at 必须晚于当前时间，请重新选择未来时间。';
+  if (state.bridge.experienceMode === 'switch' && validateSwitchWakeTime(sendAtMs) === 'too_far') {
+    return '主动唤醒的下一次时间最远只能安排在未来 7 天内。';
+  }
+  if (isAmsgQuietHours(
+    sendAtMs,
+    state.bridge.userTzId,
+    state.bridge.switchQuietStart,
+    state.bridge.switchQuietEnd,
+  )) {
+    return buildAmsgQuietHoursMessage(
+      state.bridge.switchQuietStart,
+      state.bridge.switchQuietEnd,
+    );
+  }
+  if (wouldExceedAutonomousWakeRate(state.tasks, sendAtMs, Date.now(), replaceTask?.taskUuid)) {
+    return '这个时间会让一小时内的自主唤醒超过 3 次。请换到更晚的时间。';
+  }
+
+  const mode = args.mode === 'prompted' ? 'prompted' : 'auto';
+  const recurrence = ['daily', 'weekly'].includes(String(args.recurrence))
+    ? String(args.recurrence) as 'daily' | 'weekly'
+    : 'none';
+  const expirePolicy = args.expire_policy === 'force' ? 'force' : 'expire';
+  const promptHint = typeof args.prompt_hint === 'string' && args.prompt_hint.trim()
+    ? args.prompt_hint.trim()
+    : undefined;
+  const clientTaskId = crypto.randomUUID();
+  const firstSendTime = new Date(sendAtMs).toISOString();
+  const payload: Record<string, unknown> = {
+    contactName: state.bridge.charName,
+    ...(state.bridge.avatarUrl ? { avatarUrl: state.bridge.avatarUrl } : {}),
+    messageType: mode,
+    messageSubtype: 'chat',
+    firstSendTime,
+    recurrenceType: recurrence,
+    tzId: state.bridge.tzId,
+    messages: [{ role: 'user', content: AMSG2_PLACEHOLDER_PROMPT }],
+    apiUrl: state.bridge.api.baseUrl,
+    apiKey: state.bridge.api.apiKey,
+    primaryModel: state.bridge.api.model,
+    ...(state.bridge.maxTokens ? { maxTokens: state.bridge.maxTokens } : {}),
+    metadata: {
+      charId: state.bridge.charId,
+      charName: state.bridge.charName,
+      source: 'active_msg_2',
+      amsgMode: mode,
+      amsgClientTaskId: clientTaskId,
+      amsgExpirePolicy: expirePolicy,
+      amsgAnchorMs: state.bridge.anchorMs,
+      amsgTaskInstruction: buildTaskInstruction(mode, promptHint),
+    },
+  };
+
+  const client = await getAmsgClient(state);
+  const response = await client.scheduleMessage(payload);
+  if (!response?.success || typeof response?.data?.uuid !== 'string') {
+    throw new Error(response?.error?.message || '主动消息任务创建失败');
+  }
+
+  const record: ActiveMsg2TaskRecord = {
+    taskUuid: response.data.uuid,
+    clientTaskId,
+    mode,
+    firstSendTime,
+    ...(typeof response.data.nextSendAt === 'string' ? { nextSendAt: response.data.nextSendAt } : {}),
+    recurrenceType: recurrence,
+    ...(promptHint ? { promptHint } : {}),
+    expirePolicy,
+    anchorLastUserMsgAt: state.bridge.anchorMs,
+    source: 'character',
+    status: 'scheduled',
+    createdAt: Date.now(),
+  };
+
+  state.created.push(record);
+  state.tasks = [
+    ...state.tasks.filter((task) => keepReplaced || task.taskUuid !== replaceTask?.taskUuid),
+    record,
+  ];
+
+  let cancelWarning = '';
+  if (replaceTask && !keepReplaced) {
+    try {
+      await cancelBridgeTask(client, replaceTask.taskUuid);
+      state.cancelled.push(replaceTask.taskUuid);
+    } catch (error) {
+      // 新任务已经建成，取消旧任务失败时不能撒谎；把旧任务放回快照让手机仍可重试。
+      state.tasks = [replaceTask, ...state.tasks];
+      cancelWarning = `，但原任务 [${shortTaskId(replaceTask.taskUuid)}] 取消失败、可能仍会触发`;
+      console.warn('[instant-push] AMSG replace cancel failed', error);
+    }
+  }
+
+  return `定时主动消息已创建 [${shortTaskId(record.taskUuid)}]，将在 ${firstSendTime} 开始生成${cancelWarning}。`;
+}
+
+async function executeInstantAmsgTool(
+  state: InstantAmsgSession,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  if (name === 'list_active_messages') return describeBridgeTasks(state);
+  if (name === 'schedule_active_message') return scheduleBridgeTask(state, args);
+
+  const target = findBridgeTask(state, args.task_id);
+  if (!target) {
+    return state.tasks.length > 1
+      ? '当前有多个任务，请先用 list_active_messages 查询，再带 task_id 指定。'
+      : '没有找到可操作的主动消息任务。';
+  }
+  const client = await getAmsgClient(state);
+
+  if (name === 'cancel_active_message') {
+    await cancelBridgeTask(client, target.taskUuid);
+    state.tasks = state.tasks.filter((task) => task.taskUuid !== target.taskUuid);
+    state.created = state.created.filter((task) => task.taskUuid !== target.taskUuid);
+    state.cancelled.push(target.taskUuid);
+    return `已取消任务 [${shortTaskId(target.taskUuid)}]。`;
+  }
+
+  if (name === 'renew_active_message') {
+    if (target.mode === 'fixed') return '固定消息任务请在设置面板调整。';
+    const recurring = target.recurrenceType !== 'none';
+    return scheduleBridgeTask(state, {
+      ...args,
+      mode: target.mode,
+      prompt_hint: target.promptHint,
+      recurrence: recurring ? 'none' : target.recurrenceType,
+      expire_policy: target.expirePolicy,
+    }, target, recurring);
+  }
+
+  return `不支持的主动消息工具：${name}`;
+}
+
+export function attachInstantAmsgChanges(decision: any, state: InstantAmsgSession | undefined): any {
+  if (!state || decision?.decision !== 'finish' || !Array.isArray(decision.pushPayloads)) return decision;
+  const cancelled = [...new Set(state.cancelled)];
+  const liveTaskIds = new Set(state.tasks.map((task) => task.taskUuid));
+  const created = state.created.filter(
+    (task) => liveTaskIds.has(task.taskUuid) && !cancelled.includes(task.taskUuid),
+  );
+  if (!created.length && !cancelled.length) return decision;
+  const last = decision.pushPayloads.length - 1;
+  if (last < 0) return decision;
+  decision.pushPayloads[last] = {
+    ...decision.pushPayloads[last],
+    metadata: {
+      ...(decision.pushPayloads[last]?.metadata || {}),
+      ...(created.length ? { amsgSelfScheduled: created } : {}),
+      ...(cancelled.length ? { amsgCancelledTaskIds: cancelled } : {}),
+    },
+  };
+  return decision;
+}
+
 function buildAmsgOptions(env: Env) {
   return {
+    fetch: fetchWithInstantAmsgTools,
     vapid: {
       email: env.VAPID_EMAIL || 'mailto:noreply@example.com',
       publicKey: env.VAPID_PUBLIC_KEY,
@@ -416,15 +765,30 @@ const cfWorker = createCloudflareWorker((env: Env) => {
       immediateKeepalive: true,
     },
     onLLMOutput,
-    onBeforeLoop: ({ requestBody }: any) => {
-      if (!requestBody?.emotionEval) return undefined;
-      // Start emotion eval in parallel (returns promise)
-      return { emotionEval: runEmotionEval(requestBody) };
+    onBeforeLoop: ({ requestBody, sessionId }: any) => {
+      const now = Date.now();
+      for (const [id, state] of instantAmsgSessions) {
+        if (now - state.createdAt > INSTANT_AMSG_SESSION_TTL_MS) instantAmsgSessions.delete(id);
+      }
+      const tools = sanitizeInstantAmsgTools(requestBody?.tools);
+      if (isInstantAmsgBridge(requestBody?.amsg2Bridge) && tools.length > 0) {
+        instantAmsgSessions.set(sessionId, {
+          bridge: requestBody.amsg2Bridge,
+          requestMessages: Array.isArray(requestBody.messages) ? [...requestBody.messages] : [],
+          tools,
+          tasks: [...requestBody.amsg2Bridge.tasks],
+          created: [],
+          cancelled: [],
+          createdAt: now,
+        });
+      }
+      // Start emotion eval in parallel (returns promise). 即使没开 eval 也返回一个对象，
+      // onAfterLoop 仍会运行并清掉上面的短命 AMSG 凭据状态。
+      return requestBody?.emotionEval ? { emotionEval: runEmotionEval(requestBody) } : {};
     },
     onAfterLoop: async ({ deliver, pending, requestBody, sessionId }: any) => {
-      if (!pending?.emotionEval) return;
-
       try {
+        if (!pending?.emotionEval) return;
         const { raw: emotionRaw, error: emotionError } = await pending.emotionEval;
         // 无论成功 / 失败 / 空结果都推一条 emotion_update (emotionRaw 可能为空字符串):
         // 客户端据此熄灭 "情绪分析中" 徽章, 否则只能等本地安全超时, 体验上像卡死.
@@ -451,6 +815,8 @@ const cfWorker = createCloudflareWorker((env: Env) => {
         });
       } catch (err) {
         console.warn('[instant] emotion eval failed in onAfterLoop:', err);
+      } finally {
+        instantAmsgSessions.delete(sessionId);
       }
     },
   };
@@ -667,8 +1033,45 @@ export default {
  *            iteration, metadata, contactName, avatarUrl, llmResponse, ... }
  */
 async function onLLMOutput(ctx: any) {
+  const state = instantAmsgSessions.get(ctx.sessionId);
+  const toolCalls = Array.isArray(ctx?.llmResponse?.choices?.[0]?.message?.tool_calls)
+    ? ctx.llmResponse.choices[0].message.tool_calls
+    : [];
+  const amsgCalls = toolCalls.filter((call: any) => AMSG2_TOOL_NAMES.has(call?.function?.name));
+
+  if (state && amsgCalls.length > 0) {
+    const toolMessages = [];
+    for (const call of amsgCalls) {
+      const name = String(call.function.name);
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(call.function.arguments || '{}');
+      } catch {
+        args = {};
+      }
+      let content: string;
+      try {
+        content = await executeInstantAmsgTool(state, name, args);
+      } catch (error: any) {
+        content = `主动消息工具执行失败：${error?.message || String(error)}`;
+      }
+      toolMessages.push({
+        role: 'tool',
+        tool_call_id: call.id,
+        name,
+        content,
+      });
+    }
+    return {
+      decision: 'continue',
+      nextHistory: [...ctx.messages, ...toolMessages],
+    };
+  }
+
+  const llmOutputText = String(ctx.llmOutputText ?? '');
+  const classified = classifyLLMOutput(llmOutputText);
   const decision = buildPushDecision({
-    llmOutputText: String(ctx.llmOutputText ?? ''),
+    llmOutputText,
     sessionId: ctx.sessionId,
     iteration: Number(ctx.iteration ?? 0),
     contactName: ctx.contactName ?? '',
@@ -676,7 +1079,52 @@ async function onLLMOutput(ctx: any) {
     // metadata 透传: 客户端 sendInstantPush 时塞了 charId; SW 路由要它分发到具体角色
     callerMetadata: (ctx.metadata && typeof ctx.metadata === 'object') ? ctx.metadata : {},
   });
-  return decision;
+  if (state
+      && state.bridge.experienceMode === 'switch'
+      && decision.decision === 'finish'
+      && classified.kind === 'finish'
+      && classified.cleanedText) {
+    const wake = classified.directives.find((directive) => directive.type === 'amsg_wake_at');
+    if (wake?.type === 'amsg_wake_at') {
+      const before = state.created.length;
+      let feedback = '';
+      try {
+        feedback = await scheduleBridgeTask(state, {
+          send_at: wake.localDateTime,
+          mode: 'auto',
+          recurrence: 'none',
+          expire_policy: 'force',
+        });
+      } catch (error: any) {
+        feedback = `建立下一次唤醒失败：${error?.message || String(error)}`;
+      }
+
+      if (state.created.length === before && (state.wakeScheduleRetries ?? 0) < 1) {
+        state.wakeScheduleRetries = (state.wakeScheduleRetries ?? 0) + 1;
+        return {
+          decision: 'continue',
+          nextHistory: [
+            ...ctx.messages,
+            { role: 'assistant', content: llmOutputText },
+            {
+              role: 'system',
+              content: `[系统：你刚才给自己安排下一次唤醒没有成功。原因：${feedback} 请根据限制重新选择有效时间，或不再安排；不要向用户解释系统规则。]`,
+            },
+          ],
+        };
+      }
+
+      // 云端已经处理过（成功或重试后仍失败），不能再把同一标签交给手机重放，
+      // 否则页面重新打开时会重复建立第二条任务。
+      for (const payload of decision.pushPayloads as Array<any>) {
+        const directives = payload?.metadata?.directives;
+        if (Array.isArray(directives)) {
+          payload.metadata.directives = directives.filter((directive: any) => directive?.type !== 'amsg_wake_at');
+        }
+      }
+    }
+  }
+  return attachInstantAmsgChanges(decision, state);
 }
 
 // ─── Pure logic: 抽出来给单测 ──────────────────────────────────────────────

@@ -30,11 +30,12 @@ import {
   measurePushPayload,
 } from '@rei-standard/amsg-server/cloudflare';
 import { stripReasoningTags } from '@rei-standard/amsg-shared';
-import type { UserProfile } from '../../../types';
+import type { ActiveMsg2ExperienceMode, ActiveMsg2TaskRecord, UserProfile } from '../../../types';
 import {
   AMSG_FIRE_PACK_KEY,
   AMSG_LAST_SKIP_KEY,
   AMSG_SELF_LOG_KEY,
+  AMSG_SWITCH_CONTROL_KEY,
   type AmsgLastSkip,
   type AmsgSelfLog,
   type AmsgTzRef,
@@ -52,7 +53,16 @@ import {
 } from '../../../utils/amsgFirePack';
 import { resolveFireSceneSong } from '../../../utils/amsgFireScene';
 import { shouldExpireFire } from '../../../utils/amsg2ExpireGuard';
-import { buildFireTaskListBlock, MAX_ACTIVE_TASKS_PER_CHAR } from '../../../utils/amsg2Tasks';
+import {
+  buildAmsgQuietHoursMessage,
+  isAmsgQuietHours,
+  nextAmsgQuietEndMs,
+} from '../../../utils/amsgQuietHours';
+import {
+  buildFireTaskListBlock, getAutonomousWakeQuotaStatus, MAX_ACTIVE_TASKS_PER_CHAR,
+  validateSwitchWakeTime, wouldExceedAutonomousWakeRate,
+} from '../../../utils/amsg2Tasks';
+import { parseAmsgWakeDirective } from '../../../utils/amsgWakeDirective';
 import {
   AMSG_FIRE_SCHEDULE_TOOL,
   buildFireScheduleBlock,
@@ -66,6 +76,18 @@ import {
   isFreshChatPresence,
   parseAmsgChatPresence,
 } from '../../../utils/amsgChatPresence';
+import {
+  AMSG_MUSIC_WAKE_PRESENCE_KEY,
+  isFreshMusicWakePresence,
+  parseAmsgMusicWakePresence,
+} from '../../../utils/amsgMusicWakePresence';
+import {
+  AMSG_XHS_WAKE_GATE_KEY,
+  parseAmsgXhsWakeGateState,
+  resolveAmsgXhsWakeGate,
+  stripLegacySwitchFirePackXhs,
+  stripUnavailableAmsgXhsDirectives,
+} from '../../../utils/amsgXhsWakeGate';
 import {
   AMSG_GLOBAL_NAMESPACE,
   AMSG_TOOL_CONFIG_KEY,
@@ -90,7 +112,12 @@ import {
   type McpResolvedToolCore,
   type McpSessionState,
 } from '../../../utils/mcpFireCore';
-import { dispatchAgenticTool, type AgenticToolChar, type AgenticToolCtx } from '../../../utils/agenticTools';
+import {
+  dispatchAgenticTool,
+  resolveXhsConfig,
+  type AgenticToolChar,
+  type AgenticToolCtx,
+} from '../../../utils/agenticTools';
 import {
   buildDuplicateToolMessage,
   buildToolResultMessage,
@@ -108,6 +135,13 @@ import {
 } from './agentic';
 import type { ActiveMsg2TaskRecord } from '../../../types';
 import { createHybridPushTransport, isFcmConfigured, type NativeFcmEnv } from './nativeFcm';
+import {
+  createMailboxBackedPushTransport,
+  handleDeliveryMailboxRequest,
+  persistDeliveryMailbox,
+  stampMailboxPayloads,
+  type DeliveryMailboxDb,
+} from './deliveryMailbox';
 
 interface Env extends NativeFcmEnv {
   AMSG_MASTER_KEY: string;
@@ -117,7 +151,7 @@ interface Env extends NativeFcmEnv {
   /** 可选共享密钥；配了才校验 X-Client-Token，不配则端点全开。 */
   AMSG_SERVER_TOKEN?: string;
   /** D1 binding（factory 默认 createD1Adapter(env.DB)，这里只是标注存在）。 */
-  DB: unknown;
+  DB: DeliveryMailboxDb;
 }
 
 // ─── 满血 fire-time hooks（amsg-server 2.6.0-next.4+：含 ctx.scratch / 存储层大值分块） ───
@@ -221,6 +255,18 @@ interface SessionCtx {
   occurrenceMs: number | null;
 }
 
+const formatSwitchQuotaTime = (valueMs: number, userTzId: string): string => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: userTzId,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false, hourCycle: 'h23',
+  }).formatToParts(new Date(valueMs));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}:${part('second')}`;
+};
+
 /** 一次 fire 的跨轮状态：工具执行上下文 + 旁白累积。挂在 ctx.scratch.fire 上。 */
 interface FireStash {
   session: FireSessionState;
@@ -229,6 +275,8 @@ interface FireStash {
   xhsCookie: string;
   /** 本次触发时刻（任务行 next_send_at）；透传给每条 push 的 metadata.amsgOccurrenceMs。 */
   occurrenceMs: number;
+  /** 本次 fire 真正开始处理的时刻；续排校验不能改用后续回调发生时的服务器墙钟。 */
+  fireNowMs: number;
   /**
    * 「角色自己发过什么」的当前版本（已跟本次 fire_pack 对齐过；对不上就是空的一份）。
    * onBeforeFire 读进来注入 prompt，onLLMOutput 发完在它上面追加一条写回云端。
@@ -250,10 +298,23 @@ interface FireStash {
   mcpSpentMs: number;
   /** 打包那一刻客户端已知的待触发任务，用来算「还能不能再排」。 */
   pendingTaskCount: number;
+  /** 同一份任务快照；自排限流需要检查各任务下一次触发时刻。 */
+  pendingTasks: ActiveMsg2TaskRecord[];
   /** 角色本次 fire 已经排成功的任务（也是要随 push 带回客户端认领的那些）。 */
   scheduledTasks: ActiveMsg2TaskRecord[];
   /** 本次触发用到的角色 id / 任务归属键，排程时要写进新任务的 metadata。 */
   charId: string;
+  /** 云端信箱按用户隔离；来自上游已经鉴权后的 fire context。 */
+  userId: string;
+  /** 原任务循环类型，补拉 payload 必须与 Web Push 信封保持一致。 */
+  recurrenceType: string | null;
+  /** Classic 尊重工具参数；Switch 自排闹钟不会因用户只留言而作废。 */
+  experienceMode: ActiveMsg2ExperienceMode;
+  /** 主动唤醒的 XHS 链路最多发现一次、查看一篇详情；详情回来后下一轮直接收尾。 */
+  autonomousXhsAvailable: boolean;
+  xhsDiscoveryUsed: boolean;
+  xhsDetailUsed: boolean;
+  xhsChainClosed: boolean;
   /** 防穿帮闸锚点：这份 fire_pack 记的「用户最后一次开口」。 */
   anchorMs: number;
   /**
@@ -261,6 +322,10 @@ interface FireStash {
    * ——当前时间槽、self_log 时间戳、排程清单、send_at 解析与打回文案——都从这一份出。
    */
   tz: AmsgTzRef;
+  /** 用户设备时区；睡眠时段只按用户的钟判断。 */
+  userTzId: string;
+  switchQuietStart: string;
+  switchQuietEnd: string;
   /** 任务行 uuid（skip 留痕要对上是哪一条；拿不到为 null）。 */
   taskUuid: string | null;
   /** 任务行 id（字符串化）；日志与自排任务的 metadata 用。 */
@@ -609,6 +674,14 @@ export const runFireScheduleTool = async (
       message: `这次已经排了 ${MAX_FIRE_SCHEDULES} 条，够了，剩下的话直接写进这条消息里。`,
     };
   }
+  if (stash.experienceMode === 'switch'
+      && stash.pendingTasks.some((task) => task.clientTaskId !== stash.clientTaskId && !task.switchFallback)) {
+    return {
+      ok: false,
+      reason: 'switch_wake_exists',
+      message: '已经存在下一次自主唤醒，本次不会重复安排。',
+    };
+  }
   const live = stash.pendingTaskCount + stash.scheduledTasks.length;
   if (live >= MAX_ACTIVE_TASKS_PER_CHAR) {
     return {
@@ -622,11 +695,48 @@ export const runFireScheduleTool = async (
   // worker 跑在 UTC，不带 tz 的话「明早 9 点」会整整差一个时差。
   const parsed = parseFireScheduleArgs(args, nowMs, stash.tz);
   if ('ok' in parsed) return parsed as unknown as Record<string, unknown>;
+  if (stash.experienceMode === 'switch'
+      && validateSwitchWakeTime(Date.parse(parsed.sendAt), nowMs) === 'too_far') {
+    return {
+      ok: false,
+      reason: 'too_far',
+      message: '主动唤醒的下一次时间最远只能安排在未来 7 天内。',
+    };
+  }
+  if (isAmsgQuietHours(
+    Date.parse(parsed.sendAt), stash.userTzId, stash.switchQuietStart, stash.switchQuietEnd,
+  )) {
+    return {
+      ok: false,
+      reason: 'quiet_hours',
+      message: buildAmsgQuietHoursMessage(stash.switchQuietStart, stash.switchQuietEnd),
+    };
+  }
+  if (wouldExceedAutonomousWakeRate(
+    [
+      ...stash.pendingTasks.filter((task) => task.clientTaskId !== stash.clientTaskId),
+      ...stash.scheduledTasks,
+    ],
+    Date.parse(parsed.sendAt),
+    nowMs,
+    undefined,
+    [...stash.selfLog.entries.map((entry) => entry.at), nowMs],
+  )) {
+    return {
+      ok: false,
+      reason: 'hourly_rate_limit',
+      message: '这个时间会让一小时内的自主唤醒超过 3 次。请换到更晚的时间。',
+    };
+  }
 
   // 同一次触发内第几条 —— 连同触发时刻构成确定性 uuid，重跑对得上。
   const seq = stash.scheduledTasks.length;
   const uuid = `amsgself-${stash.charId}-${stash.occurrenceMs}-${seq}`;
   const clientTaskId = `${uuid}-c`;
+
+  // Switch 醒来后续排的任务必须能读到等待期间的新留言。用户正在实时聊天、一起听、
+  // 或处于睡眠时段仍由更前面的独立闸让路；这里只关闭“有新用户消息即作废”。
+  const expirePolicy = stash.experienceMode === 'switch' ? 'force' : parsed.expirePolicy;
 
   let result;
   try {
@@ -642,7 +752,7 @@ export const runFireScheduleTool = async (
         source: 'active_msg_2',
         amsgMode: parsed.mode,
         amsgClientTaskId: clientTaskId,
-        amsgExpirePolicy: parsed.expirePolicy,
+        amsgExpirePolicy: expirePolicy,
         // 防穿帮闸锚点：这条排下去之后，用户再开口就算「对话往前走了」。
         amsgAnchorMs: stash.anchorMs,
         amsgTaskInstruction: buildTaskInstruction(parsed.mode, parsed.promptHint),
@@ -671,7 +781,7 @@ export const runFireScheduleTool = async (
     recurrenceType: (remote?.recurrenceType as ActiveMsg2TaskRecord['recurrenceType'])
       || parsed.recurrence,
     ...(parsed.promptHint ? { promptHint: parsed.promptHint } : {}),
-    expirePolicy: parsed.expirePolicy,
+    expirePolicy,
     anchorLastUserMsgAt: stash.anchorMs,
     source: 'character',
     status: 'scheduled',
@@ -813,9 +923,49 @@ export const amsgHooks = {
 
     const charRows = await ctx.readState(amsgStateNamespace(charId));
 
+    // 关闭硬闸：前端关闭主动消息时会先写 switch_control=false，再尝试取消远端任务。
+    // 即使取消请求断网，残留的一次性任务到点也会在首轮 LLM 前被 skip；上游调度器
+    // 随后按成功处理删除它。旧部署没有该状态、或状态损坏时保持 fail-open，避免升级后
+    // 把所有历史任务误判成已关闭。
+    const switchControlRow = charRows.find((r) => r.key === AMSG_SWITCH_CONTROL_KEY);
+    if (switchControlRow) {
+      try {
+        const switchControl = JSON.parse(switchControlRow.value) as { enabled?: unknown };
+        if (switchControl?.enabled === false) {
+          console.log('[amsg:disabled-control-skip]', { taskId: ctx.task.id, charId });
+          await recordSkip(
+            ctx, charId, 'active-msg-disabled',
+            Date.parse(String(ctx.task.nextSendAt)) || ctx.now.getTime(),
+          );
+          return { skip: true } as const;
+        }
+      } catch (error) {
+        console.warn('[amsg:switch-control] 状态无法解析，沿用旧版放行语义', {
+          taskId: ctx.task.id,
+          charId,
+          error: error instanceof Error ? error.name : 'ParseFailed',
+        });
+      }
+    }
+
     const taskMeta = (ctx.task.metadata ?? {}) as Record<string, unknown>;
-    const policy = typeof taskMeta.amsgExpirePolicy === 'string'
+    const storedPolicy = typeof taskMeta.amsgExpirePolicy === 'string'
       ? taskMeta.amsgExpirePolicy : undefined;
+
+    // 一起听使用浏览器现有的 music-wake prompt。它正在生成时，云端 AMSG 无条件让路，
+    // 不再开第二轮模型；fixed 任务不经过 onBeforeFire，提醒本身不受影响。
+    const musicWakePresence = parseAmsgMusicWakePresence(
+      charRows.find((r) => r.key === AMSG_MUSIC_WAKE_PRESENCE_KEY)?.value,
+    );
+    if (isFreshMusicWakePresence(musicWakePresence, charId, ctx.now.getTime())) {
+      const occurrenceMs = Date.parse(String(ctx.task.nextSendAt)) || ctx.now.getTime();
+      console.log('[amsg:music-wake-skip]', {
+        taskId: ctx.task.id,
+        presenceActiveAt: musicWakePresence?.activeAt,
+      });
+      await recordSkip(ctx, charId, 'active-music-wake', occurrenceMs);
+      return { skip: true } as const;
+    }
 
     // 同角色活跃会话租约：一轮对话生成期间客户端每 15s 续租，45s TTL。
     // 这是 worker 防通知的第一道快速门；缺失/过期/坏数据就继续走 fire_pack 规则。
@@ -824,7 +974,7 @@ export const amsgHooks = {
     const presence = parseAmsgChatPresence(
       charRows.find((r) => r.key === AMSG_CHAT_PRESENCE_KEY)?.value,
     );
-    if (policy === 'expire' && isFreshChatPresence(presence, charId, ctx.now.getTime())) {
+    if (storedPolicy === 'expire' && isFreshChatPresence(presence, charId, ctx.now.getTime())) {
       console.log('[amsg:expire-skip]', {
         taskId: ctx.task.id,
         reason: 'active-chat-presence',
@@ -848,6 +998,21 @@ export const amsgHooks = {
     // 读的是上游 amsg-server 库的版本号，只改 SullyOS 自己这份 worker 代码时它不会亮。
     // 面板上的 lastError 是用户唯一能看到的线索，得直接说出该做什么。
     if (!pack) throw fail(`fire_pack 解析失败：${describeFirePackVersion(packJson)}`);
+    const switchMode = (pack.experienceMode ?? 'classic') === 'switch';
+
+    // Switch 的保留型闹钟要能接住等待期间的留言，但到点时用户正在实时聊天仍应让路。
+    // 这道判断放在 pack 解析后，才能与 Classic 的 force 闹钟区分开；Classic 语义不变。
+    if (switchMode && isFreshChatPresence(presence, charId, ctx.now.getTime())) {
+      console.log('[amsg:switch-presence-skip]', {
+        taskId: ctx.task.id,
+        presenceActiveAt: presence?.activeAt,
+      });
+      await recordSkip(
+        ctx, charId, 'active-chat-presence',
+        Date.parse(String(ctx.task.nextSendAt)) || ctx.now.getTime(),
+      );
+      return { skip: true } as const;
+    }
 
     // 本次触发时刻：任务行 next_send_at（NOT NULL，buildHookTask 已摊平提供）。防穿帮闸的
     // 循环判定要拿它当窗口锚点，之后又经 scratch 透传给每条 push 的 metadata.amsgOccurrenceMs
@@ -856,6 +1021,51 @@ export const amsgHooks = {
     const occurrenceMs = Date.parse(String(ctx.task.nextSendAt));
     if (!Number.isFinite(occurrenceMs)) {
       throw fail('任务行 next_send_at 解析不出触发时刻', { nextSendAt: ctx.task.nextSendAt });
+    }
+
+    if (isAmsgQuietHours(
+      ctx.now.getTime(), pack.userTzId, pack.switchQuietStart, pack.switchQuietEnd,
+    )) {
+      console.log('[amsg:quiet-hours-skip]', { taskId: ctx.task.id, userTzId: pack.userTzId });
+      if (switchMode && typeof ctx.scheduleTask === 'function') {
+        const recoveryMs = nextAmsgQuietEndMs(
+          ctx.now.getTime(), pack.userTzId, pack.switchQuietStart, pack.switchQuietEnd,
+        );
+        if (recoveryMs !== null) {
+          const recoveryUuid = `amsg-quiet-recovery-${charId}-${occurrenceMs}`;
+          try {
+            await ctx.scheduleTask({
+              firstSendTime: new Date(recoveryMs).toISOString(),
+              recurrenceType: 'none',
+              messageType: 'auto',
+              uuid: recoveryUuid,
+              tzId: pack.tzId,
+              metadata: {
+                charId,
+                source: 'active_msg_2',
+                amsgMode: 'auto',
+                amsgClientTaskId: `${recoveryUuid}-client`,
+                amsgExpirePolicy: 'force',
+                amsgAnchorMs: pack.lastUserMessageAt ?? 0,
+                amsgTaskInstruction: buildTaskInstruction('auto'),
+                amsgQuietRecovery: true,
+              },
+            });
+            console.log('[amsg:quiet-hours-recovery-scheduled]', {
+              taskId: ctx.task.id,
+              recoveryAt: new Date(recoveryMs).toISOString(),
+            });
+          } catch (error) {
+            // 恢复任务建不成也不能反过来唤醒模型；当前静默任务仍应安静作废。
+            console.warn('[amsg:quiet-hours-recovery-failed]', {
+              taskId: ctx.task.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      }
+      await recordSkip(ctx, charId, 'quiet-hours', occurrenceMs);
+      return { skip: true } as const;
     }
 
     // 防穿帮闸·worker 主判定：一次性任务创建后对话已前进 / 循环任务到点时用户
@@ -870,7 +1080,9 @@ export const amsgHooks = {
     // 是几点」这个事实，所以这里不看新鲜度，只保留 charId 校验——别拿别的角色的对话当锚点。
     const presenceLastUserMessageAt = presence?.charId === charId ? presence.lastUserMessageAt : null;
     const expireInput = {
-      policy,
+      // 兼容升级前已经存在的 Switch 任务：即使 D1 元数据仍写 expire，也按当前模式
+      // 视为保留型。这样用户不必删除并重建旧任务，留言会留给原定闹钟读取。
+      policy: switchMode ? 'force' : storedPolicy,
       recurrenceType: ctx.task.recurrenceType,
       anchorMs: typeof taskMeta.amsgAnchorMs === 'number' ? taskMeta.amsgAnchorMs : null,
       lastUserMessageAt: laterOf(pack.lastUserMessageAt ?? null, presenceLastUserMessageAt),
@@ -928,6 +1140,14 @@ export const amsgHooks = {
     // 后者不补上的话，角色排完一条、下次到点又看不见它，很容易把同一件事再排一遍。
     const livePendingTasks = [...pack.pendingTasks, ...selfLog.tasks];
 
+    // 旧版 Switch 会建一条 daily 兜底。新版允许唤醒链自然结束，遗留兜底即使还在
+    // D1 也不再启动模型；用户可在任务面板里删除这条旧任务。
+    if (switchMode && taskMeta.amsgSwitchFallback === true) {
+      console.log('[amsg:switch-legacy-fallback-skip]', { taskId: ctx.task.id, charId });
+      await recordSkip(ctx, charId, 'switch-fallback-covered', occurrenceMs);
+      return { skip: true } as const;
+    }
+
     // 老 worker 部署（amsg-server < 2.6.0-next.9）没有这个口子。教了也排不成，
     // 只会让角色说「我等下再找你」然后没有下文——干脆不教。
     const canSelfSchedule = typeof ctx.scheduleTask === 'function';
@@ -937,14 +1157,52 @@ export const amsgHooks = {
 
     // 任务归属键：self_log 的条目 id、以及「排程清单里排除掉自己这条」都用它。
     const clientTaskId = typeof taskMeta.amsgClientTaskId === 'string' ? taskMeta.amsgClientTaskId : '';
+    const actionablePendingTasks = switchMode
+      ? livePendingTasks.filter((task) => !task.switchFallback)
+      : livePendingTasks;
+    const quotaTasks = actionablePendingTasks.filter((task) => task.clientTaskId !== clientTaskId);
+    const quotaStatus = getAutonomousWakeQuotaStatus(
+      quotaTasks,
+      ctx.now.getTime(),
+      [...selfLog.entries.map((entry) => entry.at), ctx.now.getTime()],
+    );
+    const switchQuotaLine = `当前 60 分钟内已用 ${quotaStatus.used} 次，剩余 ${quotaStatus.remaining} 次；下次最早可安排在 ${formatSwitchQuotaTime(quotaStatus.earliestMs, pack.userTzId)}。`;
 
     const { toolCtx, proxyWorkerUrl, xhsCookie } = buildToolCtx(toolPack, toolConfig);
+    const xhsConfigured = switchMode
+      && resolveXhsConfig(toolCtx.char, toolCtx.realtimeConfig).enabled;
+    let autonomousXhsAvailable = false;
+    if (xhsConfigured) {
+      const previousGate = parseAmsgXhsWakeGateState(
+        charRows.find((row) => row.key === AMSG_XHS_WAKE_GATE_KEY)?.value,
+      );
+      const gate = resolveAmsgXhsWakeGate(previousGate, charId, occurrenceMs);
+      if (gate.reused) {
+        autonomousXhsAvailable = gate.eligible;
+      } else if (typeof ctx.writeState === 'function') {
+        try {
+          await ctx.writeState(amsgStateNamespace(charId), [
+            { key: AMSG_XHS_WAKE_GATE_KEY, value: JSON.stringify(gate.state) },
+          ]);
+          autonomousXhsAvailable = gate.eligible;
+        } catch (error) {
+          console.warn('[amsg:xhs-wake-gate] 概率门状态写入失败，本次不开放 XHS', error);
+        }
+      }
+      console.log('[amsg:xhs-wake-gate]', {
+        charId,
+        occurrenceMs,
+        eligible: autonomousXhsAvailable,
+        reused: gate.reused,
+      });
+    }
     ctx.scratch.fire = {
       session: createFireSessionState(),
       toolCtx,
       proxyWorkerUrl,
       xhsCookie,
       occurrenceMs,
+      fireNowMs: ctx.now.getTime(),
       selfLog,
       selfLogDirty: false,
       mcpResolve,
@@ -952,11 +1210,22 @@ export const amsgHooks = {
       mcpSpentMs: 0,
       // 「还能不能再排」按客户端已知的 + 角色自己排过还没被认领的一起算，
       // 不然角色离线期间连排几次就能绕过每角色的任务上限。
-      pendingTaskCount: livePendingTasks.length,
+      pendingTaskCount: actionablePendingTasks.length,
+      pendingTasks: actionablePendingTasks,
       scheduledTasks: [],
       charId,
+      userId: ctx.userId,
+      recurrenceType: typeof ctx.task.recurrenceType === 'string' ? ctx.task.recurrenceType : null,
+      experienceMode: pack.experienceMode ?? 'classic',
+      autonomousXhsAvailable,
+      xhsDiscoveryUsed: false,
+      xhsDetailUsed: false,
+      xhsChainClosed: false,
       anchorMs: pack.lastUserMessageAt ?? 0,
       tz,
+      userTzId: pack.userTzId,
+      switchQuietStart: pack.switchQuietStart,
+      switchQuietEnd: pack.switchQuietEnd,
       taskUuid: typeof ctx.task.uuid === 'string' ? ctx.task.uuid : null,
       taskRowId: ctx.task.id != null ? String(ctx.task.id) : null,
       clientTaskId,
@@ -969,7 +1238,7 @@ export const amsgHooks = {
     // 「你还挂着这些排程」：客户端记录的（打包那一刻的快照）+ 角色自己在之前几次 fire 里
     // 排下、客户端还没认领的那些。后者不补上的话，角色排完一条、下次到点又看不见它，
     // 很容易把同一件事再排一遍。
-    const taskListBlock = buildFireTaskListBlock(livePendingTasks, {
+    const taskListBlock = buildFireTaskListBlock(actionablePendingTasks, {
       nowMs: ctx.now.getTime(),
       tzId: pack.tzId,
       excludeClientTaskId: clientTaskId || undefined,
@@ -989,21 +1258,36 @@ export const amsgHooks = {
 
     // fire_pack v3：「本次任务」指令随任务 metadata 走，这里填槽。
     // MCP 块拼在渲染好的 prompt 之后（同一条 user 消息）。
-    const prompt = renderFirePack(pack, ctx.now.getTime(), taskMeta.amsgTaskInstruction, {
+    const renderedFirePack = renderFirePack(pack, ctx.now.getTime(), taskMeta.amsgTaskInstruction, {
       selfLog,
       taskListBlock,
       realtimeWorldBlock,
-    })
+    });
+    // 老前端曾把完整 XHS 能力常驻烤进 Switch fire_pack。Worker 自己先清掉旧段，
+    // 再由本次概率门按需追加专用提示，因此只升级 Worker 也不会绕过随机门。
+    const basePrompt = switchMode
+      ? stripLegacySwitchFirePackXhs(renderedFirePack)
+      : renderedFirePack;
+    const prompt = basePrompt
       + (mcpResolve ? buildMcpFireBlock(mcpResolve, { mode: mcpNative ? 'native' : 'text' }) : '')
       // 「给自己排下一条」的说明。跟 MCP 共用一个 native/text 判断：用户的中转拒 tools 时
       // 两边都得改教正文协议，不然一边声明成 tools、一边教语法，模型会两种都写一遍。
       // 时间上下文让 send_at 的示例是「明天这个点」的裸墙钟，别再教模型写 offset。
       + (canSelfSchedule
-        ? buildFireScheduleBlock(mcpNative ? 'native' : 'text', { nowMs: ctx.now.getTime(), tz })
+        ? buildFireScheduleBlock(
+          mcpNative ? 'native' : 'text',
+          { nowMs: ctx.now.getTime(), tz },
+          pack.experienceMode ?? 'classic',
+          pack.targetName,
+          pack.switchQuietStart,
+          pack.switchQuietEnd,
+          switchQuotaLine,
+          autonomousXhsAvailable,
+        )
         : '');
     const fireTools = [
       ...(mcpResolve && mcpNative ? buildMcpFireTools(mcpResolve) : []),
-      ...(canSelfSchedule && mcpNative
+      ...(canSelfSchedule && mcpNative && !switchMode
         ? [buildFireScheduleTool({ nowMs: ctx.now.getTime(), tz })]
         : []),
     ];
@@ -1019,7 +1303,7 @@ export const amsgHooks = {
   },
 
   async onLLMOutput(ctx: SessionCtx) {
-    const content = stripReasoningTags(ctx.llmOutputText || '').trim();
+    let content = stripReasoningTags(ctx.llmOutputText || '').trim();
 
     // 任务身份直接从 ctx 上读（sessionId 是给日志和去重用的不透明串，不拿它切）。
     const taskId = ctx.taskId != null ? String(ctx.taskId) : null;
@@ -1041,6 +1325,25 @@ export const amsgHooks = {
     }
     const session = stash.session;
 
+    // Switch 醒来后用与普通聊天相同的隐藏标签续排。先剥标签，再把用户墙钟折成
+    // 绝对时间直接建一次性任务；这样标签不会进入 push，也不会为排程额外跑一轮模型。
+    let switchWakeDirective: ReturnType<typeof parseAmsgWakeDirective> | undefined;
+    if (stash.experienceMode === 'switch') {
+      switchWakeDirective = parseAmsgWakeDirective(content, stash.userTzId);
+      content = switchWakeDirective.cleanedText;
+      if (switchWakeDirective.invalidValue) {
+        console.warn('[amsg:switch-wake] 忽略格式无效的续排时间', {
+          sessionId: ctx.sessionId,
+          value: switchWakeDirective.invalidValue,
+        });
+      }
+      if (!stash.autonomousXhsAvailable) {
+        // 旧历史或旧 fire_pack 可能让模型继续吐 XHS 标签。未抽中时在分类前直接剥掉：
+        // 保留已有正文作为最终回复，不执行工具，也不把 unavailable 回喂给模型多跑一轮。
+        content = stripUnavailableAmsgXhsDirectives(content);
+      }
+    }
+
     // native tool_calls：只认 tools 数组里声明过的 MCP 名字。模型幻觉出的
     // 未声明调用（比如给 tag 工具编一个 native 调用）丢弃并留日志——直接透传
     // 会让 executeToolCalls 撞上没有 stash 映射的名字。日志带上当时声明了哪些，
@@ -1048,7 +1351,7 @@ export const amsgHooks = {
     const rawToolCalls = (ctx.llmResponse as { choices?: Array<{ message?: { tool_calls?: unknown } }> })
       ?.choices?.[0]?.message?.tool_calls;
     const allNativeCalls = (Array.isArray(rawToolCalls) ? rawToolCalls : []) as ToolCall[];
-    const nativeScheduleCalls = allNativeCalls.filter(
+    const nativeScheduleCalls = stash.experienceMode === 'switch' ? [] : allNativeCalls.filter(
       (tc) => tc?.function?.name === AMSG_FIRE_SCHEDULE_TOOL,
     );
     const nativeMcpCalls = allNativeCalls.filter((tc): tc is ToolCall => {
@@ -1067,6 +1370,9 @@ export const amsgHooks = {
       return hit;
     });
 
+    const effectiveIteration = stash.experienceMode === 'switch' && stash.xhsChainClosed
+      ? MAX_TOOL_ITERATIONS - 1
+      : ctx.iteration;
     let decision = processLLMRound(session, content, {
       // 名字取 tool_pack 里的那份：它跟着每轮聊天重新上云，改名当天就是新的。
       // ctx.contactName 是排程那一刻冻进任务行的快照，用户改完名字之后，之前排的
@@ -1091,9 +1397,11 @@ export const amsgHooks = {
     },
     stash.mcpResolve ? { resolve: stash.mcpResolve, nativeToolCalls: nativeMcpCalls } : null,
     // 传 null = 这次不认排程（老部署没这口子），正文里写了也不当调用。
-    typeof ctx.scheduleTask === 'function' ? { nativeToolCalls: nativeScheduleCalls } : null,
+    typeof ctx.scheduleTask === 'function' && stash.experienceMode !== 'switch'
+      ? { nativeToolCalls: nativeScheduleCalls }
+      : null,
     // 最后一轮不再放行工具请求，改成用手上的内容收尾（见 agentic.ts 的 MAX_TOOL_ITERATIONS）。
-    ctx.iteration);
+    effectiveIteration);
 
     if (decision.decision === 'tool-request') {
       console.log('[amsg:agentic]', {
@@ -1124,6 +1432,28 @@ export const amsgHooks = {
     }
 
     if (decision.decision === 'finish') {
+      let scheduleError: string | undefined;
+      if (stash.experienceMode === 'switch' && decision.pushPayloads.length > 0) {
+        if (switchWakeDirective?.wakeAtIso && stash.scheduledTasks.length === 0) {
+          const result = await runFireScheduleTool(stash, ctx.scheduleTask, {
+            send_at: switchWakeDirective.wakeAtIso,
+            mode: 'auto',
+            recurrence: 'none',
+            expire_policy: 'force',
+          }, stash.fireNowMs);
+          if (result.ok !== true) {
+            scheduleError = String(result.message || '下一次自主唤醒安排失败。');
+            console.warn('[amsg:switch-wake] 最终轮续排被拒绝', {
+              sessionId: ctx.sessionId,
+              reason: result.reason,
+              message: result.message,
+            });
+          }
+        } else if (switchWakeDirective?.invalidValue) {
+          scheduleError = '角色给出的下一次唤醒时间格式无效，本次没有续排。';
+        }
+      }
+
       // 「我这次说了什么」不在这里写库（这里还没发出去），只把各段正文挂到本次 fire 的
       // scratch 上，等 onAfterSend 按真正送出去的段数落盘。
       stash.selfLogTexts = decision.pushPayloads.map(
@@ -1132,6 +1462,16 @@ export const amsgHooks = {
       // 角色这次给自己排的任务，随最后一条 push 带回客户端认领——不然它们只活在 D1 里，
       // 面板看不到、用户也没法取消。任务本身照常触发，客户端上线补进清单即可。
       const withScheduled = attachScheduledTasks(decision.pushPayloads, stash.scheduledTasks);
+      if (scheduleError && withScheduled.length > 0) {
+        const last = withScheduled.length - 1;
+        withScheduled[last] = {
+          ...withScheduled[last],
+          metadata: {
+            ...(withScheduled[last].metadata || {}),
+            amsgScheduleError: scheduleError,
+          },
+        };
+      }
       decision = { ...decision, pushPayloads: withScheduled };
 
       // 发之前按真实字节预算过一遍：装不下的 XHS 会话数据旁路存起来，push 只留引用键。
@@ -1206,11 +1546,68 @@ export const amsgHooks = {
 
         // 三条去处，失败语义一致（都回 ok:false，不抛），回喂 / 记账 / 日志共用下面这段：
         //   排程 → 在 D1 里建下一条任务；MCP → 直连用户配的服务器；其余 → 内置数据工具。
-        const result = name === AMSG_FIRE_SCHEDULE_TOOL
-          ? await runFireScheduleTool(stash, ctx.scheduleTask, args, Date.now())
-          : name.startsWith(MCP_FIRE_NAME_PREFIX)
-            ? await runMcpFireTool(stash, name, args)
-            : await dispatchAgenticTool(name, args, stash.toolCtx);
+        let result: unknown;
+        const isAutonomousXhs = stash.experienceMode === 'switch'
+          && (name === 'xhs_browse' || name === 'xhs_search' || name === 'xhs_detail');
+        if (isAutonomousXhs && stash.xhsChainClosed) {
+          result = {
+            ok: false,
+            reason: 'active_wake_xhs_closed',
+            message: '这次主动唤醒的小红书浏览已经结束，请根据已有内容自然收尾。',
+          };
+        } else if (isAutonomousXhs && name === 'xhs_detail' && !stash.xhsDiscoveryUsed) {
+          stash.xhsChainClosed = true;
+          result = {
+            ok: false,
+            reason: 'active_wake_detail_requires_discovery',
+            message: '这次还没有浏览或搜索结果，不能凭空打开笔记详情，请直接自然收尾。',
+          };
+        } else if (isAutonomousXhs && name === 'xhs_detail' && stash.xhsDetailUsed) {
+          stash.xhsChainClosed = true;
+          result = {
+            ok: false,
+            reason: 'active_wake_detail_limit',
+            message: '这次主动唤醒已经查看过一篇笔记详情，请根据已有内容自然收尾。',
+          };
+        } else if (isAutonomousXhs && name === 'xhs_detail') {
+          stash.xhsDetailUsed = true;
+          stash.xhsChainClosed = true;
+          result = stash.autonomousXhsAvailable
+            ? await dispatchAgenticTool(name, args, stash.toolCtx)
+            : {
+              ok: false,
+              reason: 'active_wake_xhs_unavailable',
+              message: '这次主动唤醒没有可用的小红书连接，请直接自然回复。',
+            };
+        } else if (isAutonomousXhs && stash.xhsDiscoveryUsed) {
+          stash.xhsChainClosed = true;
+          result = {
+            ok: false,
+            reason: 'active_wake_xhs_limit',
+            message: '这次主动唤醒已经浏览或搜索过一次，请根据已有结果自然收尾。',
+          };
+        } else if (isAutonomousXhs) {
+          stash.xhsDiscoveryUsed = true;
+          if (stash.autonomousXhsAvailable) {
+            result = await dispatchAgenticTool(name, args, stash.toolCtx);
+            if (typeof result === 'object' && result !== null && (result as { ok?: boolean }).ok !== true) {
+              stash.xhsChainClosed = true;
+            }
+          } else {
+            stash.xhsChainClosed = true;
+            result = {
+              ok: false,
+              reason: 'active_wake_xhs_unavailable',
+              message: '这次主动唤醒没有可用的小红书连接，请直接自然回复。',
+            };
+          }
+        } else {
+          result = name === AMSG_FIRE_SCHEDULE_TOOL
+            ? await runFireScheduleTool(stash, ctx.scheduleTask, args, Date.now())
+            : name.startsWith(MCP_FIRE_NAME_PREFIX)
+              ? await runMcpFireTool(stash, name, args)
+              : await dispatchAgenticTool(name, args, stash.toolCtx);
+        }
         stash.session.toolCalls.push({ name, fingerprint });
         // 不再回裸 JSON：模型从裸 JSON 里看不出「这一步已经做完了」，提示词里但凡有一句
         // 常驻的「先去查 X」就会每轮照做。这段话跟前台说的是同一套（见 agenticToolFeedback）。
@@ -1246,6 +1643,35 @@ export const amsgHooks = {
 export const resolveVapidEmail = (raw: string | undefined): string =>
   raw?.trim() || 'mailto:noreply@sullyos.app';
 
+/**
+ * 最终 payload 在 Web Push 之前写入云端信箱。上游发送器会尊重这里预先写好的
+ * messageId/sessionId/timestamp，因此 Push 与前台补拉拿到的是完全相同的一封信。
+ */
+export const persistMailboxDecision = async (
+  env: Env,
+  ctx: SessionCtx,
+  decision: Awaited<ReturnType<typeof amsgHooks.onLLMOutput>>,
+): Promise<Awaited<ReturnType<typeof amsgHooks.onLLMOutput>>> => {
+  if (decision.decision !== 'finish' || decision.pushPayloads.length === 0) return decision;
+  const stash = getFireStash(ctx.scratch);
+  if (!stash) throw new Error('AMSG_MAILBOX_FIRE_STATE_MISSING');
+  const payloads = stampMailboxPayloads(decision.pushPayloads, {
+    taskId: ctx.taskId,
+    taskUuid: ctx.taskUuid ?? stash.taskUuid,
+    recurrenceType: stash.recurrenceType,
+    occurrenceMs: ctx.occurrenceMs ?? stash.occurrenceMs,
+    sessionId: ctx.sessionId,
+  });
+  await persistDeliveryMailbox(env, stash.userId, payloads);
+  return { ...decision, pushPayloads: payloads };
+};
+
+const buildMailboxAwareHooks = (env: Env) => ({
+  ...amsgHooks,
+  onLLMOutput: async (ctx: SessionCtx) =>
+    persistMailboxDecision(env, ctx, await amsgHooks.onLLMOutput(ctx)),
+});
+
 /** worker 运行配置；导出便于单测钉住 VAPID 兜底。 */
 export const buildWorkerConfig = (env: Env) => {
   // vapid 与 webpush 必须同源同一份：两处各读一次 env 时，改了一处漏另一处
@@ -1261,18 +1687,19 @@ export const buildWorkerConfig = (env: Env) => {
   const effectiveVapid = nativeFcmReady && (!vapid.publicKey?.trim() || !vapid.privateKey?.trim())
     ? { email: vapid.email, publicKey: 'native-fcm', privateKey: 'native-fcm' }
     : vapid;
+  const pushTransport = createHybridPushTransport(env, createWebCryptoWebPush(effectiveVapid));
   return {
     // db 缺省时 factory 自动用 createD1Adapter(env.DB)
     masterKey: env.AMSG_MASTER_KEY,
     serverToken: env.AMSG_SERVER_TOKEN,
     vapid: effectiveVapid,
-    webpush: createHybridPushTransport(env, createWebCryptoWebPush(effectiveVapid)),
+    webpush: createMailboxBackedPushTransport(env, pushTransport),
     // 前端和 Worker 不同源，带自定义头的请求会先发 CORS 预检，必须放行。
     // 单用户自用默认全开；想收紧就把 '*' 换成自己的 SullyOS 站点 origin。
     cors: { origin: '*' },
     // 满血 fire-time hooks（onBeforeFire 现场填槽 + onLLMOutput 分类 +
     // executeToolCalls 服务端工具循环）；轮数/超时用库默认（5 轮 / 240s）。
-    hooks: amsgHooks,
+    hooks: buildMailboxAwareHooks(env),
     // 收尾回执 + 过期跳过回执（config 级 hook）。
     // onFireSettled: 无论这次 fire 是发出去了、跳过了还是抛错了都会调一次，self_log
     //   在这里统一落盘（见 amsgFireSettled）。不用 onAfterSend——它只在真发出去那条路
@@ -1567,6 +1994,9 @@ export default {
         error: { code: 'WORKER_CONFIG_MISSING', message: report.message, missing: report.missing },
       });
     }
+
+    const mailboxResponse = await handleDeliveryMailboxRequest(request, env);
+    if (mailboxResponse) return mailboxResponse;
 
     return upstream.fetch(request, env);
   },

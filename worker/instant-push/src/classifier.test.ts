@@ -70,6 +70,32 @@ describe('classifyLLMOutput', () => {
     }
   });
 
+  it('accepts a case-insensitive Switch wake marker', () => {
+    const r = classifyLLMOutput('Later[[amsg_wake_at: 2026-08-06T16:00:00]]');
+    expect(r.kind).toBe('finish');
+    if (r.kind === 'finish') {
+      expect(r.cleanedText).toBe('Later');
+      expect(r.sanitizedBody).toBe('Later');
+      expect(r.directives).toEqual([{
+        type: 'amsg_wake_at',
+        localDateTime: '2026-08-06T16:00:00',
+      }]);
+    }
+  });
+
+  it('Switch 唤醒标记从通知正文剥离并作为 directive 回传', () => {
+    const r = classifyLLMOutput('晚点见[[AMSG_WAKE_AT: 2026-08-06T16:00:00]]');
+    expect(r.kind).toBe('finish');
+    if (r.kind === 'finish') {
+      expect(r.cleanedText).toBe('晚点见');
+      expect(r.sanitizedBody).toBe('晚点见');
+      expect(r.directives).toEqual([{
+        type: 'amsg_wake_at',
+        localDateTime: '2026-08-06T16:00:00',
+      }]);
+    }
+  });
+
   it('转账金额容错: 带单位 / 千分位 / 冒号后空格 (老正则 `(\\d+)` 全漏)', () => {
     for (const [input, amount] of [
       ['[[ACTION:TRANSFER:520元]]', 520],

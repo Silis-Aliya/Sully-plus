@@ -3,7 +3,7 @@ import { formatTaskTime, fromDatetimeLocalValue, toDatetimeLocalValue } from './
 import { buildAmsg2TaskContextText } from './amsg2TaskContext';
 import {
     AMSG_SLOT_CURRENT_TIME, AMSG_SLOT_USER_CLOCK,
-    formatFireTimeShort, renderFirePack, type AmsgFirePack,
+    FIRE_PACK_VERSION, formatFireTimeShort, renderFirePack, type AmsgFirePack,
 } from './amsgFirePack';
 import { buildFireScheduleBlock, buildFireScheduleTool, resolveSendAtMs } from './amsgFireSchedule';
 import type { ActiveMsg2TaskRecord } from '../types';
@@ -58,7 +58,8 @@ describe('给角色看的时间跟 fire 侧同一个钟', () => {
 // 手里就是排到上海用户的凌晨三点，而且它没有任何线索能察觉这件事。
 describe('角色知道对方那边现在几点', () => {
     const pack: AmsgFirePack = {
-        v: 6, builtAt: 1, pendingTasks: [], scene: null, lastUserMessageAt: null,
+        v: FIRE_PACK_VERSION, builtAt: 1, pendingTasks: [], scene: null, lastUserMessageAt: null,
+        switchQuietStart: '04:00', switchQuietEnd: '10:00',
         template: `当前本地时间（你所在地）：${AMSG_SLOT_CURRENT_TIME}${AMSG_SLOT_USER_CLOCK}`,
         tzId: CHAR_TZ,
         userTzId: DEVICE_TZ,

@@ -33,3 +33,28 @@ export const shouldSendThinkingParams = (input: {
   if (input.amsg2ToolsInjected && modelRejectsThinkingWithTools(input.model)) return false;
   return true;
 };
+
+export const CLAUDE_TOOL_MIN_THINKING_BUDGET = 1024;
+
+/**
+ * 部分 Claude 中转在 thinking 型号携带 tools、但请求未显式给 thinking 时，会错误地
+ * 推导出 budget=16，随后被 Anthropic 的最小 1024 校验拒绝。只为这个组合补最低合法值。
+ */
+export const ensureClaudeToolThinkingBudget = <T extends Record<string, any>>(body: T): T => {
+  if (!Array.isArray(body.tools) || body.tools.length === 0) return body;
+  if (!/claude.*thinking/i.test(String(body.model || ''))) return body;
+
+  const existingBudget = Number(body.thinking?.budget_tokens);
+  if (body.thinking?.type === 'enabled'
+      && Number.isFinite(existingBudget)
+      && existingBudget >= CLAUDE_TOOL_MIN_THINKING_BUDGET) return body;
+
+  body.thinking = { type: 'enabled', budget_tokens: CLAUDE_TOOL_MIN_THINKING_BUDGET };
+  body.extra_body = {
+    ...(body.extra_body || {}),
+    thinking: { type: 'enabled', budget_tokens: CLAUDE_TOOL_MIN_THINKING_BUDGET },
+  };
+  delete body.temperature;
+  delete body.top_p;
+  return body;
+};

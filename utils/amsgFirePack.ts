@@ -15,12 +15,19 @@
  * 运行时都自带），其余都是纯函数。
  */
 
-import type { ActiveMsg2TaskRecord } from '../types';
+import type { ActiveMsg2ExperienceMode, ActiveMsg2TaskRecord } from '../types';
 import { renderFireSceneBlock, type AmsgFireScene } from './amsgFireScene';
 
 export const AMSG_STATE_NAMESPACE_PREFIX = 'amsg:char:';
 export const amsgStateNamespace = (charId: string) => `${AMSG_STATE_NAMESPACE_PREFIX}${charId}`;
 export const AMSG_FIRE_PACK_KEY = 'fire_pack';
+export const AMSG_SWITCH_CONTROL_KEY = 'switch_control';
+
+export interface AmsgSwitchControl {
+  enabled: boolean;
+  experienceMode: ActiveMsg2ExperienceMode;
+  updatedAt: number;
+}
 
 /**
  * 角色到点自己发出去的那几条正文（每角色一份）。
@@ -133,6 +140,9 @@ export const AMSG_LAST_SKIP_KEY = 'last_skip';
 /** last_skip 的原因枚举（新增值时 describeLastSkip 的人话文案要一起补）。 */
 const LAST_SKIP_REASONS = [
   'active-chat-presence',
+  'active-music-wake',
+  'quiet-hours',
+  'switch-fallback-covered',
   'conversation-moved-on',
   'empty-generation',
   'side-effects-only',
@@ -147,6 +157,8 @@ export interface AmsgLastSkip {
   occurrenceMs: number;
   /**
    * active-chat-presence  到点时用户正跟这个角色聊天
+   * active-music-wake     到点时角色正在走一起听唤醒生成
+   * quiet-hours           到点时处于用户设置的睡眠时段
    * conversation-moved-on 排程之后对话已经往前走了，原本要说的话过时了
    * empty-generation      模型这次没写出任何能发的正文（空输出 / 纯拒答）
    * side-effects-only     模型这次只做了副作用（点赞、写日记之类）却没说话，整条不发
@@ -186,6 +198,12 @@ export const describeLastSkip = (skip: AmsgLastSkip, formatTime: (ms: number) =>
   switch (skip.reason) {
     case 'active-chat-presence':
       return `${when} 那次主动消息让路了——到点时你正在和 ta 聊天。`;
+    case 'active-music-wake':
+      return `${when} 那次主动消息让路了——当时你们正在一起听，角色按一起听现场回应。`;
+    case 'quiet-hours':
+      return `${when} 那次主动消息没打扰你——当时处于每天 04:00-10:00 的睡眠时间。`;
+    case 'switch-fallback-covered':
+      return `${when} 那次旧版主动唤醒兜底没有重复唤醒——角色近期已经主动联系过，或已经安排了下一次。`;
     case 'conversation-moved-on':
       return `${when} 那次主动消息取消了——排程之后你们的对话已经聊到别处，原本要说的话过时了。`;
     case 'empty-generation':
@@ -273,6 +291,9 @@ export interface AmsgFirePack {
    * 这两个绝不能混着用。必填：缺了整包按格式不对打回（跟 tzId 同一条规矩）。
    */
   userTzId: string;
+  /** Switch 自定义静默墙钟；Classic 也写默认值，保持 worker 单一判定入口。 */
+  switchQuietStart: string;
+  switchQuietEnd: string;
   /** 用户称呼（userProfile.name || '对方'），awayHint 文案用。 */
   targetName: string;
   /**
@@ -281,6 +302,10 @@ export interface AmsgFirePack {
    * 里了，日志整份作废（见 selfLogMatchesPack）。
    */
   builtAt: number;
+  /** 当前角色选择的主动消息体验；旧包缺失时 worker 按 classic。 */
+  experienceMode?: ActiveMsg2ExperienceMode;
+  /** 打包历史里最近一条真正由 AMSG 任务送达的消息时间。 */
+  lastProactiveMessageAt?: number | null;
   /**
    * 打包时该角色还挂着的排程（客户端清单里的原始记录）。worker 到点渲染成
    * AMSG_SLOT_TASK_LIST 那一段，并把「正在发的这一条」摘掉。
@@ -587,7 +612,7 @@ export const renderFirePack = (
  * 唯一的例外是「说清楚为什么」：见 describeFirePackVersion，worker 拿它拼失败原因，
  * 面板的 lastError 才能直接告诉用户该重贴 bundle 还是该刷新前端。
  */
-export const FIRE_PACK_VERSION = 6;
+export const FIRE_PACK_VERSION = 7;
 
 /**
  * 解析失败时给人看的一句原因。
@@ -620,6 +645,8 @@ export const parseFirePack = (value: string): AmsgFirePack | null => {
       (parsed.lastUserMessageAt === null || typeof parsed.lastUserMessageAt === 'number') &&
       typeof parsed.tzId === 'string' && parsed.tzId.length > 0 &&
       typeof parsed.userTzId === 'string' && parsed.userTzId.length > 0 &&
+      typeof parsed.switchQuietStart === 'string' && /^\d{2}:\d{2}$/.test(parsed.switchQuietStart) &&
+      typeof parsed.switchQuietEnd === 'string' && /^\d{2}:\d{2}$/.test(parsed.switchQuietEnd) &&
       typeof parsed.targetName === 'string' &&
       typeof parsed.builtAt === 'number' &&
       Array.isArray(parsed.pendingTasks) &&

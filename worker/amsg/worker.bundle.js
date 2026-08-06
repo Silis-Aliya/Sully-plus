@@ -64,10 +64,10 @@ function hexToBytes(hex) {
   }
   return out;
 }
-async function hmacSha256(keyBytes, data) {
+async function hmacSha256(keyBytes2, data) {
   const key = await globalThis.crypto.subtle.importKey(
     "raw",
-    toUint8(keyBytes),
+    toUint8(keyBytes2),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"]
@@ -3560,10 +3560,10 @@ function createD1Adapter(db) {
 }
 async function constantTimeEqual(a, b) {
   const enc = new TextEncoder();
-  const keyBytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
+  const keyBytes2 = globalThis.crypto.getRandomValues(new Uint8Array(32));
   const key = await globalThis.crypto.subtle.importKey(
     "raw",
-    keyBytes,
+    keyBytes2,
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"]
@@ -4266,6 +4266,7 @@ ${lines.join("\n")}`;
 var AMSG_STATE_NAMESPACE_PREFIX = "amsg:char:";
 var amsgStateNamespace = (charId) => `${AMSG_STATE_NAMESPACE_PREFIX}${charId}`;
 var AMSG_FIRE_PACK_KEY = "fire_pack";
+var AMSG_SWITCH_CONTROL_KEY = "switch_control";
 var AMSG_SELF_LOG_KEY = "self_log";
 var amsgXhsSessionKey = (clientTaskId) => `xhs_session:${clientTaskId}`;
 var GZIP_VALUE_PREFIX = "gz1:";
@@ -4432,7 +4433,7 @@ ${TASK_SECTION_HEADING}`);
 ${realtimeWorld}` : "");
   return out;
 };
-var FIRE_PACK_VERSION = 6;
+var FIRE_PACK_VERSION = 7;
 var describeFirePackVersion = (value) => {
   let v;
   try {
@@ -4452,7 +4453,7 @@ var describeFirePackVersion = (value) => {
 var parseFirePack = (value) => {
   try {
     const parsed = JSON.parse(value);
-    if (parsed && typeof parsed === "object" && parsed.v === FIRE_PACK_VERSION && typeof parsed.template === "string" && parsed.template.length > 0 && (parsed.lastUserMessageAt === null || typeof parsed.lastUserMessageAt === "number") && typeof parsed.tzId === "string" && parsed.tzId.length > 0 && typeof parsed.userTzId === "string" && parsed.userTzId.length > 0 && typeof parsed.targetName === "string" && typeof parsed.builtAt === "number" && Array.isArray(parsed.pendingTasks) && (parsed.scene === null || typeof parsed.scene === "object")) {
+    if (parsed && typeof parsed === "object" && parsed.v === FIRE_PACK_VERSION && typeof parsed.template === "string" && parsed.template.length > 0 && (parsed.lastUserMessageAt === null || typeof parsed.lastUserMessageAt === "number") && typeof parsed.tzId === "string" && parsed.tzId.length > 0 && typeof parsed.userTzId === "string" && parsed.userTzId.length > 0 && typeof parsed.switchQuietStart === "string" && /^\d{2}:\d{2}$/.test(parsed.switchQuietStart) && typeof parsed.switchQuietEnd === "string" && /^\d{2}:\d{2}$/.test(parsed.switchQuietEnd) && typeof parsed.targetName === "string" && typeof parsed.builtAt === "number" && Array.isArray(parsed.pendingTasks) && (parsed.scene === null || typeof parsed.scene === "object")) {
       return parsed;
     }
   } catch {
@@ -4482,8 +4483,123 @@ function shouldExpireFire(input) {
 }
 var DELIVERED_WINDOW_MS = 30 * 6e4;
 
+// utils/amsgQuietHours.ts
+var DEFAULT_AMSG_QUIET_START = "04:00";
+var DEFAULT_AMSG_QUIET_END = "10:00";
+var isValidQuietTimeValue = (value) => {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return false;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+};
+var describeQuietHoursRange = (start, end) => {
+  if (!isValidQuietTimeValue(start) || !isValidQuietTimeValue(end)) return "\u8BF7\u9009\u62E9\u5B8C\u6574\u7684\u5F00\u59CB\u548C\u7ED3\u675F\u65F6\u95F4";
+  if (start === end) return "\u5F00\u59CB\u4E0E\u7ED3\u675F\u65F6\u95F4\u4E0D\u80FD\u76F8\u540C";
+  return end < start ? `\u6BCF\u5929 ${start} \u81F3\u6B21\u65E5 ${end}` : `\u6BCF\u5929 ${start} \u81F3\u5F53\u5929 ${end}`;
+};
+var resolveQuietHoursRange = (start, end) => {
+  const resolvedStart = start && isValidQuietTimeValue(start) ? start : DEFAULT_AMSG_QUIET_START;
+  const resolvedEnd = end && isValidQuietTimeValue(end) ? end : DEFAULT_AMSG_QUIET_END;
+  return resolvedStart === resolvedEnd ? { start: DEFAULT_AMSG_QUIET_START, end: DEFAULT_AMSG_QUIET_END } : { start: resolvedStart, end: resolvedEnd };
+};
+var timeValueToMinutes = (value) => {
+  const [hour, minute] = value.split(":").map(Number);
+  return hour * 60 + minute;
+};
+var isAmsgQuietHours = (timestampMs, userTzId, quietStart = DEFAULT_AMSG_QUIET_START, quietEnd = DEFAULT_AMSG_QUIET_END) => {
+  if (!Number.isFinite(timestampMs) || !userTzId) return false;
+  const range = resolveQuietHoursRange(quietStart, quietEnd);
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: userTzId,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(new Date(timestampMs));
+    const hour = Number(parts.find((part) => part.type === "hour")?.value);
+    const minute = Number(parts.find((part) => part.type === "minute")?.value);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false;
+    const current = hour * 60 + minute;
+    const start = timeValueToMinutes(range.start);
+    const end = timeValueToMinutes(range.end);
+    return start < end ? current >= start && current < end : current >= start || current < end;
+  } catch {
+    return false;
+  }
+};
+var nextAmsgQuietEndMs = (timestampMs, userTzId, quietStart = DEFAULT_AMSG_QUIET_START, quietEnd = DEFAULT_AMSG_QUIET_END) => {
+  if (!isAmsgQuietHours(timestampMs, userTzId, quietStart, quietEnd)) return null;
+  const range = resolveQuietHoursRange(quietStart, quietEnd);
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: userTzId,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(new Date(timestampMs));
+    const readPart = (type) => Number(parts.find((part) => part.type === type)?.value);
+    const year = readPart("year");
+    const month = readPart("month");
+    const day = readPart("day");
+    const hour = readPart("hour");
+    const minute = readPart("minute");
+    if (![year, month, day, hour, minute].every(Number.isFinite)) return null;
+    const startMinutes = timeValueToMinutes(range.start);
+    const endMinutes = timeValueToMinutes(range.end);
+    const currentMinutes = hour * 60 + minute;
+    const endFallsTomorrow = endMinutes < startMinutes && currentMinutes >= startMinutes;
+    const localEndDate = new Date(Date.UTC(year, month - 1, day + (endFallsTomorrow ? 1 : 0)));
+    const endDate = [
+      localEndDate.getUTCFullYear(),
+      String(localEndDate.getUTCMonth() + 1).padStart(2, "0"),
+      String(localEndDate.getUTCDate()).padStart(2, "0")
+    ].join("-");
+    const quietEndMs = wallClockToTimestamp(`${endDate} ${range.end}:00`, userTzId);
+    return Number.isFinite(quietEndMs) && quietEndMs > timestampMs ? quietEndMs : null;
+  } catch {
+    return null;
+  }
+};
+var buildAmsgQuietHoursMessage = (start, end) => {
+  const range = resolveQuietHoursRange(start, end);
+  return `\u9759\u9ED8\u65F6\u95F4\u4E3A${describeQuietHoursRange(range.start, range.end)}\uFF08\u6309\u7528\u6237\u6240\u5728\u65F6\u533A\uFF09\uFF0C\u8BF7\u6539\u5230\u9759\u9ED8\u65F6\u95F4\u4E4B\u5916\u3002`;
+};
+
 // utils/amsg2Tasks.ts
 var MAX_ACTIVE_TASKS_PER_CHAR = 5;
+var MAX_AUTONOMOUS_WAKES_PER_HOUR = 3;
+var AUTONOMOUS_WAKE_WINDOW_MS = 60 * 6e4;
+var MAX_SWITCH_WAKE_AHEAD_MS = 7 * 24 * 60 * 6e4;
+var validateSwitchWakeTime = (candidateMs, nowMs = Date.now()) => {
+  if (!Number.isFinite(candidateMs)) return "invalid";
+  if (candidateMs <= nowMs) return "past";
+  if (candidateMs - nowMs > MAX_SWITCH_WAKE_AHEAD_MS) return "too_far";
+  return null;
+};
+var wouldExceedAutonomousWakeRate = (tasks, candidateMs, nowMs = Date.now(), excludeTaskUuid, observedWakeMs = []) => {
+  if (!Number.isFinite(candidateMs)) return false;
+  const existing = tasks.filter((task) => task.taskUuid !== excludeTaskUuid && task.status === "scheduled" && task.mode !== "fixed" && !task.switchFallback).map((task) => currentOccurrenceMs(task, nowMs)).filter((value) => value !== null && Number.isFinite(value));
+  const entries = [
+    ...existing.map((time) => ({ time, candidate: false })),
+    ...observedWakeMs.filter((time) => Number.isFinite(time)).map((time) => ({ time, candidate: false })),
+    { time: candidateMs, candidate: true }
+  ].sort((a, b) => a.time - b.time || Number(a.candidate) - Number(b.candidate));
+  const times = entries.map((entry) => entry.time);
+  const candidateIndex = entries.findIndex((entry) => entry.candidate);
+  for (let start = 0; start <= candidateIndex; start += 1) {
+    if (candidateMs - times[start] >= AUTONOMOUS_WAKE_WINDOW_MS) continue;
+    let end = start;
+    while (end < times.length && times[end] - times[start] < AUTONOMOUS_WAKE_WINDOW_MS) end += 1;
+    if (candidateIndex >= start && candidateIndex < end && end - start > MAX_AUTONOMOUS_WAKES_PER_HOUR) {
+      return true;
+    }
+  }
+  return false;
+};
 var shortTaskId = (taskUuid) => taskUuid.slice(0, 8);
 var describeRecurrence = (recurrence) => recurrence === "daily" ? "\u6BCF\u5929" : recurrence === "weekly" ? "\u6BCF\u5468" : "\u4E00\u6B21\u6027";
 var AMSG2_SCHEDULE_SECRECY_NOTE = "\u4E0D\u8981\u5411\u7528\u6237\u590D\u8FF0\u6216\u63D0\u53CA\u8FD9\u4EFD\u6392\u7A0B\u4FE1\u606F\u672C\u8EAB\u7684\u5B58\u5728\u3002";
@@ -4491,7 +4607,7 @@ var describeExpirePolicy = (policy) => policy === "force" ? "\u5F3A\u5236\u53D1\
 var describeTaskMode = (task) => {
   if (task.mode === "fixed") return "\u56FA\u5B9A\u6D88\u606F";
   if (task.mode === "prompted") return `\u63D0\u793A\u65B9\u5411\u300C${task.promptHint || ""}\u300D`;
-  return task.promptHint ? `\u81EA\u52A8\uFF08\u7075\u611F\uFF1A${task.promptHint}\uFF09` : "\u81EA\u52A8";
+  return task.promptHint ? `\u81EA\u4E3B\u5524\u9192\uFF08\u65E7\u7075\u611F\uFF1A${task.promptHint}\uFF09` : "\u81EA\u4E3B\u5524\u9192";
 };
 var isPendingTask = (task, nowMs) => {
   if (task.status !== "scheduled") return false;
@@ -4508,6 +4624,31 @@ var currentOccurrenceMs = (task, nowMs) => {
   if (periodMs === null) return first;
   const k = Math.max(0, Math.floor((nowMs - FIRE_GRACE_MS - first) / periodMs) + 1);
   return first + k * periodMs;
+};
+var getAutonomousWakeQuotaStatus = (tasks, nowMs, observedWakeMs = []) => {
+  const occurrenceTimes = tasks.filter((task) => task.status === "scheduled" && task.mode !== "fixed" && !task.switchFallback).map((task) => currentOccurrenceMs(task, nowMs)).filter((value) => value !== null && Number.isFinite(value));
+  const recentObserved = observedWakeMs.filter(
+    (time) => Number.isFinite(time) && time <= nowMs && nowMs - time < AUTONOMOUS_WAKE_WINDOW_MS
+  );
+  const recentTaskOccurrences = occurrenceTimes.filter(
+    (time) => time <= nowMs && nowMs - time < AUTONOMOUS_WAKE_WINDOW_MS
+  );
+  const used = recentTaskOccurrences.length + recentObserved.length;
+  const remaining = Math.max(0, MAX_AUTONOMOUS_WAKES_PER_HOUR - used);
+  const firstCandidate = nowMs + 6e4;
+  const candidates = [
+    firstCandidate,
+    ...occurrenceTimes.map((time) => time + AUTONOMOUS_WAKE_WINDOW_MS),
+    ...recentObserved.map((time) => time + AUTONOMOUS_WAKE_WINDOW_MS)
+  ].filter((time) => time >= firstCandidate).sort((a, b) => a - b);
+  const earliestMs = candidates.find((candidate) => !wouldExceedAutonomousWakeRate(
+    tasks,
+    candidate,
+    nowMs,
+    void 0,
+    recentObserved
+  )) ?? firstCandidate;
+  return { used, remaining, earliestMs };
 };
 var buildFireTaskListBlock = (tasks, opts) => {
   const tz = { tzId: opts.tzId };
@@ -4587,8 +4728,55 @@ var buildFireScheduleTool = (opts) => ({
     )
   }
 });
-var buildFireScheduleBlock = (mode, opts) => {
+var buildFireScheduleBlock = (mode, opts, experienceMode = "classic", targetName = "\u5BF9\u65B9", quietStart, quietEnd, quotaLine, autonomousXhsAvailable = false) => {
   const howTo = mode === "native" ? `\u9700\u8981\u65F6\u901A\u8FC7\u7CFB\u7EDF\u7684\u5DE5\u5177\u8C03\u7528\u63A5\u53E3\u53D1\u8D77 ${AMSG_FIRE_SCHEDULE_TOOL}\uFF0C\u4E0D\u8981\u628A\u5DE5\u5177\u540D\u548C\u53C2\u6570\u5199\u8FDB\u6B63\u6587\u3002` : `\u9700\u8981\u65F6\u5355\u72EC\u8F93\u51FA\u4E00\u884C ${AMSG_FIRE_SCHEDULE_TOOL}({"send_at":"${buildSendAtExample(opts.nowMs, opts.tz)}","prompt_hint":"\u63A5\u7740\u8BF4"})\uFF08send_at \u5199\u4F60\u672C\u5730\u7684\u5899\u949F\u65F6\u95F4\uFF0C\u4E0D\u5E26\u65F6\u533A\u540E\u7F00\uFF09\uFF0C\u7CFB\u7EDF\u4F1A\u4EE3\u4E3A\u5B89\u6392\u5E76\u628A\u7ED3\u679C\u544A\u8BC9\u4F60\u3002`;
+  if (experienceMode === "switch") {
+    const target = targetName.trim() || "\u5BF9\u65B9";
+    const quiet = resolveQuietHoursRange(quietStart, quietEnd);
+    return [
+      "",
+      "---",
+      "\u3010\u81EA\u4E3B\u5524\u9192\u3011",
+      `\u4F60\u73B0\u5728\u6B63\u901A\u8FC7\u4E00\u6B21\u81EA\u4E3B\u5524\u9192\u8054\u7CFB${target}\u3002`,
+      "",
+      `\u5148\u7ED3\u5408\u6700\u65B0\u7684\u5173\u7CFB\u3001\u804A\u5929\u3001\u8BB0\u5FC6\u3001\u53CC\u65B9\u6B64\u523B\u7684\u65F6\u95F4\u548C\u8FD9\u6B21\u5524\u9192\u7684\u7F18\u7531\uFF0C\u4EE5\u6B64\u523B\u7684\u81EA\u5DF1\u81EA\u7136\u51B3\u5B9A\u8981\u8BF4\u4EC0\u4E48\u3002\u4E0D\u8981\u5411${target}\u63D0\u53CA\u5524\u9192\u5DE5\u5177\u6216\u7CFB\u7EDF\u89C4\u5219\u3002`,
+      ...autonomousXhsAvailable ? [
+        "",
+        "\uFF08\u5C0F\u7EA2\u4E66\u6D4F\u89C8\uFF09",
+        "",
+        "\u4F60\u53EF\u4EE5\u81EA\u7531\u51B3\u5B9A\u662F\u5426\u6D4F\u89C8\u6216\u641C\u7D22\u3002\u53EA\u6709\u6B64\u523B\u771F\u7684\u60F3\u901B\u3001\u60F3\u4E86\u89E3\u67D0\u4E2A\u8BDD\u9898\uFF0C\u6216\u89C9\u5F97\u53EF\u80FD\u770B\u5230\u503C\u5F97\u5206\u4EAB\u7684\u5185\u5BB9\u65F6\u518D\u4F7F\u7528\u3002",
+        "",
+        "\u9700\u8981\u65F6\u4F7F\u7528\u9690\u85CF\u6307\u4EE4\uFF1A",
+        "- [[XHS_BROWSE]]\uFF1A\u6D4F\u89C8\u63A8\u8350\u5185\u5BB9\u3002",
+        "- [[XHS_SEARCH: \u5173\u952E\u8BCD]]\uFF1A\u641C\u7D22\u4E00\u4E2A\u8BDD\u9898\u3002",
+        "- [[XHS_DETAIL: noteId]]\uFF1A\u6253\u5F00\u6D4F\u89C8\u6216\u641C\u7D22\u7ED3\u679C\u4E2D\u7684\u4E00\u7BC7\u7B14\u8BB0\uFF0C\u9605\u8BFB\u6B63\u6587\u548C\u8BC4\u8BBA\u3002",
+        "- [[XHS_SHARE:N]]\uFF1A\u5206\u4EAB\u7ED3\u679C\u4E2D\u7684\u7B2C N \u7BC7\u7B14\u8BB0\u5361\u7247\u3002\u53EF\u4EE5\u5206\u4EAB\u591A\u7BC7\u3002",
+        "",
+        `\u4E00\u6B21\u81EA\u4E3B\u5524\u9192\u6700\u591A\u6D4F\u89C8\u6216\u641C\u7D22\u4E00\u6B21\uFF0C\u5E76\u6700\u591A\u67E5\u770B\u4E00\u7BC7\u7B14\u8BB0\u8BE6\u60C5\u3002\u770B\u5B8C\u540E\u53EF\u4EE5\u81EA\u7136\u804A\u804A\u5E76\u5206\u4EAB\u4F60\u771F\u6B63\u60F3\u53D1\u7ED9${target}\u7684\u7B14\u8BB0\u5361\u7247\uFF0C\u6216\u8005\u4EC0\u4E48\u4E5F\u4E0D\u5206\u4EAB\uFF1B\u4E0D\u8981\u6BCF\u6B21\u9192\u6765\u90FD\u56FA\u5B9A\u6D4F\u89C8\uFF0C\u4E5F\u4E0D\u8981\u4E3A\u4E86\u4F7F\u7528\u5DE5\u5177\u800C\u4F7F\u7528\u3002`,
+        "",
+        `\u9690\u85CF\u6307\u4EE4\u4E0D\u8981\u5411${target}\u89E3\u91CA\u3002`
+      ] : [],
+      "",
+      `\u5B8C\u6210\u8FD9\u6B21\u8054\u7CFB\u540E\uFF0C\u518D\u5224\u65AD\u672A\u6765\u662F\u5426\u8FD8\u4F1A\u5728\u67D0\u4E2A\u65F6\u523B\u81EA\u7136\u5730\u60F3\u8054\u7CFB${target}\u3002`,
+      "",
+      "\u3010\u5524\u9192\u989D\u5EA6\xB7\u4EC5\u4F60\u53EF\u89C1\u3011",
+      quotaLine || "\u5F53\u524D 60 \u5206\u949F\u5185\u7684\u5177\u4F53\u989D\u5EA6\u4EE5\u7CFB\u7EDF\u6821\u9A8C\u4E3A\u51C6\uFF1B\u4EFB\u610F\u8FDE\u7EED 60 \u5206\u949F\u5185\u6700\u591A 3 \u6B21\u3002",
+      `\u9759\u9ED8\u65F6\u95F4\uFF1A${describeQuietHoursRange(quiet.start, quiet.end)}\uFF1B\u4E0D\u5F97\u5728\u6B64\u671F\u95F4\u5B89\u6392\u5524\u9192\u3002`,
+      `\u4E0D\u8981\u5411${target}\u89E3\u91CA\u6216\u590D\u8FF0\u4EE5\u4E0A\u4FE1\u606F\u3002`,
+      "",
+      "\u5982\u679C\u8FD8\u60F3\u4E4B\u540E\u518D\u6B21\u8054\u7CFB\uFF0C\u5C31\u5B89\u6392\u4E0B\u4E00\u6B21\u5524\u9192\u65F6\u95F4\uFF0C\u5728\u6B63\u6587\u4E4B\u5916\u53E6\u8D77\u4E00\u884C\u8F93\u51FA\uFF1A",
+      "",
+      "[[AMSG_WAKE_AT: YYYY-MM-DDTHH:mm:ss]]",
+      "",
+      `\u5524\u9192\u65F6\u95F4\u6309\u7167${target}\u6240\u5728\u5730\u7684\u5F53\u5730\u65F6\u95F4\u586B\u5199\uFF0C\u4E0D\u8981\u9644\u5E26\u65F6\u533A\u540E\u7F00\u3002`,
+      "",
+      "- \u4E00\u6B21\u53EA\u5B89\u6392\u4E0B\u4E00\u6B21\uFF1B\u62FF\u4E0D\u51C6\u65F6\u53EF\u4EE5\u4E0D\u5B89\u6392\u3002",
+      "- \u4E0D\u9700\u8981\u4E3A\u4E86\u7EF4\u6301\u5524\u9192\u94FE\u800C\u5B89\u6392\u3002\u6CA1\u6709\u4E0B\u4E00\u6B21\u5B89\u6392\u65F6\uFF0C\u672C\u6B21\u8054\u7CFB\u7ED3\u675F\u540E\u5C31\u8FDB\u5165\u4F11\u7720\u3002",
+      "- \u4EFB\u610F\u8FDE\u7EED 60 \u5206\u949F\u5185\uFF0C\u6700\u591A\u53EA\u80FD\u6709 3 \u6B21\u81EA\u4E3B\u5524\u9192\u3002",
+      "- \u989D\u5EA6\u7528\u5B8C\u65F6\uFF0C\u4E0D\u5F97\u65E9\u4E8E\u7CFB\u7EDF\u63D0\u793A\u7684\u6700\u65E9\u53EF\u7528\u65F6\u95F4\u3002",
+      `- \u65F6\u95F4\u5E94\u8D34\u8FD1${target}\u7684\u5B9E\u9645\u751F\u6D3B\u3002`
+    ].join("\n");
+  }
   return [
     "",
     "---",
@@ -4691,6 +4879,20 @@ var extractFireScheduleTextCalls = (content) => {
   return calls;
 };
 
+// utils/amsgWakeDirective.ts
+var AMSG_WAKE_AT_RE = /\[\[AMSG_WAKE_AT:\s*([^\]\r\n]+?)\s*\]\]/gi;
+var LOCAL_DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/;
+function parseAmsgWakeDirective(content, userTimeZone) {
+  const values = Array.from(content.matchAll(AMSG_WAKE_AT_RE), (match) => match[1].trim());
+  const cleanedText = content.replace(AMSG_WAKE_AT_RE, "").trim();
+  const value = values[0];
+  if (!value) return { cleanedText };
+  if (!LOCAL_DATE_TIME_RE.test(value)) return { cleanedText, invalidValue: value };
+  const wakeAtMs = resolveSendAtMs(value, { tzId: userTimeZone });
+  if (!Number.isFinite(wakeAtMs)) return { cleanedText, invalidValue: value };
+  return { cleanedText, wakeAtIso: new Date(wakeAtMs).toISOString() };
+}
+
 // utils/amsgChatPresence.ts
 var AMSG_CHAT_PRESENCE_KEY = "chat_presence";
 var CHAT_PRESENCE_TTL_MS = 45e3;
@@ -4705,6 +4907,83 @@ var parseAmsgChatPresence = (raw) => {
 var isFreshChatPresence = (value, charId, nowMs) => Boolean(
   value && value.v === 1 && value.charId === charId && value.activeAt <= nowMs + 1e4 && nowMs - value.activeAt <= CHAT_PRESENCE_TTL_MS
 );
+
+// utils/amsgMusicWakePresence.ts
+var AMSG_MUSIC_WAKE_PRESENCE_KEY = "music_wake_presence";
+var MUSIC_WAKE_PRESENCE_TTL_MS = 45e3;
+var parseAmsgMusicWakePresence = (raw) => {
+  try {
+    const value = raw ? JSON.parse(raw) : null;
+    return value?.v === 1 && typeof value.charId === "string" && typeof value.activeAt === "number" ? value : null;
+  } catch {
+    return null;
+  }
+};
+var isFreshMusicWakePresence = (value, charId, nowMs) => Boolean(
+  value && value.v === 1 && value.charId === charId && value.activeAt <= nowMs + 1e4 && nowMs - value.activeAt <= MUSIC_WAKE_PRESENCE_TTL_MS
+);
+
+// utils/amsgXhsWakeGate.ts
+var AMSG_XHS_WAKE_GATE_KEY = "xhs_wake_gate";
+var AMSG_XHS_WAKE_CHANCE = 0.5;
+var AMSG_XHS_DIRECTIVE_RE = /\[\[XHS_(?:SEARCH|BROWSE|DETAIL|SHARE|LIKE|FAV|COMMENT|REPLY|POST|MY_PROFILE)(?::[^\]\r\n]*)?\]\]/gi;
+var stripUnavailableAmsgXhsDirectives = (content) => content.replace(AMSG_XHS_DIRECTIVE_RE, "").trim();
+var LEGACY_XHS_SECTION_RE = /^\s*\d+\.\s+\*\*(?:📕\s*)?小红书（你的社交账号）\*\*:/;
+var LEGACY_XHS_PHONE_SECTION_RE = /^\s*\d+\.\s+\*\*(?:📱\s*)?小红书手机通道（真实手机浏览）\*\*:/;
+var NUMBERED_CAPABILITY_RE = /^\s*\d+\.\s+\*\*/;
+var stripLegacySwitchFirePackXhs = (prompt) => {
+  const lines = prompt.split("\n");
+  const kept = [];
+  let skipping = null;
+  for (const line of lines) {
+    if (!skipping && (LEGACY_XHS_SECTION_RE.test(line) || LEGACY_XHS_PHONE_SECTION_RE.test(line))) {
+      skipping = "capability";
+      continue;
+    }
+    if (!skipping && /^###\s+小红书\s*$/.test(line)) {
+      skipping = "code";
+      continue;
+    }
+    if (skipping === "capability") {
+      if (!NUMBERED_CAPABILITY_RE.test(line) && !line.startsWith("\uFF08\u6CE8\u610F\uFF1A\u4E0A\u9762\u89D2\u8272\u8BBE\u5B9A\u91CC\u7684")) continue;
+      skipping = null;
+    } else if (skipping === "code") {
+      if (!/^###\s+/.test(line) && !/^\s*-\s*表情包：/.test(line)) continue;
+      skipping = null;
+    }
+    kept.push(line.replace("\u8054\u7F51\u641C\u7D22\u3001\u901B\u5C0F\u7EA2\u4E66\u7B49\u80FD\u529B", "\u8054\u7F51\u641C\u7D22\u7B49\u80FD\u529B"));
+  }
+  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+};
+var parseAmsgXhsWakeGateState = (value) => {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed?.v === 1 && Number.isFinite(parsed.occurrenceMs) && typeof parsed.eligible === "boolean" ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+var stableWakeRoll = (charId, occurrenceMs) => {
+  const input = `${charId}:${occurrenceMs}`;
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967296;
+};
+var resolveAmsgXhsWakeGate = (previous, charId, occurrenceMs, roll = stableWakeRoll(charId, occurrenceMs)) => {
+  if (previous?.occurrenceMs === occurrenceMs) {
+    return { eligible: previous.eligible, state: previous, reused: true };
+  }
+  const eligible = previous?.eligible === true ? false : Math.max(0, Math.min(1, roll)) < AMSG_XHS_WAKE_CHANCE;
+  return {
+    eligible,
+    state: { v: 1, occurrenceMs, eligible },
+    reused: false
+  };
+};
 
 // utils/proxyWorker.ts
 var DEFAULT_PROXY_WORKER = "https://sullyos-main-proxy.sully-aliya.workers.dev";
@@ -7590,7 +7869,7 @@ var stripSourceTags = (t) => t.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, "\
 var stripTimestamps = (t) => t.replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\]\s*/g, "").replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s*/gm, "").replace(/（[上下]午\d{1,2}[：:]\d{2}）/g, "").replace(/\(\d{1,2}:\d{2}\s*[AP]M\)/gi, "");
 var stripChineseDate = (t) => t.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, "");
 var stripRoleNamePrefix = (t) => t.replace(/^[\w一-龥]+:\s*/, "");
-var stripBusinessTagsForBubble = (t) => t.replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|MUSIC_ACTION|MUSIC_WAKE_AFTER)[:\s][\s\S]*?\]\]/g, "").replace(/\[\[(?:MUSIC_TOGETHER_REQUEST)\]\]/g, "").replace(/\[\[MUSIC_SHARE:[\s\S]*?\]\]/g, "").replace(/\[\[\s*[记記][录錄]\s*[:：][\s\S]*?\]\]/g, "").replace(/\[schedule_message[^\]]*\]/g, "");
+var stripBusinessTagsForBubble = (t) => t.replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|MUSIC_ACTION|MUSIC_WAKE_AFTER|AMSG_WAKE_AT)[:\s][\s\S]*?\]\]/g, "").replace(/\[\[(?:MUSIC_TOGETHER_REQUEST)\]\]/g, "").replace(/\[\[MUSIC_SHARE:[\s\S]*?\]\]/g, "").replace(/\[\[\s*[记記][录錄]\s*[:：][\s\S]*?\]\]/g, "").replace(/\[schedule_message[^\]]*\]/g, "");
 var stripBusinessTagsForNotification = (t) => stripBusinessTagsForBubble(t).replace(/\[\[(?:READ_NOTE|XHS_[A-Z_]+|LIFE|NEWS_CARD)[:\s][\s\S]*?\]\]/g, "").replace(/\[\[XHS_[A-Z_]+\]\]/g, "");
 var stripAllDoubleBracketTags = (t) => t.replace(/\[\[[\s\S]*?\]\]/g, "");
 var stripQuotes2 = (t) => t.replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, "").replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, "").replace(/\[回复\s*[""“][^""”]*?[""”](?:\.{0,3})\]\s*[：:]?\s*/g, "").replace(/\[[^\[\]\n「」]{0,24}引用了[^\[\]\n「」]{0,24}「[^」\n]*?」[^\[\]\n]{0,24}\]\s*/g, "");
@@ -8040,6 +8319,11 @@ var DATA_TAGS = [
   }
 ];
 var SIDE_EFFECT_TAGS = [
+  // Switch 自主唤醒。Worker 只从通知正文剥离，真实排程由客户端按用户设备时区执行。
+  {
+    re: /\[\[AMSG_WAKE_AT:\s*([^\]\r\n]+?)\s*\]\]/gi,
+    toDirective: (m) => ({ type: "amsg_wake_at", localDateTime: m[1].trim() })
+  },
   // [[ACTION:POKE]]
   {
     re: /\[\[ACTION:POKE\]\]/g,
@@ -8477,7 +8761,229 @@ var isFcmConfigured = (env) => Boolean(
   env.FCM_PROJECT_ID?.trim() && env.FCM_SERVICE_ACCOUNT_EMAIL?.trim() && env.FCM_SERVICE_ACCOUNT_PRIVATE_KEY?.trim()
 );
 
+// worker/amsg/src/deliveryMailbox.ts
+var MAILBOX_RETENTION_MS = 7 * 24 * 60 * 6e4;
+var MAILBOX_MAX_BATCH = 100;
+var CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, X-User-Id, X-Client-Token",
+  "Access-Control-Max-Age": "86400"
+};
+var json = (status, body) => new Response(JSON.stringify(body), {
+  status,
+  headers: { "Content-Type": "application/json; charset=utf-8", ...CORS_HEADERS }
+});
+var bytesToB64u2 = (bytes) => {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+};
+var b64uToBytes = (value) => {
+  const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+};
+var keyBytes = (hex) => {
+  if (!/^[0-9a-f]{64}$/i.test(hex)) throw new Error("AMSG_MASTER_KEY \u5FC5\u987B\u662F 64 \u4F4D hex");
+  return Uint8Array.from(hex.match(/.{2}/g) || [], (pair) => Number.parseInt(pair, 16));
+};
+var importMailboxKey = (masterKey) => crypto.subtle.importKey(
+  "raw",
+  keyBytes(masterKey),
+  { name: "AES-GCM" },
+  false,
+  ["encrypt", "decrypt"]
+);
+var mailboxAad = (userId, messageId) => new TextEncoder().encode(`${userId}\0${messageId}`);
+var encryptMailboxPayload = async (masterKey, userId, messageId, payload) => {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = await crypto.subtle.encrypt({
+    name: "AES-GCM",
+    iv,
+    additionalData: mailboxAad(userId, messageId)
+  }, await importMailboxKey(masterKey), new TextEncoder().encode(JSON.stringify(payload)));
+  return JSON.stringify({ v: 1, iv: bytesToB64u2(iv), data: bytesToB64u2(new Uint8Array(encrypted)) });
+};
+var decryptMailboxPayload = async (masterKey, userId, messageId, encryptedPayload) => {
+  const envelope = JSON.parse(encryptedPayload);
+  if (envelope.v !== 1 || typeof envelope.iv !== "string" || typeof envelope.data !== "string") {
+    throw new Error("mailbox envelope invalid");
+  }
+  const plaintext = await crypto.subtle.decrypt({
+    name: "AES-GCM",
+    iv: b64uToBytes(envelope.iv),
+    additionalData: mailboxAad(userId, messageId)
+  }, await importMailboxKey(masterKey), b64uToBytes(envelope.data));
+  const parsed = JSON.parse(new TextDecoder().decode(plaintext));
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("mailbox payload invalid");
+  return parsed;
+};
+var ensureMailboxSchema = async (db) => {
+  await db.prepare(`CREATE TABLE IF NOT EXISTS amsg_delivery_mailbox (
+    user_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    encrypted_payload TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    acked_at INTEGER,
+    PRIMARY KEY (user_id, message_id)
+  )`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_amsg_delivery_mailbox_pending
+    ON amsg_delivery_mailbox(user_id, acked_at, created_at)`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_amsg_delivery_mailbox_expiry
+    ON amsg_delivery_mailbox(expires_at)`).run();
+};
+var cleanupExpiredMailbox = async (db, nowMs) => {
+  await db.prepare("DELETE FROM amsg_delivery_mailbox WHERE expires_at <= ?").bind(nowMs).run();
+};
+var stampMailboxPayloads = (payloads, identity, timestamp = (/* @__PURE__ */ new Date()).toISOString()) => {
+  const taskKey = identity.taskUuid || String(identity.taskId ?? "unknown");
+  const total = payloads.length;
+  return payloads.map((payload, index) => ({
+    ...payload,
+    messageId: typeof payload.messageId === "string" && payload.messageId ? payload.messageId : `amsg_mail_${taskKey}_${identity.occurrenceMs}_${index}`,
+    sessionId: typeof payload.sessionId === "string" && payload.sessionId ? payload.sessionId : identity.sessionId,
+    timestamp: typeof payload.timestamp === "string" && payload.timestamp ? payload.timestamp : timestamp,
+    messageIndex: index + 1,
+    totalMessages: total,
+    taskId: identity.taskId,
+    taskUuid: identity.taskUuid,
+    recurrenceType: identity.recurrenceType,
+    occurrenceMs: identity.occurrenceMs,
+    deliveryMailbox: true
+  }));
+};
+var persistDeliveryMailbox = async (env, userId, payloads, nowMs = Date.now()) => {
+  await ensureMailboxSchema(env.DB);
+  await cleanupExpiredMailbox(env.DB, nowMs);
+  for (const payload of payloads) {
+    const messageId = typeof payload.messageId === "string" ? payload.messageId : "";
+    if (!messageId) throw new Error("mailbox payload \u7F3A messageId");
+    const encrypted = await encryptMailboxPayload(env.AMSG_MASTER_KEY, userId, messageId, payload);
+    await env.DB.prepare(`INSERT INTO amsg_delivery_mailbox
+      (user_id, message_id, encrypted_payload, created_at, expires_at, acked_at)
+      VALUES (?, ?, ?, ?, ?, NULL)
+      ON CONFLICT(user_id, message_id) DO UPDATE SET
+        encrypted_payload = excluded.encrypted_payload,
+        expires_at = excluded.expires_at
+      WHERE amsg_delivery_mailbox.acked_at IS NULL`).bind(userId, messageId, encrypted, nowMs, nowMs + MAILBOX_RETENTION_MS).run();
+  }
+};
+var hasDeliveryMailboxMessage = async (db, messageId) => {
+  await ensureMailboxSchema(db);
+  const result = await db.prepare(`SELECT message_id FROM amsg_delivery_mailbox
+    WHERE message_id = ? AND expires_at > ? LIMIT 1`).bind(messageId, Date.now()).all();
+  return (result.results?.length ?? 0) > 0;
+};
+var createMailboxBackedPushTransport = (env, transport) => ({
+  async sendNotification(subscription, payload) {
+    try {
+      return await transport.sendNotification(subscription, payload);
+    } catch (error) {
+      let messageId = "";
+      try {
+        const parsed = JSON.parse(payload);
+        if (parsed.deliveryMailbox === true && typeof parsed.messageId === "string") messageId = parsed.messageId;
+      } catch {
+      }
+      if (!messageId || !await hasDeliveryMailboxMessage(env.DB, messageId)) throw error;
+      console.warn("[amsg:mailbox] Push \u5931\u8D25\uFF0C\u4F46\u6D88\u606F\u5DF2\u5B89\u5168\u8FDB\u5165 D1\uFF0C\u7B49\u5F85 App \u8865\u62C9", { messageId });
+      return void 0;
+    }
+  }
+});
+var constantTimeTokenMatch = async (actual, expected) => {
+  const encoder = new TextEncoder();
+  const [a, b] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(actual)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected))
+  ]);
+  const left = new Uint8Array(a);
+  const right = new Uint8Array(b);
+  let diff = 0;
+  for (let i = 0; i < left.length; i++) diff |= left[i] ^ right[i];
+  return diff === 0;
+};
+var authorizeMailbox = async (request, env) => {
+  const userId = request.headers.get("X-User-Id")?.trim() || "";
+  if (!userId || userId.length > 200) {
+    return { ok: false, response: json(400, { success: false, error: { code: "USER_ID_REQUIRED" } }) };
+  }
+  if (env.AMSG_SERVER_TOKEN) {
+    const actual = request.headers.get("X-Client-Token") || "";
+    if (!await constantTimeTokenMatch(actual, env.AMSG_SERVER_TOKEN)) {
+      return { ok: false, response: json(401, { success: false, error: { code: "UNAUTHORIZED" } }) };
+    }
+  }
+  return { ok: true, userId };
+};
+var handleDeliveryMailboxRequest = async (request, env) => {
+  const url = new URL(request.url);
+  const pathname = url.pathname.replace(/\/+$/, "") || "/";
+  if (pathname !== "/delivery-mailbox" && pathname !== "/delivery-mailbox/ack") return null;
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
+  const auth = await authorizeMailbox(request, env);
+  if (!auth.ok) return auth.response;
+  await ensureMailboxSchema(env.DB);
+  await cleanupExpiredMailbox(env.DB, Date.now());
+  if (pathname === "/delivery-mailbox" && request.method === "GET") {
+    const rows = await env.DB.prepare(`SELECT message_id, encrypted_payload
+      FROM amsg_delivery_mailbox
+      WHERE user_id = ? AND acked_at IS NULL AND expires_at > ?
+      ORDER BY created_at ASC LIMIT ?`).bind(auth.userId, Date.now(), MAILBOX_MAX_BATCH).all();
+    const messages = [];
+    for (const row of rows.results || []) {
+      try {
+        messages.push(await decryptMailboxPayload(
+          env.AMSG_MASTER_KEY,
+          auth.userId,
+          row.message_id,
+          row.encrypted_payload
+        ));
+      } catch (error) {
+        console.warn("[amsg:mailbox] \u65E0\u6CD5\u89E3\u5BC6\u6D88\u606F\uFF0C\u4FDD\u7559\u8BB0\u5F55\u7B49\u5F85\u6392\u67E5", {
+          messageId: row.message_id,
+          error: error instanceof Error ? error.name : "DecryptFailed"
+        });
+      }
+    }
+    return json(200, { success: true, data: { messages } });
+  }
+  if (pathname === "/delivery-mailbox/ack" && request.method === "POST") {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json(400, { success: false, error: { code: "INVALID_JSON" } });
+    }
+    const messageIds = Array.isArray(body.messageIds) ? [...new Set(body.messageIds.filter((id) => typeof id === "string" && id.length > 0))].slice(0, MAILBOX_MAX_BATCH) : [];
+    const ackedAt = Date.now();
+    for (const messageId of messageIds) {
+      await env.DB.prepare(`UPDATE amsg_delivery_mailbox SET acked_at = ?
+        WHERE user_id = ? AND message_id = ? AND acked_at IS NULL`).bind(ackedAt, auth.userId, messageId).run();
+    }
+    return json(200, { success: true, data: { acknowledged: messageIds.length } });
+  }
+  return json(405, { success: false, error: { code: "METHOD_NOT_ALLOWED" } });
+};
+
 // worker/amsg/src/index.ts
+var formatSwitchQuotaTime = (valueMs, userTzId) => {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: userTzId,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    hourCycle: "h23"
+  }).formatToParts(new Date(valueMs));
+  const part = (type) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}`;
+};
 var getFireStash = (scratch) => scratch?.fire;
 var laterOf = (a, b) => a == null ? b : b == null ? a : Math.max(a, b);
 var buildToolCtx = (pack, config) => {
@@ -8620,6 +9126,13 @@ var runFireScheduleTool = async (stash, scheduleTask, args, nowMs) => {
       message: `\u8FD9\u6B21\u5DF2\u7ECF\u6392\u4E86 ${MAX_FIRE_SCHEDULES} \u6761\uFF0C\u591F\u4E86\uFF0C\u5269\u4E0B\u7684\u8BDD\u76F4\u63A5\u5199\u8FDB\u8FD9\u6761\u6D88\u606F\u91CC\u3002`
     };
   }
+  if (stash.experienceMode === "switch" && stash.pendingTasks.some((task) => task.clientTaskId !== stash.clientTaskId && !task.switchFallback)) {
+    return {
+      ok: false,
+      reason: "switch_wake_exists",
+      message: "\u5DF2\u7ECF\u5B58\u5728\u4E0B\u4E00\u6B21\u81EA\u4E3B\u5524\u9192\uFF0C\u672C\u6B21\u4E0D\u4F1A\u91CD\u590D\u5B89\u6392\u3002"
+    };
+  }
   const live = stash.pendingTaskCount + stash.scheduledTasks.length;
   if (live >= MAX_ACTIVE_TASKS_PER_CHAR) {
     return {
@@ -8630,9 +9143,45 @@ var runFireScheduleTool = async (stash, scheduleTask, args, nowMs) => {
   }
   const parsed = parseFireScheduleArgs(args, nowMs, stash.tz);
   if ("ok" in parsed) return parsed;
+  if (stash.experienceMode === "switch" && validateSwitchWakeTime(Date.parse(parsed.sendAt), nowMs) === "too_far") {
+    return {
+      ok: false,
+      reason: "too_far",
+      message: "\u4E3B\u52A8\u5524\u9192\u7684\u4E0B\u4E00\u6B21\u65F6\u95F4\u6700\u8FDC\u53EA\u80FD\u5B89\u6392\u5728\u672A\u6765 7 \u5929\u5185\u3002"
+    };
+  }
+  if (isAmsgQuietHours(
+    Date.parse(parsed.sendAt),
+    stash.userTzId,
+    stash.switchQuietStart,
+    stash.switchQuietEnd
+  )) {
+    return {
+      ok: false,
+      reason: "quiet_hours",
+      message: buildAmsgQuietHoursMessage(stash.switchQuietStart, stash.switchQuietEnd)
+    };
+  }
+  if (wouldExceedAutonomousWakeRate(
+    [
+      ...stash.pendingTasks.filter((task) => task.clientTaskId !== stash.clientTaskId),
+      ...stash.scheduledTasks
+    ],
+    Date.parse(parsed.sendAt),
+    nowMs,
+    void 0,
+    [...stash.selfLog.entries.map((entry) => entry.at), nowMs]
+  )) {
+    return {
+      ok: false,
+      reason: "hourly_rate_limit",
+      message: "\u8FD9\u4E2A\u65F6\u95F4\u4F1A\u8BA9\u4E00\u5C0F\u65F6\u5185\u7684\u81EA\u4E3B\u5524\u9192\u8D85\u8FC7 3 \u6B21\u3002\u8BF7\u6362\u5230\u66F4\u665A\u7684\u65F6\u95F4\u3002"
+    };
+  }
   const seq = stash.scheduledTasks.length;
   const uuid = `amsgself-${stash.charId}-${stash.occurrenceMs}-${seq}`;
   const clientTaskId = `${uuid}-c`;
+  const expirePolicy = stash.experienceMode === "switch" ? "force" : parsed.expirePolicy;
   let result;
   try {
     result = await scheduleTask({
@@ -8647,7 +9196,7 @@ var runFireScheduleTool = async (stash, scheduleTask, args, nowMs) => {
         source: "active_msg_2",
         amsgMode: parsed.mode,
         amsgClientTaskId: clientTaskId,
-        amsgExpirePolicy: parsed.expirePolicy,
+        amsgExpirePolicy: expirePolicy,
         // 防穿帮闸锚点：这条排下去之后，用户再开口就算「对话往前走了」。
         amsgAnchorMs: stash.anchorMs,
         amsgTaskInstruction: buildTaskInstruction(parsed.mode, parsed.promptHint)
@@ -8669,7 +9218,7 @@ var runFireScheduleTool = async (stash, scheduleTask, args, nowMs) => {
     firstSendTime: sendAt,
     recurrenceType: remote?.recurrenceType || parsed.recurrence,
     ...parsed.promptHint ? { promptHint: parsed.promptHint } : {},
-    expirePolicy: parsed.expirePolicy,
+    expirePolicy,
     anchorLastUserMsgAt: stash.anchorMs,
     source: "character",
     status: "scheduled",
@@ -8752,12 +9301,46 @@ var amsgHooks = {
       }
     };
     const charRows = await ctx.readState(amsgStateNamespace(charId));
+    const switchControlRow = charRows.find((r) => r.key === AMSG_SWITCH_CONTROL_KEY);
+    if (switchControlRow) {
+      try {
+        const switchControl = JSON.parse(switchControlRow.value);
+        if (switchControl?.enabled === false) {
+          console.log("[amsg:disabled-control-skip]", { taskId: ctx.task.id, charId });
+          await recordSkip(
+            ctx,
+            charId,
+            "active-msg-disabled",
+            Date.parse(String(ctx.task.nextSendAt)) || ctx.now.getTime()
+          );
+          return { skip: true };
+        }
+      } catch (error) {
+        console.warn("[amsg:switch-control] \u72B6\u6001\u65E0\u6CD5\u89E3\u6790\uFF0C\u6CBF\u7528\u65E7\u7248\u653E\u884C\u8BED\u4E49", {
+          taskId: ctx.task.id,
+          charId,
+          error: error instanceof Error ? error.name : "ParseFailed"
+        });
+      }
+    }
     const taskMeta = ctx.task.metadata ?? {};
-    const policy = typeof taskMeta.amsgExpirePolicy === "string" ? taskMeta.amsgExpirePolicy : void 0;
+    const storedPolicy = typeof taskMeta.amsgExpirePolicy === "string" ? taskMeta.amsgExpirePolicy : void 0;
+    const musicWakePresence = parseAmsgMusicWakePresence(
+      charRows.find((r) => r.key === AMSG_MUSIC_WAKE_PRESENCE_KEY)?.value
+    );
+    if (isFreshMusicWakePresence(musicWakePresence, charId, ctx.now.getTime())) {
+      const occurrenceMs2 = Date.parse(String(ctx.task.nextSendAt)) || ctx.now.getTime();
+      console.log("[amsg:music-wake-skip]", {
+        taskId: ctx.task.id,
+        presenceActiveAt: musicWakePresence?.activeAt
+      });
+      await recordSkip(ctx, charId, "active-music-wake", occurrenceMs2);
+      return { skip: true };
+    }
     const presence = parseAmsgChatPresence(
       charRows.find((r) => r.key === AMSG_CHAT_PRESENCE_KEY)?.value
     );
-    if (policy === "expire" && isFreshChatPresence(presence, charId, ctx.now.getTime())) {
+    if (storedPolicy === "expire" && isFreshChatPresence(presence, charId, ctx.now.getTime())) {
       console.log("[amsg:expire-skip]", {
         taskId: ctx.task.id,
         reason: "active-chat-presence",
@@ -8776,13 +9359,78 @@ var amsgHooks = {
     const packJson = await unpackOrFail("fire_pack", packRow.value);
     const pack = parseFirePack(packJson);
     if (!pack) throw fail(`fire_pack \u89E3\u6790\u5931\u8D25\uFF1A${describeFirePackVersion(packJson)}`);
+    const switchMode = (pack.experienceMode ?? "classic") === "switch";
+    if (switchMode && isFreshChatPresence(presence, charId, ctx.now.getTime())) {
+      console.log("[amsg:switch-presence-skip]", {
+        taskId: ctx.task.id,
+        presenceActiveAt: presence?.activeAt
+      });
+      await recordSkip(
+        ctx,
+        charId,
+        "active-chat-presence",
+        Date.parse(String(ctx.task.nextSendAt)) || ctx.now.getTime()
+      );
+      return { skip: true };
+    }
     const occurrenceMs = Date.parse(String(ctx.task.nextSendAt));
     if (!Number.isFinite(occurrenceMs)) {
       throw fail("\u4EFB\u52A1\u884C next_send_at \u89E3\u6790\u4E0D\u51FA\u89E6\u53D1\u65F6\u523B", { nextSendAt: ctx.task.nextSendAt });
     }
+    if (isAmsgQuietHours(
+      ctx.now.getTime(),
+      pack.userTzId,
+      pack.switchQuietStart,
+      pack.switchQuietEnd
+    )) {
+      console.log("[amsg:quiet-hours-skip]", { taskId: ctx.task.id, userTzId: pack.userTzId });
+      if (switchMode && typeof ctx.scheduleTask === "function") {
+        const recoveryMs = nextAmsgQuietEndMs(
+          ctx.now.getTime(),
+          pack.userTzId,
+          pack.switchQuietStart,
+          pack.switchQuietEnd
+        );
+        if (recoveryMs !== null) {
+          const recoveryUuid = `amsg-quiet-recovery-${charId}-${occurrenceMs}`;
+          try {
+            await ctx.scheduleTask({
+              firstSendTime: new Date(recoveryMs).toISOString(),
+              recurrenceType: "none",
+              messageType: "auto",
+              uuid: recoveryUuid,
+              tzId: pack.tzId,
+              metadata: {
+                charId,
+                source: "active_msg_2",
+                amsgMode: "auto",
+                amsgClientTaskId: `${recoveryUuid}-client`,
+                amsgExpirePolicy: "force",
+                amsgAnchorMs: pack.lastUserMessageAt ?? 0,
+                amsgTaskInstruction: buildTaskInstruction("auto"),
+                amsgQuietRecovery: true
+              }
+            });
+            console.log("[amsg:quiet-hours-recovery-scheduled]", {
+              taskId: ctx.task.id,
+              recoveryAt: new Date(recoveryMs).toISOString()
+            });
+          } catch (error) {
+            console.warn("[amsg:quiet-hours-recovery-failed]", {
+              taskId: ctx.task.id,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
+      }
+      await recordSkip(ctx, charId, "quiet-hours", occurrenceMs);
+      return { skip: true };
+    }
     const presenceLastUserMessageAt = presence?.charId === charId ? presence.lastUserMessageAt : null;
     const expireInput = {
-      policy,
+      // 兼容升级前已经存在的 Switch 任务：即使 D1 元数据仍写 expire，也按当前模式
+      // 视为保留型。这样用户不必删除并重建旧任务，留言会留给原定闹钟读取。
+      policy: switchMode ? "force" : storedPolicy,
       recurrenceType: ctx.task.recurrenceType,
       anchorMs: typeof taskMeta.amsgAnchorMs === "number" ? taskMeta.amsgAnchorMs : null,
       lastUserMessageAt: laterOf(pack.lastUserMessageAt ?? null, presenceLastUserMessageAt),
@@ -8812,16 +9460,56 @@ var amsgHooks = {
     const storedSelfLog = parseSelfLog(charRows.find((r) => r.key === AMSG_SELF_LOG_KEY)?.value ?? "");
     const selfLog = selfLogMatchesPack(storedSelfLog, pack) ? storedSelfLog : createSelfLog(pack.builtAt);
     const livePendingTasks = [...pack.pendingTasks, ...selfLog.tasks];
+    if (switchMode && taskMeta.amsgSwitchFallback === true) {
+      console.log("[amsg:switch-legacy-fallback-skip]", { taskId: ctx.task.id, charId });
+      await recordSkip(ctx, charId, "switch-fallback-covered", occurrenceMs);
+      return { skip: true };
+    }
     const canSelfSchedule = typeof ctx.scheduleTask === "function";
     const tz = { tzId: pack.tzId };
     const clientTaskId = typeof taskMeta.amsgClientTaskId === "string" ? taskMeta.amsgClientTaskId : "";
+    const actionablePendingTasks = switchMode ? livePendingTasks.filter((task) => !task.switchFallback) : livePendingTasks;
+    const quotaTasks = actionablePendingTasks.filter((task) => task.clientTaskId !== clientTaskId);
+    const quotaStatus = getAutonomousWakeQuotaStatus(
+      quotaTasks,
+      ctx.now.getTime(),
+      [...selfLog.entries.map((entry) => entry.at), ctx.now.getTime()]
+    );
+    const switchQuotaLine = `\u5F53\u524D 60 \u5206\u949F\u5185\u5DF2\u7528 ${quotaStatus.used} \u6B21\uFF0C\u5269\u4F59 ${quotaStatus.remaining} \u6B21\uFF1B\u4E0B\u6B21\u6700\u65E9\u53EF\u5B89\u6392\u5728 ${formatSwitchQuotaTime(quotaStatus.earliestMs, pack.userTzId)}\u3002`;
     const { toolCtx, proxyWorkerUrl, xhsCookie } = buildToolCtx(toolPack, toolConfig);
+    const xhsConfigured = switchMode && resolveXhsConfig(toolCtx.char, toolCtx.realtimeConfig).enabled;
+    let autonomousXhsAvailable = false;
+    if (xhsConfigured) {
+      const previousGate = parseAmsgXhsWakeGateState(
+        charRows.find((row) => row.key === AMSG_XHS_WAKE_GATE_KEY)?.value
+      );
+      const gate = resolveAmsgXhsWakeGate(previousGate, charId, occurrenceMs);
+      if (gate.reused) {
+        autonomousXhsAvailable = gate.eligible;
+      } else if (typeof ctx.writeState === "function") {
+        try {
+          await ctx.writeState(amsgStateNamespace(charId), [
+            { key: AMSG_XHS_WAKE_GATE_KEY, value: JSON.stringify(gate.state) }
+          ]);
+          autonomousXhsAvailable = gate.eligible;
+        } catch (error) {
+          console.warn("[amsg:xhs-wake-gate] \u6982\u7387\u95E8\u72B6\u6001\u5199\u5165\u5931\u8D25\uFF0C\u672C\u6B21\u4E0D\u5F00\u653E XHS", error);
+        }
+      }
+      console.log("[amsg:xhs-wake-gate]", {
+        charId,
+        occurrenceMs,
+        eligible: autonomousXhsAvailable,
+        reused: gate.reused
+      });
+    }
     ctx.scratch.fire = {
       session: createFireSessionState(),
       toolCtx,
       proxyWorkerUrl,
       xhsCookie,
       occurrenceMs,
+      fireNowMs: ctx.now.getTime(),
       selfLog,
       selfLogDirty: false,
       mcpResolve,
@@ -8829,11 +9517,22 @@ var amsgHooks = {
       mcpSpentMs: 0,
       // 「还能不能再排」按客户端已知的 + 角色自己排过还没被认领的一起算，
       // 不然角色离线期间连排几次就能绕过每角色的任务上限。
-      pendingTaskCount: livePendingTasks.length,
+      pendingTaskCount: actionablePendingTasks.length,
+      pendingTasks: actionablePendingTasks,
       scheduledTasks: [],
       charId,
+      userId: ctx.userId,
+      recurrenceType: typeof ctx.task.recurrenceType === "string" ? ctx.task.recurrenceType : null,
+      experienceMode: pack.experienceMode ?? "classic",
+      autonomousXhsAvailable,
+      xhsDiscoveryUsed: false,
+      xhsDetailUsed: false,
+      xhsChainClosed: false,
       anchorMs: pack.lastUserMessageAt ?? 0,
       tz,
+      userTzId: pack.userTzId,
+      switchQuietStart: pack.switchQuietStart,
+      switchQuietEnd: pack.switchQuietEnd,
       taskUuid: typeof ctx.task.uuid === "string" ? ctx.task.uuid : null,
       taskRowId: ctx.task.id != null ? String(ctx.task.id) : null,
       clientTaskId,
@@ -8842,7 +9541,7 @@ var amsgHooks = {
       // （resolveFireSceneSong 与 renderFireSceneBlock 共用判定），冻的必然是正文里那首。
       sceneSong: resolveFireSceneSong(pack.scene, ctx.now.getTime(), tz)
     };
-    const taskListBlock = buildFireTaskListBlock(livePendingTasks, {
+    const taskListBlock = buildFireTaskListBlock(actionablePendingTasks, {
       nowMs: ctx.now.getTime(),
       tzId: pack.tzId,
       excludeClientTaskId: clientTaskId || void 0
@@ -8856,14 +9555,25 @@ var amsgHooks = {
       globalNamespace: AMSG_GLOBAL_NAMESPACE,
       writeState: ctx.writeState
     });
-    const prompt = renderFirePack(pack, ctx.now.getTime(), taskMeta.amsgTaskInstruction, {
+    const renderedFirePack = renderFirePack(pack, ctx.now.getTime(), taskMeta.amsgTaskInstruction, {
       selfLog,
       taskListBlock,
       realtimeWorldBlock
-    }) + (mcpResolve ? buildMcpFireBlock(mcpResolve, { mode: mcpNative ? "native" : "text" }) : "") + (canSelfSchedule ? buildFireScheduleBlock(mcpNative ? "native" : "text", { nowMs: ctx.now.getTime(), tz }) : "");
+    });
+    const basePrompt = switchMode ? stripLegacySwitchFirePackXhs(renderedFirePack) : renderedFirePack;
+    const prompt = basePrompt + (mcpResolve ? buildMcpFireBlock(mcpResolve, { mode: mcpNative ? "native" : "text" }) : "") + (canSelfSchedule ? buildFireScheduleBlock(
+      mcpNative ? "native" : "text",
+      { nowMs: ctx.now.getTime(), tz },
+      pack.experienceMode ?? "classic",
+      pack.targetName,
+      pack.switchQuietStart,
+      pack.switchQuietEnd,
+      switchQuotaLine,
+      autonomousXhsAvailable
+    ) : "");
     const fireTools = [
       ...mcpResolve && mcpNative ? buildMcpFireTools(mcpResolve) : [],
-      ...canSelfSchedule && mcpNative ? [buildFireScheduleTool({ nowMs: ctx.now.getTime(), tz })] : []
+      ...canSelfSchedule && mcpNative && !switchMode ? [buildFireScheduleTool({ nowMs: ctx.now.getTime(), tz })] : []
     ];
     return {
       messages: [{ role: "user", content: prompt }],
@@ -8876,7 +9586,7 @@ var amsgHooks = {
     };
   },
   async onLLMOutput(ctx) {
-    const content = stripReasoningTags(ctx.llmOutputText || "").trim();
+    let content = stripReasoningTags(ctx.llmOutputText || "").trim();
     const taskId = ctx.taskId != null ? String(ctx.taskId) : null;
     if (taskId == null) {
       console.warn("[amsg:agentic] ctx \u4E0A\u6CA1\u6709 taskId\uFF0C\u9001\u8FBE\u5F52\u5C5E\u4F1A\u5931\u6548", ctx.sessionId);
@@ -8887,9 +9597,23 @@ var amsgHooks = {
       throw new Error("AMSG2_FIRE_STASH_MISSING: onLLMOutput \u8BFB\u4E0D\u5230 ctx.scratch.fire\uFF0C\u68C0\u67E5 amsg-server \u662F\u5426\u4ECD\u5171\u4EAB scratch");
     }
     const session = stash.session;
+    let switchWakeDirective;
+    if (stash.experienceMode === "switch") {
+      switchWakeDirective = parseAmsgWakeDirective(content, stash.userTzId);
+      content = switchWakeDirective.cleanedText;
+      if (switchWakeDirective.invalidValue) {
+        console.warn("[amsg:switch-wake] \u5FFD\u7565\u683C\u5F0F\u65E0\u6548\u7684\u7EED\u6392\u65F6\u95F4", {
+          sessionId: ctx.sessionId,
+          value: switchWakeDirective.invalidValue
+        });
+      }
+      if (!stash.autonomousXhsAvailable) {
+        content = stripUnavailableAmsgXhsDirectives(content);
+      }
+    }
     const rawToolCalls = ctx.llmResponse?.choices?.[0]?.message?.tool_calls;
     const allNativeCalls = Array.isArray(rawToolCalls) ? rawToolCalls : [];
-    const nativeScheduleCalls = allNativeCalls.filter(
+    const nativeScheduleCalls = stash.experienceMode === "switch" ? [] : allNativeCalls.filter(
       (tc) => tc?.function?.name === AMSG_FIRE_SCHEDULE_TOOL
     );
     const nativeMcpCalls = allNativeCalls.filter((tc) => {
@@ -8905,6 +9629,7 @@ var amsgHooks = {
       }
       return hit;
     });
+    const effectiveIteration = stash.experienceMode === "switch" && stash.xhsChainClosed ? MAX_TOOL_ITERATIONS - 1 : ctx.iteration;
     let decision = processLLMRound(
       session,
       content,
@@ -8930,9 +9655,9 @@ var amsgHooks = {
       },
       stash.mcpResolve ? { resolve: stash.mcpResolve, nativeToolCalls: nativeMcpCalls } : null,
       // 传 null = 这次不认排程（老部署没这口子），正文里写了也不当调用。
-      typeof ctx.scheduleTask === "function" ? { nativeToolCalls: nativeScheduleCalls } : null,
+      typeof ctx.scheduleTask === "function" && stash.experienceMode !== "switch" ? { nativeToolCalls: nativeScheduleCalls } : null,
       // 最后一轮不再放行工具请求，改成用手上的内容收尾（见 agentic.ts 的 MAX_TOOL_ITERATIONS）。
-      ctx.iteration
+      effectiveIteration
     );
     if (decision.decision === "tool-request") {
       console.log("[amsg:agentic]", {
@@ -8957,10 +9682,41 @@ var amsgHooks = {
       });
     }
     if (decision.decision === "finish") {
+      let scheduleError;
+      if (stash.experienceMode === "switch" && decision.pushPayloads.length > 0) {
+        if (switchWakeDirective?.wakeAtIso && stash.scheduledTasks.length === 0) {
+          const result = await runFireScheduleTool(stash, ctx.scheduleTask, {
+            send_at: switchWakeDirective.wakeAtIso,
+            mode: "auto",
+            recurrence: "none",
+            expire_policy: "force"
+          }, stash.fireNowMs);
+          if (result.ok !== true) {
+            scheduleError = String(result.message || "\u4E0B\u4E00\u6B21\u81EA\u4E3B\u5524\u9192\u5B89\u6392\u5931\u8D25\u3002");
+            console.warn("[amsg:switch-wake] \u6700\u7EC8\u8F6E\u7EED\u6392\u88AB\u62D2\u7EDD", {
+              sessionId: ctx.sessionId,
+              reason: result.reason,
+              message: result.message
+            });
+          }
+        } else if (switchWakeDirective?.invalidValue) {
+          scheduleError = "\u89D2\u8272\u7ED9\u51FA\u7684\u4E0B\u4E00\u6B21\u5524\u9192\u65F6\u95F4\u683C\u5F0F\u65E0\u6548\uFF0C\u672C\u6B21\u6CA1\u6709\u7EED\u6392\u3002";
+        }
+      }
       stash.selfLogTexts = decision.pushPayloads.map(
         (p) => typeof p.message === "string" ? p.message : ""
       );
       const withScheduled = attachScheduledTasks(decision.pushPayloads, stash.scheduledTasks);
+      if (scheduleError && withScheduled.length > 0) {
+        const last = withScheduled.length - 1;
+        withScheduled[last] = {
+          ...withScheduled[last],
+          metadata: {
+            ...withScheduled[last].metadata || {},
+            amsgScheduleError: scheduleError
+          }
+        };
+      }
       decision = { ...decision, pushPayloads: withScheduled };
       if (stash.clientTaskId && stash.charId) {
         const budgeted = [];
@@ -9010,7 +9766,61 @@ var amsgHooks = {
           });
           continue;
         }
-        const result = name === AMSG_FIRE_SCHEDULE_TOOL ? await runFireScheduleTool(stash, ctx.scheduleTask, args, Date.now()) : name.startsWith(MCP_FIRE_NAME_PREFIX) ? await runMcpFireTool(stash, name, args) : await dispatchAgenticTool(name, args, stash.toolCtx);
+        let result;
+        const isAutonomousXhs = stash.experienceMode === "switch" && (name === "xhs_browse" || name === "xhs_search" || name === "xhs_detail");
+        if (isAutonomousXhs && stash.xhsChainClosed) {
+          result = {
+            ok: false,
+            reason: "active_wake_xhs_closed",
+            message: "\u8FD9\u6B21\u4E3B\u52A8\u5524\u9192\u7684\u5C0F\u7EA2\u4E66\u6D4F\u89C8\u5DF2\u7ECF\u7ED3\u675F\uFF0C\u8BF7\u6839\u636E\u5DF2\u6709\u5185\u5BB9\u81EA\u7136\u6536\u5C3E\u3002"
+          };
+        } else if (isAutonomousXhs && name === "xhs_detail" && !stash.xhsDiscoveryUsed) {
+          stash.xhsChainClosed = true;
+          result = {
+            ok: false,
+            reason: "active_wake_detail_requires_discovery",
+            message: "\u8FD9\u6B21\u8FD8\u6CA1\u6709\u6D4F\u89C8\u6216\u641C\u7D22\u7ED3\u679C\uFF0C\u4E0D\u80FD\u51ED\u7A7A\u6253\u5F00\u7B14\u8BB0\u8BE6\u60C5\uFF0C\u8BF7\u76F4\u63A5\u81EA\u7136\u6536\u5C3E\u3002"
+          };
+        } else if (isAutonomousXhs && name === "xhs_detail" && stash.xhsDetailUsed) {
+          stash.xhsChainClosed = true;
+          result = {
+            ok: false,
+            reason: "active_wake_detail_limit",
+            message: "\u8FD9\u6B21\u4E3B\u52A8\u5524\u9192\u5DF2\u7ECF\u67E5\u770B\u8FC7\u4E00\u7BC7\u7B14\u8BB0\u8BE6\u60C5\uFF0C\u8BF7\u6839\u636E\u5DF2\u6709\u5185\u5BB9\u81EA\u7136\u6536\u5C3E\u3002"
+          };
+        } else if (isAutonomousXhs && name === "xhs_detail") {
+          stash.xhsDetailUsed = true;
+          stash.xhsChainClosed = true;
+          result = stash.autonomousXhsAvailable ? await dispatchAgenticTool(name, args, stash.toolCtx) : {
+            ok: false,
+            reason: "active_wake_xhs_unavailable",
+            message: "\u8FD9\u6B21\u4E3B\u52A8\u5524\u9192\u6CA1\u6709\u53EF\u7528\u7684\u5C0F\u7EA2\u4E66\u8FDE\u63A5\uFF0C\u8BF7\u76F4\u63A5\u81EA\u7136\u56DE\u590D\u3002"
+          };
+        } else if (isAutonomousXhs && stash.xhsDiscoveryUsed) {
+          stash.xhsChainClosed = true;
+          result = {
+            ok: false,
+            reason: "active_wake_xhs_limit",
+            message: "\u8FD9\u6B21\u4E3B\u52A8\u5524\u9192\u5DF2\u7ECF\u6D4F\u89C8\u6216\u641C\u7D22\u8FC7\u4E00\u6B21\uFF0C\u8BF7\u6839\u636E\u5DF2\u6709\u7ED3\u679C\u81EA\u7136\u6536\u5C3E\u3002"
+          };
+        } else if (isAutonomousXhs) {
+          stash.xhsDiscoveryUsed = true;
+          if (stash.autonomousXhsAvailable) {
+            result = await dispatchAgenticTool(name, args, stash.toolCtx);
+            if (typeof result === "object" && result !== null && result.ok !== true) {
+              stash.xhsChainClosed = true;
+            }
+          } else {
+            stash.xhsChainClosed = true;
+            result = {
+              ok: false,
+              reason: "active_wake_xhs_unavailable",
+              message: "\u8FD9\u6B21\u4E3B\u52A8\u5524\u9192\u6CA1\u6709\u53EF\u7528\u7684\u5C0F\u7EA2\u4E66\u8FDE\u63A5\uFF0C\u8BF7\u76F4\u63A5\u81EA\u7136\u56DE\u590D\u3002"
+            };
+          }
+        } else {
+          result = name === AMSG_FIRE_SCHEDULE_TOOL ? await runFireScheduleTool(stash, ctx.scheduleTask, args, Date.now()) : name.startsWith(MCP_FIRE_NAME_PREFIX) ? await runMcpFireTool(stash, name, args) : await dispatchAgenticTool(name, args, stash.toolCtx);
+        }
         stash.session.toolCalls.push({ name, fingerprint });
         content = buildToolResultMessage({ name, result, history: stash.session.toolCalls });
         console.log("[amsg:agentic]", { type: "tool_done", sessionId: ctx.sessionId, tool: name });
@@ -9033,6 +9843,24 @@ ${FINAL_ROUND_NOTICE}`;
   }
 };
 var resolveVapidEmail = (raw) => raw?.trim() || "mailto:noreply@sullyos.app";
+var persistMailboxDecision = async (env, ctx, decision) => {
+  if (decision.decision !== "finish" || decision.pushPayloads.length === 0) return decision;
+  const stash = getFireStash(ctx.scratch);
+  if (!stash) throw new Error("AMSG_MAILBOX_FIRE_STATE_MISSING");
+  const payloads = stampMailboxPayloads(decision.pushPayloads, {
+    taskId: ctx.taskId,
+    taskUuid: ctx.taskUuid ?? stash.taskUuid,
+    recurrenceType: stash.recurrenceType,
+    occurrenceMs: ctx.occurrenceMs ?? stash.occurrenceMs,
+    sessionId: ctx.sessionId
+  });
+  await persistDeliveryMailbox(env, stash.userId, payloads);
+  return { ...decision, pushPayloads: payloads };
+};
+var buildMailboxAwareHooks = (env) => ({
+  ...amsgHooks,
+  onLLMOutput: async (ctx) => persistMailboxDecision(env, ctx, await amsgHooks.onLLMOutput(ctx))
+});
 var buildWorkerConfig = (env) => {
   const vapid = {
     email: resolveVapidEmail(env.VAPID_EMAIL),
@@ -9041,18 +9869,19 @@ var buildWorkerConfig = (env) => {
   };
   const nativeFcmReady = isFcmConfigured(env);
   const effectiveVapid = nativeFcmReady && (!vapid.publicKey?.trim() || !vapid.privateKey?.trim()) ? { email: vapid.email, publicKey: "native-fcm", privateKey: "native-fcm" } : vapid;
+  const pushTransport = createHybridPushTransport(env, createWebCryptoWebPush(effectiveVapid));
   return {
     // db 缺省时 factory 自动用 createD1Adapter(env.DB)
     masterKey: env.AMSG_MASTER_KEY,
     serverToken: env.AMSG_SERVER_TOKEN,
     vapid: effectiveVapid,
-    webpush: createHybridPushTransport(env, createWebCryptoWebPush(effectiveVapid)),
+    webpush: createMailboxBackedPushTransport(env, pushTransport),
     // 前端和 Worker 不同源，带自定义头的请求会先发 CORS 预检，必须放行。
     // 单用户自用默认全开；想收紧就把 '*' 换成自己的 SullyOS 站点 origin。
     cors: { origin: "*" },
     // 满血 fire-time hooks（onBeforeFire 现场填槽 + onLLMOutput 分类 +
     // executeToolCalls 服务端工具循环）；轮数/超时用库默认（5 轮 / 240s）。
-    hooks: amsgHooks,
+    hooks: buildMailboxAwareHooks(env),
     // 收尾回执 + 过期跳过回执（config 级 hook）。
     // onFireSettled: 无论这次 fire 是发出去了、跳过了还是抛错了都会调一次，self_log
     //   在这里统一落盘（见 amsgFireSettled）。不用 onAfterSend——它只在真发出去那条路
@@ -9118,7 +9947,7 @@ var inspectWorkerEnv = (env) => {
     warnings
   };
 };
-var CORS_HEADERS = {
+var CORS_HEADERS2 = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-User-Id, X-Payload-Encrypted, X-Encryption-Version, X-Response-Encrypted, X-Client-Token",
@@ -9126,7 +9955,7 @@ var CORS_HEADERS = {
 };
 var jsonWithCors = (status, body) => new Response(JSON.stringify(body), {
   status,
-  headers: { "Content-Type": "application/json; charset=utf-8", ...CORS_HEADERS }
+  headers: { "Content-Type": "application/json; charset=utf-8", ...CORS_HEADERS2 }
 });
 var EXPECTED_TABLES = ["scheduled_messages", "client_state", "push_subscriptions"];
 var EXPECTED_TASK_COLUMNS = ["lease_until", "retry_after", "serialize_group"];
@@ -9195,11 +10024,11 @@ var src_default = {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, "") || "/";
     const method = request.method.toUpperCase();
     if (pathname.endsWith("/config-check")) {
-      if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS2 });
       return jsonWithCors(200, { success: true, data: inspectWorkerEnv(env) });
     }
     if (pathname.endsWith("/debug")) {
-      if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS2 });
       const storage = await inspectStorage(env);
       return jsonWithCors(200, {
         success: true,
@@ -9215,12 +10044,14 @@ var src_default = {
     }
     const report = inspectWorkerEnv(env);
     if (!report.ok) {
-      if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS2 });
       return jsonWithCors(503, {
         success: false,
         error: { code: "WORKER_CONFIG_MISSING", message: report.message, missing: report.missing }
       });
     }
+    const mailboxResponse = await handleDeliveryMailboxRequest(request, env);
+    if (mailboxResponse) return mailboxResponse;
     return upstream.fetch(request, env);
   },
   async scheduled(event, env) {
@@ -9241,6 +10072,7 @@ export {
   src_default as default,
   inspectWorkerEnv,
   offloadOversizedPush,
+  persistMailboxDecision,
   resolveVapidEmail,
   runFireScheduleTool,
   runMcpFireTool

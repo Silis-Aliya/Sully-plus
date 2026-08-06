@@ -440,6 +440,8 @@ export interface ActiveMsg2GlobalConfig {
 
 export type ActiveMsg2ExpirePolicy = 'expire' | 'force';
 export type ActiveMsg2TaskSource = 'user' | 'character';
+/** classic=AMSG 2.0 原版排程；switch=“主动唤醒”模式，角色自行续排下一次。 */
+export type ActiveMsg2ExperienceMode = 'classic' | 'switch';
 /** scheduled=待触发/循环中；cancelled 仅短暂存在（取消即从清单移除）。到点后的
  *  一次性任务不改 status——「已发送/已作废」由消息历史现场推导，避免 React 外写角色数据。 */
 export type ActiveMsg2TaskStatus = 'scheduled' | 'cancelled';
@@ -468,10 +470,43 @@ export interface ActiveMsg2TaskRecord {
   status: ActiveMsg2TaskStatus;
   createdAt: number;
   lastError?: string;
+  /** 旧版主动唤醒每天一次的保底检查任务；普通任务和旧备份没有该字段。 */
+  switchFallback?: boolean;
+}
+
+/**
+ * Instant Push 请求内携带的主动消息 2.0 云端桥接配置。
+ *
+ * 这份数据只交给用户自部署的 Instant Worker，用于在原生 tool_calls 出现时直接
+ * 调用用户自己的 AMSG Worker；不得放进 push metadata 或角色可见正文。
+ */
+export interface InstantAmsg2BridgeConfig {
+  workerUrl: string;
+  userId: string;
+  serverToken?: string;
+  charId: string;
+  charName: string;
+  avatarUrl?: string;
+  tzId: string;
+  /** 用户设备时区；自主消息睡眠时段按这只钟判断。 */
+  userTzId: string;
+  switchQuietStart?: string;
+  switchQuietEnd?: string;
+  anchorMs: number;
+  maxTokens?: number;
+  api: ActiveMsg2ApiConfig;
+  tasks: ActiveMsg2TaskRecord[];
+  experienceMode?: ActiveMsg2ExperienceMode;
+  enabled?: boolean;
 }
 
 export interface ActiveMsg2CharacterConfig {
   enabled: boolean;
+  /** 未设置的旧备份按 classic 处理，避免升级后静默改变原有主动消息行为。 */
+  experienceMode?: ActiveMsg2ExperienceMode;
+  /** 主动唤醒静默时段，按用户设备所在地的每日墙钟解释；结束早于开始表示跨到次日。 */
+  switchQuietStart?: string;
+  switchQuietEnd?: string;
   /** 多任务清单（用户在面板建的和角色用工具建的并存），见 utils/amsg2Tasks.ts。 */
   tasks?: ActiveMsg2TaskRecord[];
   /** ↓ 角色级共享设置（所有任务共用）。 */

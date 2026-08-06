@@ -33,6 +33,7 @@ import { ActiveMsgClient } from './activeMsgClient';
 import { ActiveMsgStore } from './activeMsgStore';
 import { hasActiveAiTask } from './amsg2Tasks';
 import { AmsgChatPresence, CHAT_PRESENCE_HEARTBEAT_MS } from './amsgChatPresence';
+import { AmsgMusicWakePresence, MUSIC_WAKE_PRESENCE_HEARTBEAT_MS } from './amsgMusicWakePresence';
 import { trackEvent } from './analytics';
 
 // 10s：比 15s 少一截「聊完就关 App → 快照没传上去」的裸奔窗口，又不至于每个键入都打请求。
@@ -42,6 +43,31 @@ const RETRY_BASE_MS = 30_000;
 /** 连续失败几次后放手，等下一轮聊天重新打脏标记——避免离线时无限重排。 */
 const MAX_RETRIES = 3;
 const HEADER = '[AmsgStateSync]';
+
+const musicWakePresenceLeases = new Map<string, ReturnType<typeof setInterval>>();
+
+const writeMusicWakePresence = async (charId: string): Promise<void> => {
+  const presence: AmsgMusicWakePresence = { v: 1, charId, activeAt: Date.now() };
+  try {
+    await ActiveMsgClient.syncMusicWakePresence(charId, presence);
+  } catch (error) {
+    console.warn(`${HEADER} 一起听生成租约写入失败（45s TTL 自然失效）`, error);
+  }
+};
+
+export const startAmsgMusicWakePresence = async (charId: string): Promise<void> => {
+  await writeMusicWakePresence(charId);
+  if (musicWakePresenceLeases.has(charId)) return;
+  const timer = setInterval(() => void writeMusicWakePresence(charId), MUSIC_WAKE_PRESENCE_HEARTBEAT_MS);
+  musicWakePresenceLeases.set(charId, timer);
+};
+
+export const stopAmsgMusicWakePresence = (charId: string) => {
+  const timer = musicWakePresenceLeases.get(charId);
+  if (!timer) return;
+  clearInterval(timer);
+  musicWakePresenceLeases.delete(charId);
+};
 
 export interface AmsgSyncSnapshot {
   char: CharacterProfile;

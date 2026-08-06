@@ -27,8 +27,9 @@ import {
   applyScheduledTask, currentOccurrenceMs, describeExpirePolicy, describeRecurrence,
   describeTaskMode, describeTaskProgress, findTaskByShortId, formatTaskTime,
   getPendingTasks, pruneStaleTasks, resolveExpirePolicy, shortTaskId,
+  wouldExceedAutonomousWakeRate,
 } from './amsg2Tasks';
-import { EXPIRE_POLICY_DESCRIPTION } from './amsgFireSchedule';
+import { EXPIRE_POLICY_DESCRIPTION, resolveSendAtMs } from './amsgFireSchedule';
 import { resolveCharTimeZone } from './timezone';
 
 // ─── OpenAI tools schema ───
@@ -270,12 +271,27 @@ const persistTasks = (
 async function handleSchedule(args: Record<string, any>, deps: Amsg2ToolDeps): Promise<string> {
   const { char, userProfile, groups, realtimeConfig, apiConfig } = deps;
   const config = readConfig(deps);
+  if (config.enabled === false) return '主动消息已经关闭，这次不会建立新的唤醒。';
   // 回话里的时间按角色的钟写：到点 worker 渲染排程清单用的也是角色时区，两边对不上的话
   // 纽约角色刚排的那条，在下一轮的排程现状里会显示成差一个时差的另一个时刻。
   const charTz = resolveCharTimeZone(char);
   const mode = (args.mode === 'prompted' ? 'prompted' : 'auto') as 'auto' | 'prompted';
   const recurrence = (['daily', 'weekly'].includes(args.recurrence) ? args.recurrence : 'none') as 'none' | 'daily' | 'weekly';
-  const expirePolicy = resolveExpirePolicy(mode, args.expire_policy === 'force' ? 'force' : 'expire');
+  // Switch 的闹钟是角色真正“睡到这个时间再醒来”：用户只留言、没有按闪电时，
+  // 留言应成为醒来后的新上下文，而不是把闹钟作废。Classic 继续尊重原参数。
+  const expirePolicy = config.experienceMode === 'switch'
+    ? 'force'
+    : resolveExpirePolicy(mode, args.expire_policy === 'force' ? 'force' : 'expire');
+  const candidateMs = resolveSendAtMs(String(args.send_at || ''), {
+    tzId: charTz ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+  });
+  const switchReplaceTaskUuid = config.experienceMode === 'switch'
+    ? getPendingTasks(config, Date.now()).find((task) => !task.switchFallback)?.taskUuid
+    : undefined;
+  const replaceTaskUuid = args.__replaceTaskUuid ?? switchReplaceTaskUuid;
+  if (wouldExceedAutonomousWakeRate(config.tasks, candidateMs, Date.now(), replaceTaskUuid)) {
+    return '这个时间会让一小时内的自主唤醒超过 3 次。请把时间往后错开一些。';
+  }
   const taskInput = {
     mode, firstSendTime: args.send_at, recurrenceType: recurrence,
     promptHint: args.prompt_hint || undefined,
@@ -284,7 +300,7 @@ async function handleSchedule(args: Record<string, any>, deps: Amsg2ToolDeps): P
 
   const result = await ActiveMsgClient.scheduleCharacterTask({
     char, config, task: taskInput,
-    replaceTaskUuid: args.__replaceTaskUuid,   // renew 内部复用，LLM 不感知
+    replaceTaskUuid,   // renew / Switch 改期内部复用，LLM 不感知
     userProfile, groups, realtimeConfig, apiConfig,
   });
 
@@ -305,7 +321,7 @@ async function handleSchedule(args: Record<string, any>, deps: Amsg2ToolDeps): P
   persistTasks(deps, config, applyScheduledTask(
     config.tasks,
     record,
-    { replaceTaskUuid: args.__replaceTaskUuid, replacedCancelFailed: result.replacedCancelFailed },
+    { replaceTaskUuid, replacedCancelFailed: result.replacedCancelFailed },
     Date.now(),
   ));
 
@@ -315,13 +331,13 @@ async function handleSchedule(args: Record<string, any>, deps: Amsg2ToolDeps): P
     mode,
     recurrence,
     source: 'character',
-    isEdit: args.__replaceTaskUuid ? 'yes' : 'no',
+    isEdit: replaceTaskUuid ? 'yes' : 'no',
   });
 
   const recurrenceDesc = recurrence === 'none' ? '' : `（${describeRecurrence(recurrence)}重复）`;
   // 续期/替换走的是「先建新的再取消旧的」，编号必然换一个。不说清楚的话，角色刚用
   // 旧编号续了期，却收到一句「已创建 [另一个编号]」，下一轮还会拿旧编号来操作。
-  const oldShortId = args.__replaceTaskUuid ? shortTaskId(args.__replaceTaskUuid) : '';
+  const oldShortId = replaceTaskUuid ? shortTaskId(replaceTaskUuid) : '';
   // 循环任务的续期是「补当次」，原序列一条没动——不点明的话，角色会以为自己刚把
   // 每天的早安整体挪走了，下一轮又去把「原来那条」取消一遍。
   const makeupForShortId = args.__makeupForTaskUuid ? shortTaskId(args.__makeupForTaskUuid) : '';

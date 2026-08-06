@@ -53,6 +53,7 @@ export type Directive =
   | { type: 'transfer_return' }
   | { type: 'add_event'; title: string; date: string }
   | { type: 'schedule_message'; time: string; text: string }
+  | { type: 'amsg_wake_at'; localDateTime: string }
   // song 是可选的后补字段（见 MusicActionSong），只有主动消息 2.0 的定时路径会填。
   | { type: 'music_action'; verb: string; args: string[]; song?: MusicActionSong }
   | { type: 'xhs_like'; noteId: string }
@@ -172,6 +173,11 @@ interface SideEffectSpec {
 }
 
 const SIDE_EFFECT_TAGS: SideEffectSpec[] = [
+  // Switch 自主唤醒。Worker 只从通知正文剥离，真实排程由客户端按用户设备时区执行。
+  {
+    re: /\[\[AMSG_WAKE_AT:\s*([^\]\r\n]+?)\s*\]\]/gi,
+    toDirective: (m) => ({ type: 'amsg_wake_at', localDateTime: m[1].trim() }),
+  },
   // [[ACTION:POKE]]
   {
     re: /\[\[ACTION:POKE\]\]/g,

@@ -2,9 +2,10 @@
 
 ## Current Upstream Baseline
 
-- Upstream SullyOS is merged through `5a14e1e4` (2026-08-03). The merged release point is `9967cd17`, published to `Silis-Aliya/Sully-plus` `master` for Vercel deployment.
+- Upstream SullyOS is merged through `5a14e1e4` (2026-08-03). The current Plus release point is `5a01a69f`, published to `Silis-Aliya/Sully-plus` `master` for Vercel deployment.
 - This baseline includes Active Message 2.0 subscription self-repair and diagnostics, background tool continuation, Deno proxy support, optional Capacitor/FCM push, analytics updates, Story Theater V6.27 follow-ups, voice autoplay traffic savings, and updated worker bundles.
 - Plus also carries `22d4a4ff`, which normalizes Vertex/Gemini native tool-call responses before they reach chat rendering so raw provider JSON is not split into visible message bubbles.
+- Plus also carries `5a01a69f`, which repairs malformed AI-generated JSON with unescaped narrative quotes across Persona Sim, Dream Theater, Social, Pixel Home decoration, and World Home while preserving strict handling for genuinely incomplete output.
 - Plus-specific music together behavior, XHS phone/Lite paths, split OS contexts, backup behavior, and the private proxy worker default remain preserved.
 - Local Memory Hub / Ombre bridge and VPS notes are work in progress and are intentionally excluded from release commits. If that status or behavior changes, update `FORK_MAINTENANCE_LOG.md` before publishing.
 
@@ -145,7 +146,7 @@ Sully Plus 仍然是 local-first。
 - 角色音乐歌单、聊天音乐事件、`songs`、`vr_music`、生成音频资源、世界书和 Code / Workbench 数据均进入全局备份与 QuickSync 清单。
 - 当前一起听会话只在本机刷新时作为最长 12 小时有效的短时现场快照恢复。完整备份和 QuickSync 仅迁移队列、当前歌曲与播放模式，不迁移参与角色、会话时间、切歌临时状态、角色选歌归属或下一次主动唤醒计划；导入成功会主动结束目标设备上的现有一起听会话。
 - Code 连接的真实电脑项目文件内容不会打包进应用备份；用户从手机主动上传的小型文本附件属于 Code 对话数据，会随备份与 QuickSync 迁移。
-- 主动消息 2.0 的角色开关、任务、副模型配置、已落库消息，以及全局 Worker 地址、用户 ID 和服务 token 都进入完整备份与 QuickSync。浏览器 PushSubscription、设备推送端点、待续跑工具调用和运行队列属于设备现场，不跨设备恢复；新设备导入后仍需重新授权通知并注册订阅。
+- 主动消息 2.0 的角色开关、AMSG 原版 / 主动唤醒模式选择、任务、副模型配置、已落库消息，以及全局 Worker 地址、用户 ID 和服务 token 都进入完整备份与 QuickSync。浏览器 PushSubscription、设备推送端点、待续跑工具调用和运行队列属于设备现场，不跨设备恢复；新设备导入后仍需重新授权通知并注册订阅。
 - QuickSync 按 IndexedDB 记录主键和内容哈希比较：只传新增、修改、删除的记录；但某条记录一旦变化，会传这条记录的完整内容，并不是在一段文字内部制作字节补丁。
 - QuickSync 对同一条记录采用后写覆盖，多设备同时修改同一记录时仍有覆盖风险。
 - QuickSync 拉取 Code store 后会通知已经打开的 Code 页面刷新当前会话；完整导入对现代备份中的便携设置采用替换语义，备份里缺失的旧设置会在目标设备删除，旧版无设置区块的备份仍保持非破坏性导入。

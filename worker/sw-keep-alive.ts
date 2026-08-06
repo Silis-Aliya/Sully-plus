@@ -441,6 +441,8 @@ async function saveContentToInbox(payload: any) {
 
   await notifyClients({
     type: 'active-msg-received',
+    messageId,
+    deliveryMailbox: payload?.deliveryMailbox === true,
     charId,
     charName,
     body: previewBody,

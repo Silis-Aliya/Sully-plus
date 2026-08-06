@@ -213,6 +213,8 @@ function buildVoiceHistoryContent(m: Message, timeStr: string, userName?: string
  */
 export interface PromptBuildOptions {
     forFirePack?: boolean;
+    /** Switch 主动唤醒由 Worker 按概率临时开放 XHS，基础 fire_pack 不常驻相关说明。 */
+    suppressXhs?: boolean;
 }
 
 export const ChatPrompts = {
@@ -694,7 +696,10 @@ ${uname} 的化身正挂在《彼方》的【${roomName}】${act ? `，状态写
             && realtimeConfig?.xhsPhoneConfig?.mcpUrl
         );
         const xhsPhoneEnabled = !!(char.xhsEnabled && phoneXhsAvailable);
-        const xhsEnabled = !!(char.xhsEnabled && mcpXhsAvailable && !xhsPhoneEnabled);
+        const xhsEnabled = !!(
+            !promptOptions?.suppressXhs
+            && char.xhsEnabled && mcpXhsAvailable && !xhsPhoneEnabled
+        );
         const xhsLiteSimpleMode = !!(xhsEnabled && xhsServerUrl?.includes('/api') && realtimeConfig?.xhsMcpConfig?.liteMode === 'simple');
         const pendingXhsPhoneResult = xhsPhoneEnabled ? await timed('pendingXhsPhoneResult', consumePendingXhsPhoneResult(char.id)) : '';
         // `[schedule_message]` 排的是本地定时消息：存在浏览器里，靠 OSContext 那个 5 秒

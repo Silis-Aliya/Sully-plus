@@ -170,6 +170,32 @@ describe('工具与说明块', () => {
     expect(buildFireScheduleBlock('text', timeOpts)).toContain('({"send_at"');
   });
 
+  it('Switch 使用自主唤醒续排提示，原版文案保持不变', () => {
+    const classic = buildFireScheduleBlock('native', timeOpts, 'classic', '条条');
+    const switched = buildFireScheduleBlock(
+      'native', timeOpts, 'switch', '条条', '04:00', '10:00',
+      '当前 60 分钟内已用 1 次，剩余 2 次；下次最早可安排在 2026-07-30 20:01:00。',
+      true,
+    );
+    expect(classic).toContain('【你可以给自己排下一条】');
+    expect(classic).not.toContain('【自主唤醒】');
+    expect(switched).toContain('【自主唤醒】');
+    expect(switched).toContain('你现在正通过一次自主唤醒联系条条');
+    expect(switched).toContain('先结合最新的关系、聊天、记忆');
+    expect(switched).toContain('当前 60 分钟内已用 1 次，剩余 2 次');
+    expect(switched).toContain('[[AMSG_WAKE_AT: YYYY-MM-DDTHH:mm:ss]]');
+    expect(switched).toContain('没有下一次安排时，本次联系结束后就进入休眠');
+    expect(switched).toContain('（小红书浏览）');
+    expect(switched).toContain('你可以自由决定是否浏览或搜索');
+    expect(switched).toContain('[[XHS_DETAIL: noteId]]');
+    expect(switched).toContain('可以分享多篇');
+    expect(switched).toContain('不要每次醒来都固定浏览');
+    expect(buildFireScheduleBlock('native', timeOpts, 'switch', '条条'))
+      .not.toContain('（小红书浏览）');
+    expect(switched).not.toContain('schedule_active_message');
+    expect(switched).not.toContain('mode=prompted');
+  });
+
   it('expire_policy 描述把「角色自己许下的承诺」算进 force', () => {
     expect(EXPIRE_POLICY_DESCRIPTION).toContain('你自己许下的');
     expect(buildFireScheduleTool(timeOpts).function.parameters).toMatchObject({

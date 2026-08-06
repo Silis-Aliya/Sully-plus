@@ -1,4 +1,9 @@
-import { InstantPushConfig, APIConfig, type InstantOversizeTransport } from '../types';
+import {
+  InstantPushConfig,
+  APIConfig,
+  type InstantAmsg2BridgeConfig,
+  type InstantOversizeTransport,
+} from '../types';
 import { loadPushVapid, isPushVapidReady } from './pushVapid';
 import { ActiveMsgStore } from './activeMsgStore';
 import { appendDevDebugInstantPushLog, appendDevDebugLog, makeDebugLogger } from './devDebug';
@@ -299,6 +304,14 @@ export interface InstantPushPayload {
   avatarUrl?: string;
   maxTokens?: number;
   temperature?: number;
+  /** 原生 function tools；Instant Worker 可在云端执行 AMSG 工具并继续同一轮模型。 */
+  tools?: Array<{
+    type: 'function';
+    function: { name: string; description: string; parameters: Record<string, unknown> };
+  }>;
+  tool_choice?: 'auto' | 'none';
+  /** 仅供用户自部署 Instant Worker 调用户自己的 AMSG Worker，不得回显进 push。 */
+  amsg2Bridge?: InstantAmsg2BridgeConfig;
   messageSubtype?: string;
   metadata?: Record<string, unknown>;
   // Phase 2 Round 1: 客户端预分配 sessionId, 写入 outbound_sessions 后传给 worker.

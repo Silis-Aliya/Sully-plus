@@ -18,9 +18,10 @@ import { loadMusicHooks } from '../context/MusicContext';
 import type { XhsNote } from './realtimeContext';
 import { appendDevDebugInstantPushLog, appendDevDebugLog, isCaptureEnabled, makeDebugLogger } from './devDebug';
 import { getLastRealUserMessageAt, shouldExpireFire } from './amsg2ExpireGuard';
-import { pruneStaleTasks } from './amsg2Tasks';
+import { applyScheduledTask, getPendingTasks, pruneStaleTasks, wouldExceedAutonomousWakeRate } from './amsg2Tasks';
 import { appendInstantTraceEntry } from './instantTraceLog';
 import { trackEvent } from './analytics';
+import { postSsePayloadToServiceWorker } from './instantPushClient';
 
 // 同一个 category，两个 tag——保持 console 里现有的 [ActiveMsg] / [amsg] 标签，
 // 方便用户 / 文档里 grep 历史报错信息。两条 tag 都归 instant-push 一类。
@@ -461,6 +462,13 @@ const processInboxMessageWithPostProcessing = async (
       // 注意 snapshot 时序: 这里读取的是 push 送达时的 current song, 而不是 AI 当时看到的那帧.
       // 本地 fetch 路径也有相同窗口 (LLM 响应耗时内 current 可能漂移), 接受同一 trade-off.
       musicHooks: loadMusicHooks() ?? undefined,
+      scheduleAmsgWakeAt: async (wakeAtIso) => {
+        try {
+          await scheduleSwitchWakeFromPush(char, userProfile, wakeAtIso);
+        } catch (error) {
+          console.warn('[ActiveMsg] Switch 自主唤醒安排失败', error);
+        }
+      },
     },
     skipSecondPassLLM: true,
     // 把 worker hook 塞进 metadata.directives 的副作用结构化重放出来 (POKE/TRANSFER/ADD_EVENT/
@@ -594,10 +602,77 @@ export const revokeSwallowedSelfLogEntry = async (
  */
 export const AMSG2_TASKS_ADOPTED_EVENT = 'amsg2-tasks-adopted';
 
+/** Instant Push 回包里的 Switch 标记落成 D1 任务，并同步回本地角色清单。 */
+async function scheduleSwitchWakeFromPush(
+  char: import('../types').CharacterProfile,
+  userProfile: UserProfile,
+  wakeAtIso: string,
+): Promise<void> {
+  const latestChar = (await DB.getAllCharacters()).find((item) => item.id === char.id);
+  if (!latestChar
+      || latestChar.activeMsg2Config?.enabled === false
+      || latestChar.activeMsg2Config?.experienceMode !== 'switch') return;
+  char = latestChar;
+  const config = {
+    enabled: true,
+    ...char.activeMsg2Config,
+    tasks: char.activeMsg2Config?.tasks ?? [],
+  };
+  const wakeAtMs = Date.parse(wakeAtIso);
+  const replaceTaskUuid = getPendingTasks(config, Date.now())
+    .find((task) => !task.switchFallback)?.taskUuid;
+  if (wouldExceedAutonomousWakeRate(config.tasks, wakeAtMs, Date.now(), replaceTaskUuid)) {
+    throw new Error('这个时间会让一小时内的自主唤醒超过 3 次。');
+  }
+
+  const groups = await DB.getGroups();
+  const realtimeConfig = loadRealtimeConfigFromLocalStorage() ?? ({} as RealtimeConfig);
+  const apiConfig = loadApiConfigFromLocalStorage();
+  const taskInput = {
+    mode: 'auto' as const,
+    firstSendTime: wakeAtIso,
+    recurrenceType: 'none' as const,
+    expirePolicy: 'force' as const,
+  };
+  const result = await ActiveMsgClient.scheduleCharacterTask({
+    char,
+    config,
+    task: taskInput,
+    userProfile,
+    groups,
+    realtimeConfig,
+    apiConfig,
+    replaceTaskUuid,
+  });
+  const record: ActiveMsg2TaskRecord = {
+    taskUuid: result.uuid,
+    clientTaskId: result.clientTaskId,
+    ...taskInput,
+    firstSendTime: result.firstSendAt,
+    anchorLastUserMsgAt: result.anchorMs,
+    source: 'character',
+    status: 'scheduled',
+    createdAt: Date.now(),
+  };
+  await DB.saveCharacter({
+    ...char,
+    activeMsg2Config: {
+      ...config,
+      tasks: applyScheduledTask(config.tasks, record, {
+        replaceTaskUuid,
+        replacedCancelFailed: result.replacedCancelFailed,
+      }, Date.now()),
+      lastSyncedAt: Date.now(),
+      lastError: undefined,
+    },
+  });
+  window.dispatchEvent(new CustomEvent(AMSG2_TASKS_ADOPTED_EVENT, { detail: { charId: char.id } }));
+}
+
 /**
- * 把 worker 带回来的「角色自排任务」补进该角色的本地清单。
+ * 对账 worker 在云端工具循环里新建或取消的任务，更新角色本地清单。
  *
- * 幂等: 同 uuid 已经在清单里就不重复加(同一条 push 重放、或者 fire 重跑发了两次都可能撞上).
+ * 幂等: 同 uuid 不重复加、重复取消也不报错（同一条 push 重放时仍安全）。
  * best-effort: 写不进去不影响这条消息本身——任务在远端好好的, 下次面板拉远端清单还能看见,
  * 只是这一刻本地少一行. 为它抛错会把已经收到的消息一起搞挂.
  *
@@ -606,7 +681,15 @@ export const AMSG2_TASKS_ADOPTED_EVENT = 'amsg2-tasks-adopted';
  */
 async function adoptSelfScheduledTasks(message: ActiveMsg2InboxMessage): Promise<void> {
   const incoming = (message.metadata as any)?.amsgSelfScheduled;
-  if (!Array.isArray(incoming) || incoming.length === 0) return;
+  const cancelled = (message.metadata as any)?.amsgCancelledTaskIds;
+  const scheduleError = typeof (message.metadata as any)?.amsgScheduleError === 'string'
+    ? (message.metadata as any).amsgScheduleError
+    : undefined;
+  const addedIncoming = Array.isArray(incoming) ? incoming : [];
+  const cancelledIds = new Set(
+    (Array.isArray(cancelled) ? cancelled : []).filter((id): id is string => typeof id === 'string' && !!id),
+  );
+  if (addedIncoming.length === 0 && cancelledIds.size === 0 && !scheduleError) return;
   const charId = (message.metadata as any)?.charId;
   if (typeof charId !== 'string' || !charId) return;
 
@@ -614,20 +697,24 @@ async function adoptSelfScheduledTasks(message: ActiveMsg2InboxMessage): Promise
     const char = (await DB.getAllCharacters()).find((c) => c.id === charId);
     if (!char) return;
     const existing = char.activeMsg2Config?.tasks ?? [];
-    const known = new Set(existing.map((t: ActiveMsg2TaskRecord) => t.taskUuid));
-    const added = incoming.filter((t: any) => t?.taskUuid && !known.has(t.taskUuid));
-    if (added.length === 0) return;
+    const retained = existing.filter((task) => !cancelledIds.has(task.taskUuid));
+    const known = new Set(retained.map((t: ActiveMsg2TaskRecord) => t.taskUuid));
+    const added = addedIncoming.filter((t: any) => t?.taskUuid && !known.has(t.taskUuid));
+    if (added.length === 0 && retained.length === existing.length && !scheduleError) return;
 
     await DB.saveCharacter({
       ...char,
       activeMsg2Config: {
         ...(char.activeMsg2Config ?? { enabled: true }),
-        tasks: pruneStaleTasks([...existing, ...added], Date.now()),
+        tasks: pruneStaleTasks([...retained, ...added], Date.now()),
+        lastError: scheduleError,
       },
     });
-    console.log('[ActiveMsg] 认领角色自排任务', added.map((t: any) => t.taskUuid));
-    // 只在真的新增了任务时才广播（上面 added.length === 0 已经提前 return），
-    // 免得同一条 push 重放时白白让 UI 重读一遍角色。
+    console.log('[ActiveMsg] 对账 Instant 主动消息工具变更', {
+      added: added.map((t: any) => t.taskUuid),
+      cancelled: [...cancelledIds],
+    });
+    // 只在任务清单真的变化时广播，避免同一条 push 重放时白白让 UI 重读一遍角色。
     try {
       window.dispatchEvent(new CustomEvent(AMSG2_TASKS_ADOPTED_EVENT, { detail: { charId } }));
     } catch { /* SSR-safe / not browser, ignore */ }
@@ -1338,6 +1425,60 @@ export const flushInboxToChat = (): Promise<void> => {
   return next;
 };
 
+export interface CloudMailboxReconcileDeps {
+  pull: () => Promise<Array<Record<string, any>>>;
+  deliver: (payload: Record<string, any>) => Promise<{ ok: boolean; businessError?: string }>;
+  acknowledge: (messageIds: string[]) => Promise<void>;
+}
+
+/**
+ * 把云端未确认 payload 重新交给现有 Service Worker 路由。ACK 只发生在 SW 明确收下后；
+ * 同 messageId 的正常 Push 与补拉会在 SW/本地 inbox 两层去重。
+ */
+export const reconcileCloudMailboxWith = async (
+  deps: CloudMailboxReconcileDeps,
+  maxBatches = 5,
+): Promise<number> => {
+  let acknowledged = 0;
+  for (let batch = 0; batch < maxBatches; batch++) {
+    const messages = await deps.pull();
+    if (messages.length === 0) break;
+    const ackIds: string[] = [];
+    for (const payload of messages) {
+      const messageId = typeof payload.messageId === 'string' ? payload.messageId : '';
+      if (!messageId) continue;
+      const result = await deps.deliver(payload);
+      if (result.ok && !result.businessError) ackIds.push(messageId);
+    }
+    if (ackIds.length > 0) {
+      await deps.acknowledge(ackIds);
+      acknowledged += ackIds.length;
+    }
+    // 有一封本地没接住时留在云端，下次前台再试；本轮不要原地反复敲同一封。
+    if (ackIds.length < messages.length) break;
+    if (messages.length < 100) break;
+  }
+  return acknowledged;
+};
+
+let cloudMailboxReconcilePromise: Promise<number> | null = null;
+export const reconcileCloudDeliveryMailbox = (): Promise<number> => {
+  if (cloudMailboxReconcilePromise) return cloudMailboxReconcilePromise;
+  const running = reconcileCloudMailboxWith({
+    pull: () => ActiveMsgClient.pullDeliveryMailbox(),
+    deliver: (payload) => postSsePayloadToServiceWorker(payload, `mailbox:${payload.messageId}`),
+    acknowledge: (ids) => ActiveMsgClient.acknowledgeDeliveryMailbox(ids),
+  }).catch((error) => {
+    // 云端补拉是保底通道，失败不能妨碍本地 inbox、正常聊天或下次重试。
+    log.warn('云端消息信箱补拉失败，保留下次前台重试', { error });
+    return 0;
+  }).finally(() => {
+    if (cloudMailboxReconcilePromise === running) cloudMailboxReconcilePromise = null;
+  });
+  cloudMailboxReconcilePromise = running;
+  return running;
+};
+
 // Phase 2 Round 2: 真实 tool runner. 启动时排空 + SW postMessage 触发. 失败诊断在 instantToolRunner 内.
 const runPendingToolCallsSafely = async () => {
   try {
@@ -1497,6 +1638,10 @@ export const ActiveMsgRuntime = {
           });
         }
         if (type === 'active-msg-received') {
+          if (event.data?.deliveryMailbox === true && typeof event.data?.messageId === 'string') {
+            void ActiveMsgClient.acknowledgeDeliveryMailbox([event.data.messageId])
+              .catch((error) => log.warn('云端消息即时确认失败，保留下次前台补拉', { error }));
+          }
           void flushInboxToChat();
           return;
         }
@@ -1541,15 +1686,17 @@ export const ActiveMsgRuntime = {
         }
 
         if (type === 'active-msg-open') {
-          // 严格串行: 先把 inbox 里的 round-1 旁白落库, 再跑 tool runner (它会触发 round-2),
-          // 保证用户回到界面时先看到旁白, 且 round-2 回复排在旁白之后.
+          // 点通知先立刻进入对应聊天，再在已经打开的消息流里按原有打字节奏逐条落库。
+          // 过去把跳转放在 await flush 后面，多气泡 AMSG 会让用户点通知后在原页面干等数秒，
+          // 看起来像 App 卡住。tool runner 仍严格等 flush 完成，保证 round-2 排在旁白之后。
+          window.dispatchEvent(new CustomEvent('active-msg-open', {
+            detail: { charId: event.data?.charId },
+          }));
           void (async () => {
             await flushInboxToChat();
-            window.dispatchEvent(new CustomEvent('active-msg-open', {
-              detail: { charId: event.data?.charId },
-            }));
             await runPendingToolCallsSafely();
           })();
+          return;
         }
       });
     }
@@ -1562,8 +1709,10 @@ export const ActiveMsgRuntime = {
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
-        // 先 await flush 落库 round-1 旁白, 再跑 runner 触发 round-2, 避免 "B+A".
+        // 先秒收本地 Push，再补拉云端缺口，最后处理补回内容；正常到达不被网络请求拖慢。
         void (async () => {
+          await flushInboxToChat();
+          await reconcileCloudDeliveryMailbox();
           await flushInboxToChat();
           void drainPendingDiaries(loadRealtimeConfigFromLocalStorage(), (charId) => {
             window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId } }));
@@ -1578,13 +1727,18 @@ export const ActiveMsgRuntime = {
     // 不能拦着下面的 inbox flush。
     void refreshPushSubscriptionIfMarked();
 
-    // 启动兜底: 先 flush 落库 (含上次被杀进程时卡在 inbox 的 round-1 旁白), 再跑 runner
-    // 触发 round-2, 保证冷启动恢复时旁白也排在 round-2 回复之前.
+    // 冷启动点通知时也先跳进对应聊天，别让收件箱里的拟人打字节奏堵住页面导航。
+    // KeepAlive.init 已等待 SW ready，通常此时 React/OSContext 已挂载；随后 flush 每落一段
+    // 都会发 active-msg-progress，让刚打开的 Chat 逐条刷新。tool runner 仍在 flush 之后。
+    handleDeepLink();
+
+    // 启动兜底：先落本地 Push，再从 D1 补拉未确认消息，最后跑工具续轮。
+    await flushInboxToChat();
+    await reconcileCloudDeliveryMailbox();
     await flushInboxToChat();
     await runPendingToolCallsSafely();
     void drainPendingDiaries(loadRealtimeConfigFromLocalStorage(), (charId) => {
       window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId } }));
     });
-    handleDeepLink();
   },
 };

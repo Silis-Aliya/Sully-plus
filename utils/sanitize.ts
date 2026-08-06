@@ -50,7 +50,7 @@ const stripRoleNamePrefix = (t: string): string => t.replace(/^[\w一-龥]+:\s*/
  */
 const stripBusinessTagsForBubble = (t: string): string =>
   t
-    .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|MUSIC_ACTION|MUSIC_WAKE_AFTER)[:\s][\s\S]*?\]\]/g, '')
+    .replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|MUSIC_ACTION|MUSIC_WAKE_AFTER|AMSG_WAKE_AT)[:\s][\s\S]*?\]\]/g, '')
     .replace(/\[\[(?:MUSIC_TOGETHER_REQUEST)\]\]/g, '')
     .replace(/\[\[MUSIC_SHARE:[\s\S]*?\]\]/g, '')
     // `[[记录:...]]` 整个命名空间 —— 历史渲染形态 (utils/transferFormat.ts:formatTransferRecord),

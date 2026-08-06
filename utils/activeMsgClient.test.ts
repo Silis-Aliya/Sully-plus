@@ -611,7 +611,8 @@ describe('buildFirePack 的时区参照系与模板（①）', () => {
   });
   afterEach(() => { vi.restoreAllMocks(); });
 
-  const pack = (char: any) => buildFirePack(char, user, [], undefined, { all: [], categories: [] });
+  const pack = (char: any, experienceMode?: 'classic' | 'switch') =>
+    buildFirePack(char, user, [], undefined, { all: [], categories: [] }, experienceMode);
 
   it('角色开了自定义时区 → tzId 用角色的', async () => {
     const out = await pack(baseChar({ customTimezoneEnabled: true, customTimezone: 'Asia/Tokyo' }));
@@ -630,6 +631,12 @@ describe('buildFirePack 的时区参照系与模板（①）', () => {
     // 这个开关一次性关掉时间块 / 真实世界感知 / 日程 / 音乐 / 刚打完电话 / 群聊相对时间 /
     // 生活记录代记 / [schedule_message] 教学，清单见 ChatPrompts.PromptBuildOptions。
     expect(systemPromptSpy.mock.calls[0][12]).toEqual({ forFirePack: true });
+  });
+
+  it('Switch 基础 fire_pack 不常驻 XHS 提示，等待 Worker 按概率临时开放', async () => {
+    const out = await pack(baseChar({ xhsEnabled: true }), 'switch');
+    expect(systemPromptSpy.mock.calls[0][12]).toEqual({ forFirePack: true, suppressXhs: true });
+    expect(out.template).not.toContain('逛小红书');
   });
 
   it('当前时间槽位保留：worker 到点现算填入（1.0 提示块的「现在是」也是槽位）', async () => {

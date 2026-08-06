@@ -7,7 +7,11 @@
 // worker 的角色永久失去思考链，这个代价比 400 还大。所以只对真会打回的渠道让步。
 import { describe, it, expect } from 'vitest';
 
-import { shouldSendThinkingParams } from './thinkingGate';
+import {
+  CLAUDE_TOOL_MIN_THINKING_BUDGET,
+  ensureClaudeToolThinkingBudget,
+  shouldSendThinkingParams,
+} from './thinkingGate';
 
 const base = {
   thinkingActive: true,
@@ -61,5 +65,50 @@ describe('shouldSendThinkingParams', () => {
 
   it('没注入 amsg2 工具时，Gemini 的思考链不受影响', () => {
     expect(shouldSendThinkingParams({ ...base, model: 'gemini-2.5-pro' })).toBe(true);
+  });
+});
+
+describe('ensureClaudeToolThinkingBudget', () => {
+  it('repairs the invalid implicit budget for Claude thinking models with tools', () => {
+    const body: any = {
+      model: '小E-claude-opus-4-6-thinking',
+      tools: [{ name: 'schedule_active_message' }],
+      temperature: 0.85,
+      top_p: 0.9,
+    };
+
+    expect(ensureClaudeToolThinkingBudget(body)).toBe(body);
+    expect(body.thinking).toEqual({
+      type: 'enabled',
+      budget_tokens: CLAUDE_TOOL_MIN_THINKING_BUDGET,
+    });
+    expect(body.extra_body?.thinking).toEqual(body.thinking);
+    expect(body.temperature).toBeUndefined();
+    expect(body.top_p).toBeUndefined();
+  });
+
+  it('does not change requests without tools or for other model families', () => {
+    const noTools: any = { model: 'claude-opus-4-6-thinking', temperature: 0.85 };
+    const gemini: any = { model: 'gemini-2.5-pro', tools: [{}], temperature: 0.85 };
+
+    ensureClaudeToolThinkingBudget(noTools);
+    ensureClaudeToolThinkingBudget(gemini);
+
+    expect(noTools).toEqual({ model: 'claude-opus-4-6-thinking', temperature: 0.85 });
+    expect(gemini).toEqual({ model: 'gemini-2.5-pro', tools: [{}], temperature: 0.85 });
+  });
+
+  it('preserves an existing valid Claude thinking budget', () => {
+    const body: any = {
+      model: 'claude-opus-4-6-thinking',
+      tools: [{}],
+      thinking: { type: 'enabled', budget_tokens: 4000 },
+      temperature: 1,
+    };
+
+    ensureClaudeToolThinkingBudget(body);
+
+    expect(body.thinking.budget_tokens).toBe(4000);
+    expect(body.temperature).toBe(1);
   });
 });

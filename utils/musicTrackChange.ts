@@ -165,12 +165,14 @@ export function buildMusicWakeHint(input: {
     return `[系统提示（非${input.userName}发言）：这是“一起听”的一次自然唤醒。
 
 ${songLine}
-已一起听：${input.togetherDuration}
+已一起听：${input.togetherDuration}（仅表示一起听持续时间，不代表${input.userName}没有说话；是否刚刚发言以最新聊天记录为准。）
 播放进度：${input.progress}${selectionLine}
 
 结合你的性格、与${input.userName}的关系、歌曲氛围和当前心情，自然决定此刻要做什么。
 
 你可以自然说些想说的话，也可以只调整播放器不说话；但如果没有任何播放器动作，就请说一句自然回应。
+
+回复只写你真正说给${input.userName}听的话。
 
 可选歌曲：
 ${pickableSongs || '暂无可选歌曲'}

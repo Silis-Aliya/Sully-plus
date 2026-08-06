@@ -418,15 +418,8 @@ export function collectFeatureFlags(src: FeatureSources): Record<string, string>
         // 上面那一档只分「有没有角色在用」，这里补深度：只开了一个是尝鲜，
         // 好几个才说明真的用起来了。
         '开了2.0的角色数': bucketFewCount(amsg2ActiveChars.length),
-        // 两个都开着时聊天走 Instant Push，2.0 挂在本地那条路上的三样（角色排任务、
-        // 角色知道自己有任务、防打断）**静默**失效：没报错、没提示，功能就是不响。
-        // 面板里只有一块黄框提醒 + 一个手动关掉的按钮，没有任何强制互斥，所以这个
-        // 状态能长期挂着。这一格数的是真踩在上面的人——占比高的话该做的是把两者
-        // 做成真互斥，而不是继续加提示文案。
-        //
-        // 没有复用聊天路径那个 isAmsg2SuppressedByInstant：它按「这个角色的能力这一轮
-        // 会不会被顶掉」判，而没碰过 2.0 的角色也算开着，用在这里会让答案恒为「是」。
-        // 两处问的问题不同——那边是「要不要留 trace」，这里是「有多少人真受影响」。
+        // 新版允许两者协同：Instant Worker 执行 2.0 工具，AMSG Worker 保存并触发任务。
+        // 这项继续统计组合采用率，字段名不改，避免历史分析口径断开。
         '2.0与InstantPush同开': amsg2ActiveChars.length > 0 && isInstantConfigReady() ? '是' : '否',
     };
 }

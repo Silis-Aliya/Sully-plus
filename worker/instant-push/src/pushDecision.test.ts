@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { buildPushDecision, type PushDecisionInput } from './index';
+import {
+  attachInstantAmsgChanges,
+  buildPushDecision,
+  cancelBridgeTask,
+  injectInstantAmsgTools,
+  type PushDecisionInput,
+} from './index';
 
 // ─── 测试 fixture helpers ────────────────────────────────────────────────
 
@@ -28,6 +34,72 @@ function pushes(r: ReturnType<typeof buildPushDecision>): AnyPushPayload[] {
   if (r.decision === 'skip-push') return [];
   return r.pushPayloads as AnyPushPayload[];
 }
+
+describe('Instant AMSG 工具桥', () => {
+  const tool = {
+    type: 'function',
+    function: { name: 'list_active_messages', description: '列出任务', parameters: { type: 'object' } },
+  };
+
+  it('只给历史前缀属于本轮的 LLM 请求补 tools，后续工具轮仍能匹配', () => {
+    const original = [{ role: 'system', content: '角色设定' }, { role: 'user', content: '提醒我' }];
+    const sessions = [{ requestMessages: original, tools: [tool] }];
+    const nextRound = { model: 'm', messages: [...original, { role: 'assistant', tool_calls: [] }] };
+
+    expect(injectInstantAmsgTools(nextRound, sessions)).toMatchObject({
+      tools: [tool],
+      tool_choice: 'auto',
+    });
+    const unrelated = { model: 'm', messages: [{ role: 'user', content: '另一轮' }] };
+    expect(injectInstantAmsgTools(unrelated, sessions)).toBe(unrelated);
+  });
+
+  it('Claude 请求使用 input_schema，不把 OpenAI parameters 原样交给上游', () => {
+    const original = [{ role: 'user', content: '提醒我' }];
+    const sessions = [{ requestMessages: original, tools: [tool] }];
+    const result = injectInstantAmsgTools({
+      model: '小E-claude-opus-4-6-thinking',
+      messages: original,
+      temperature: 0.85,
+    }, sessions);
+
+    expect(result.tool_choice).toEqual({ type: 'auto' });
+    expect(result.tools).toEqual([{
+      name: 'list_active_messages',
+      description: '列出任务',
+      input_schema: { type: 'object' },
+    }]);
+    expect(result.tools[0].parameters).toBeUndefined();
+    expect(result.tools[0].function).toBeUndefined();
+    expect(result.thinking).toEqual({ type: 'enabled', budget_tokens: 1024 });
+    expect(result.extra_body?.thinking).toEqual({ type: 'enabled', budget_tokens: 1024 });
+    expect(result.temperature).toBeUndefined();
+  });
+
+  it('同轮创建后又取消的任务不会被 metadata 重新带回手机', () => {
+    const task = { taskUuid: 'new-task' };
+    const decision = { decision: 'finish', pushPayloads: [{ message: '好了', metadata: {} }] };
+    const result = attachInstantAmsgChanges(decision, {
+      bridge: {}, requestMessages: [], tools: [], tasks: [], created: [task],
+      cancelled: ['new-task'], createdAt: Date.now(),
+    } as any);
+
+    expect(result.pushPayloads[0].metadata.amsgSelfScheduled).toBeUndefined();
+    expect(result.pushPayloads[0].metadata.amsgCancelledTaskIds).toEqual(['new-task']);
+  });
+
+  it('取消接口返回失败 JSON 时不谎报成功；远端本来不存在则幂等成功', async () => {
+    const denied = { cancelMessage: vi.fn(async () => ({
+      success: false, error: { code: 'UNAUTHORIZED', message: 'token 错了' },
+    })) } as any;
+    await expect(cancelBridgeTask(denied, 'task-1')).rejects.toThrow('token 错了');
+
+    const gone = { cancelMessage: vi.fn(async () => ({
+      success: false, error: { code: 'TASK_NOT_FOUND' },
+    })) } as any;
+    await expect(cancelBridgeTask(gone, 'task-2')).resolves.toBeUndefined();
+  });
+});
 
 // ─── D 系列: push payload 三条路径 (0.8+ pushPayloads) ───────────────────────
 

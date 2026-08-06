@@ -331,3 +331,21 @@ env.DB (sullyos-amsg)   D1 Database
 上游发了新版本之后，重做 C、D 两步：复制新代码 → **Edit code** → 全选替换 → **Deploy**。
 
 数据库绑定、定时触发器、填过的钥匙都不会跟着丢，换掉的只有代码。
+
+---
+
+## 云端消息信箱（防止通知丢失）
+
+新版主动消息 2.0 会把模型已经生成的聊天内容先加密写入 AMSG Worker 绑定的 D1，再尝试发送 Web Push。手机 Service Worker 收到消息后会确认；如果 Apple 没有把通知送到设备，SullyOS 下次打开或回到前台时会从 D1 补拉。两条路径共用同一个 `messageId`，因此不会落成两份聊天气泡。
+
+- 不会为了补拉再次请求模型，也不会额外消耗模型 API 次数。
+- 消息正文使用现有 `AMSG_MASTER_KEY` 加密后保存，未确认消息最多保留 7 天。
+- 表 `amsg_delivery_mailbox` 由 Worker 自动创建，不需要手动执行 SQL。
+- 继续使用现有的 `DB` D1 binding，不需要再建一个数据库或增加新密钥。
+
+启用这项能力需要同时更新两端：
+
+1. 部署新版 AMSG Worker，让它具备“生成后先入 D1”和信箱接口。
+2. 部署新版 SullyOS / Sully Plus 前端，让手机能够补拉、回执和去重。
+
+只更新前端时，旧 Worker 没有云端信箱可拉；只更新 Worker 时，正常 Web Push 仍能用，但手机不会主动补拉未确认消息。Instant Push Worker 不属于这条链路，不需要因此重配。

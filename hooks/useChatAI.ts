@@ -1,6 +1,6 @@
 
 import { useState, useRef, useEffect, MutableRefObject } from 'react';
-import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, Amsg2ExpiredNoticeRecord } from '../types';
+import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProfile, RealtimeConfig, CharacterBuff, Amsg2ExpiredNoticeRecord, type InstantAmsg2BridgeConfig } from '../types';
 import { DB } from '../utils/db';
 import { ChatPrompts } from '../utils/chatPrompts';
 import { safeFetchJson, safeResponseJson } from '../utils/safeApi';
@@ -40,15 +40,16 @@ import {
     findNewStreamPreviewHandoverIds,
 } from '../utils/streamPreview';
 import { ActiveMsgStore } from '../utils/activeMsgStore';
+import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
 import { getLastRealUserMessageAt } from '../utils/amsg2ExpireGuard';
 import { getPendingTasks, hasActiveAiTask, isAmsg2EnabledForChar } from '../utils/amsg2Tasks';
 import { buildAmsg2TaskContextText, collectAmsg2TaskContext } from '../utils/amsg2TaskContext';
 import { resolveCharTimeZone } from '../utils/timezone';
-import { AMSG2_SUPPRESSED_TRACE } from '../utils/amsg2InstantConflict';
 import { appendInstantTraceEntry } from '../utils/instantTraceLog';
 import { AMSG2_TOOLS, AMSG2_TOOL_NAMES, createAmsg2ToolSession, executeAmsg2Tool, isAmsg2GlobalReady } from '../utils/amsg2ToolBridge';
-import { shouldSendThinkingParams } from '../utils/thinkingGate';
+import { ensureClaudeToolThinkingBudget, shouldSendThinkingParams } from '../utils/thinkingGate';
+import { ensureClaudeToolSchema } from '../utils/toolSchemaCompat';
 import { routeMiniAppToolCall } from '../utils/miniAppToolRoute';
 import { applyEmotionEvalRaw, extractAssistantText } from '../utils/emotionApply';
 import { announceChatGen, CHAT_GEN_EVENTS } from '../utils/chatGenEvents';
@@ -999,6 +1000,8 @@ export const useChatAI = ({
             if (amsg2ToolsInjected) {
                 baseReqBody.tools = [...(baseReqBody.tools || []), ...AMSG2_TOOLS];
                 if (!baseReqBody.tool_choice) baseReqBody.tool_choice = 'auto';
+                ensureClaudeToolSchema(baseReqBody);
+                ensureClaudeToolThinkingBudget(baseReqBody);
                 try {
                     // 回执这半边是「检出 + 落台账」的结果，带副作用，一轮只算一次；
                     // 进行中任务那半边每次发请求现取（见下面的 withAmsg2TaskContext）。
@@ -1023,13 +1026,19 @@ export const useChatAI = ({
             const withAmsg2TaskContext = (messages: any[]): any[] => {
                 if (!amsg2ToolsInjected) return messages;
                 const now = Date.now();
+                const currentConfig = amsg2Session.getConfig();
                 const text = buildAmsg2TaskContextText(
-                    getPendingTasks(amsg2Session.getConfig(), now),
+                    getPendingTasks(currentConfig, now),
                     amsg2Notices,
                     now,
                     resolveCharTimeZone(char),
                     amsg2CreatedThisTurn,
                     userProfile.name,
+                    currentConfig?.experienceMode ?? 'classic',
+                    currentConfig?.tasks ?? [],
+                    Intl.DateTimeFormat().resolvedOptions().timeZone,
+                    currentConfig?.switchQuietStart,
+                    currentConfig?.switchQuietEnd,
                 );
                 // 常驻简介让这一块总是非空：没任务时角色也得知道自己随时能排。
                 return [...messages, { role: 'system', content: text }];
@@ -1043,21 +1052,50 @@ export const useChatAI = ({
             // 瑞幸聊天点单 / 麦当劳 / 瑞幸小程序 这些"客户端工具循环"模式必须走本地 fetch:
             // instant push 会把请求交给 worker 并在这里提前 return, 工具循环(callLuckinTool 等)根本跑不到,
             // 表现就是"选了城市也没用 / 角色不下单"。这些模式下跳过 instant push, 用本地 fetch 跑工具循环。
-            if (isInstantConfigReady() && !payload.flags.luckinChatActive && !payload.flags.mcdActive && !payload.flags.luckinActive && !payload.flags.mcpChatActive) {
-                // 走这条路 = 上面那段 amsg2 的工具、排程现状块都白拼了（instant 发的是原始
-                // fullMessages、请求体不带 tools），下面的活跃会话租约也不会开。三样都是静默
-                // 失效，留一条 trace 让观察窗看得见，别让人对着「功能不响」凭空排查。
-                if (amsg2ToolsInjected) {
-                    appendInstantTraceEntry({ ts: new Date().toISOString(), event: AMSG2_SUPPRESSED_TRACE });
+            const instantEligible = isInstantConfigReady()
+                && !payload.flags.luckinChatActive
+                && !payload.flags.mcdActive
+                && !payload.flags.luckinActive
+                && !payload.flags.mcpChatActive;
+            let instantAmsgBridge: InstantAmsg2BridgeConfig | undefined;
+            if (instantEligible && amsg2ToolsInjected) {
+                try {
+                    instantAmsgBridge = await ActiveMsgClient.prepareInstantToolBridge({
+                        char,
+                        config: amsg2Session.getConfig() ?? { enabled: true },
+                        userProfile,
+                        groups,
+                        realtimeConfig,
+                        apiConfig,
+                    });
+                } catch (error: any) {
+                    // 不允许静默退化成“角色看见工具但实际排不成”。桥准备失败时这一轮改走
+                    // 既有本地工具循环，Instant 保持开启，下一轮仍可重试云端桥。
+                    appendInstantTraceEntry({
+                        ts: new Date().toISOString(),
+                        event: 'amsg2-instant-bridge-prepare-failed',
+                        reason: error?.message || String(error),
+                    });
+                    addToast(`主动消息云端桥未就绪，本轮改用前台回复：${error?.message || '未知错误'}`, 'error');
+                }
+            }
+            if (instantEligible && (!amsg2ToolsInjected || instantAmsgBridge)) {
+                if (amsg2ToolsInjected && hasActiveAiTask(amsg2Session.getConfig())) {
+                    startAmsgChatPresence(char.id, getLastRealUserMessageAt(contextMsgs));
                 }
                 const instantResult = await sendInstantPushAndAwaitReply({
                     contactName: char.name,
-                    messages: fullMessages as InstantPushPayload['messages'],
+                    messages: withAmsg2TaskContext(fullMessages) as InstantPushPayload['messages'],
                     apiUrl: effectiveApi.baseUrl,
                     apiKey: effectiveApi.apiKey,
                     primaryModel: effectiveApi.model,
                     maxTokens: 8000,
                     temperature: userTemp,
+                    ...(instantAmsgBridge ? {
+                        tools: AMSG2_TOOLS,
+                        tool_choice: 'auto' as const,
+                        amsg2Bridge: instantAmsgBridge,
+                    } : {}),
                     // amsg-instant 0.6+ 端 validateAvatarUrl 拒 data: / >2KB,
                     // 这里按 contract 只传 https URL, data URL 本地头像直接不传
                     // (SW 显示通知时回退到默认 app icon, 不影响推送成功率).
@@ -1151,7 +1189,8 @@ export const useChatAI = ({
 
             // 同角色活跃会话租约：本地 fetch 路径本轮真实消息已落库、模型请求即将发出，
             // 启动心跳告诉 worker「正在和这个角色聊」——到点的 expire AI 任务据此 skip，
-            // 别在用户正聊时又弹主动消息。instant push 路径在上方已 return，天然不重复开 lease。
+            // 别在用户正聊时又弹主动消息。Instant 路径在上方已经开过租约并 return；
+            // 走到这里的是本地请求，只开这一份。
             // 只对已排程 AI 任务的角色开租约：其余角色没有 worker 消费，开了纯浪费还刷 warn。
             const amsg2Cfg = char.activeMsg2Config;
             if (amsg2Cfg?.enabled && hasActiveAiTask(amsg2Cfg)) {
@@ -1667,6 +1706,37 @@ export const useChatAI = ({
                     // 整组 musicHooks 由 MusicProvider 注册到模块级 slot, 本地 fetch 路径和
                     // instant push 路径 (activeMsgRuntime) 共享同一份, 见 MusicContext.loadMusicHooks.
                     musicHooks: loadMusicHooks() ?? undefined,
+                    scheduleAmsgWakeAt: async (wakeAtIso) => {
+                        const latestChar = (await DB.getAllCharacters()).find((item) => item.id === char.id);
+                        if (!latestChar
+                            || latestChar.activeMsg2Config?.enabled === false
+                            || latestChar.activeMsg2Config?.experienceMode !== 'switch') return;
+                        if (latestChar.activeMsg2Config) {
+                            amsg2Session.setConfig(latestChar.activeMsg2Config);
+                        }
+                        // 同一轮若 native tool 已经建过任务，文本标记只负责隐藏，不能再建第二条。
+                        if (amsg2CreatedThisTurn.size > 0) return;
+                        const before = new Set(
+                            (amsg2Session.getConfig()?.tasks ?? []).map((task) => task.taskUuid),
+                        );
+                        const result = await executeAmsg2Tool('schedule_active_message', {
+                            send_at: wakeAtIso,
+                            mode: 'auto',
+                            recurrence: 'none',
+                            expire_policy: 'force',
+                        }, amsg2Session);
+                        let created = false;
+                        for (const task of amsg2Session.getConfig()?.tasks ?? []) {
+                            if (!before.has(task.taskUuid)) {
+                                amsg2CreatedThisTurn.add(task.taskUuid);
+                                created = true;
+                            }
+                        }
+                        if (!created) {
+                            const reason = result.split('\n')[0]?.trim();
+                            addToast(reason || '这次自主唤醒没有安排成功。', 'error');
+                        }
+                    },
                 },
                 // 流式预览已把气泡展示过 → 落库免打字延迟，秒回填（未预览时行为不变）
                 instantRender: streamPreviewShown,

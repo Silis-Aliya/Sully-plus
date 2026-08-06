@@ -11,19 +11,27 @@ import {
   Emoji,
   EmojiCategory,
   GroupProfile,
+  InstantAmsg2BridgeConfig,
   RealtimeConfig,
   UserProfile,
 } from '../types';
 import { getLastRealUserMessageAt } from './amsg2ExpireGuard';
 import { buildTaskInstruction, resolveSendAtMs } from './amsgFireSchedule';
 import {
+  buildAmsgQuietHoursMessage,
+  isAmsgQuietHours,
+  resolveQuietHoursRange,
+} from './amsgQuietHours';
+import {
   getPendingTasks, isAmsg2EnabledForChar, MAX_ACTIVE_TASKS_PER_CHAR,
   parseRemoteTaskLastError, RemoteTaskLastError, type RemoteTaskProjection,
-  resolveExpirePolicy, toDatetimeLocalValue,
+  resolveExpirePolicy, toDatetimeLocalValue, validateSwitchWakeTime,
 } from './amsg2Tasks';
 import { AMSG_CHAT_PRESENCE_KEY, AmsgChatPresence } from './amsgChatPresence';
+import { AMSG_MUSIC_WAKE_PRESENCE_KEY, AmsgMusicWakePresence } from './amsgMusicWakePresence';
 import {
   AMSG_FIRE_PACK_KEY,
+  AMSG_SWITCH_CONTROL_KEY,
   AMSG_SLOT_AWAY_HINT,
   AMSG_SLOT_CURRENT_TIME,
   AMSG_SLOT_REALTIME_WORLD,
@@ -35,6 +43,7 @@ import {
   AMSG_SLOT_TIME_SINCE_USER,
   AMSG_SLOT_USER_CLOCK,
   AmsgFirePack,
+  FIRE_PACK_VERSION,
   type AmsgLastSkip,
   amsgStateNamespace,
   packStateValue,
@@ -388,6 +397,9 @@ export const buildFirePack = async (
   groups: GroupProfile[],
   realtimeConfig: RealtimeConfig | undefined,
   emojiLibrary?: EmojiLibrary,
+  experienceModeOverride?: ActiveMsg2CharacterConfig['experienceMode'],
+  switchQuietStartOverride?: string,
+  switchQuietEndOverride?: string,
 ): Promise<AmsgFirePack> => {
   const [{ recentMessages, lastUserMessageAt }, library, schedule] = await Promise.all([
     buildTimeGapHint(char.id),
@@ -407,6 +419,15 @@ export const buildFirePack = async (
   // 用户设备自己的钟。跟 tzId 分开存：角色排消息时得知道「对方那边现在几点」，
   // 不然异国恋角色会把「晚上聊两句」排到用户的凌晨三点，而且没有任何线索能让它避开。
   const userTzId = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const experienceMode = experienceModeOverride ?? char.activeMsg2Config?.experienceMode ?? 'classic';
+  const quiet = resolveQuietHoursRange(
+    experienceMode === 'switch'
+      ? switchQuietStartOverride ?? char.activeMsg2Config?.switchQuietStart
+      : undefined,
+    experienceMode === 'switch'
+      ? switchQuietEndOverride ?? char.activeMsg2Config?.switchQuietEnd
+      : undefined,
+  );
   // 时间相关的行整块跟着角色的「时间感知」开关走：关掉的角色在前台连今天几号都读不到
   // （buildTimeAwarenessBlock 直接返回空串），主动消息这边却精确报出年月日 + 星期，
   // 是同一个开关的两套行为。关掉时这几行连槽位一起不进模板。
@@ -461,7 +482,10 @@ export const buildFirePack = async (
     undefined,
     // 模板是现在打好、到点才渲染的，凡是「打包这一刻」的状态都不烤进去。
     // 具体拿掉哪些块、到点由谁补，见 ChatPrompts.PromptBuildOptions 上的表。
-    { forFirePack: true },
+    {
+      forFirePack: true,
+      ...(experienceMode === 'switch' ? { suppressXhs: true } : {}),
+    },
   );
   const { apiMessages } = ChatPrompts.buildMessageHistory(
     recentMessages,
@@ -475,6 +499,10 @@ export const buildFirePack = async (
     .slice(-30)
     .map((message) => formatHistoryLine(message.role, message.content, char, userProfile))
     .join('\n\n');
+  const lastProactiveMessageAt = recentMessages.reduce<number | null>((latest, message) => {
+    if (message.role !== 'assistant' || message.metadata?.activeMsg2?.taskId == null) return latest;
+    return latest == null || message.timestamp > latest ? message.timestamp : latest;
+  }, null);
 
   // 记忆库里有哪些月份查得到 —— 提示词一直在教角色用 [[RECALL: 年-月]]，却没说过
   // 哪些月份有东西。不报菜单的话它多半不查，直接凭空编一段「回忆」出来。
@@ -494,7 +522,9 @@ export const buildFirePack = async (
     '- 可以用换行拆成多个聊天气泡，但不要写时间戳、名字前缀、系统提示。',
     '- 不要出现“作为AI”“系统提示”等元话语。',
     '- 语气更像真人突然想起对方时发来的私聊，不要像在完成任务。',
-    '- 角色设定里描述的查记忆、读日记、联网搜索、逛小红书等能力照常可用：需要时正常输出对应标签，系统会取回结果后让你继续写。',
+    experienceMode === 'switch'
+      ? '- 角色设定里描述的查记忆、读日记、联网搜索等能力照常可用：需要时正常输出对应标签，系统会取回结果后让你继续写。'
+      : '- 角色设定里描述的查记忆、读日记、联网搜索、逛小红书等能力照常可用：需要时正常输出对应标签，系统会取回结果后让你继续写。',
     ...(recallHint ? [recallHint] : []),
     '',
     '【角色系统设定】',
@@ -534,7 +564,7 @@ export const buildFirePack = async (
   ].join('\n');
 
   return {
-    v: 6,
+    v: FIRE_PACK_VERSION,
     template,
     lastUserMessageAt,
     // 角色的时间参照系（见上面的 tzId / userTzId）：前者是角色自己的钟，后者是用户那边的，
@@ -545,6 +575,10 @@ export const buildFirePack = async (
     // 这份模板的身份戳：worker 用它判断云端那份「角色自己发过什么」还配不配得上
     // 当前上下文（见 amsgFirePack 的 selfLogMatchesPack）。每打一次包都是新值。
     builtAt: Date.now(),
+    experienceMode,
+    switchQuietStart: quiet.start,
+    switchQuietEnd: quiet.end,
+    lastProactiveMessageAt,
     // 到点时角色要知道自己还挂着什么，才不会把同一件事再排一遍。这里带原始记录，
     // 渲染成人话由 worker 现场做（时间要按 tzId 换算，且得摘掉正在发的那条）。
     pendingTasks: getPendingTasks(char.activeMsg2Config, Date.now()),
@@ -693,6 +727,7 @@ const buildCharStateEntries = async (
   char: CharacterProfile,
   firePack: AmsgFirePack,
   updatedAt: number,
+  config: ActiveMsg2CharacterConfig | undefined = char.activeMsg2Config,
 ) => [
   {
     namespace: amsgStateNamespace(char.id),
@@ -706,6 +741,16 @@ const buildCharStateEntries = async (
     namespace: amsgStateNamespace(char.id),
     key: AMSG_TOOL_PACK_KEY,
     value: await packStateValue(JSON.stringify(buildToolPack(char))),
+    updatedAt,
+  },
+  {
+    namespace: amsgStateNamespace(char.id),
+    key: AMSG_SWITCH_CONTROL_KEY,
+    value: JSON.stringify({
+      enabled: config?.enabled !== false,
+      experienceMode: config?.experienceMode ?? 'classic',
+      updatedAt,
+    }),
     updatedAt,
   },
 ];
@@ -914,6 +959,49 @@ export const ActiveMsgClient = {
 
   async getGlobalConfig() {
     return ensureGlobalReady();
+  },
+
+  /** 拉取 AMSG Worker 中尚未被本机确认收下的 raw push payload。 */
+  async pullDeliveryMailbox(): Promise<Array<Record<string, any>>> {
+    const config = await ensureGlobalReady();
+    if (!config.workerUrl.trim() || !config.userId) return [];
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const body = await fetchWithAuth('delivery-mailbox', config, {
+        method: 'GET',
+        signal: controller.signal,
+      }, '补拉云端消息');
+      if (!body?.success) throw new Error(body?.error?.message || '补拉云端消息失败。');
+      const messages = body?.data?.messages;
+      return Array.isArray(messages)
+        ? messages.filter((item: unknown): item is Record<string, any> =>
+          !!item && typeof item === 'object' && !Array.isArray(item))
+        : [];
+    } finally {
+      clearTimeout(timer);
+    }
+  },
+
+  /** 本地 Service Worker 已接收（或命中同 messageId 去重）后，批量确认云端信箱。 */
+  async acknowledgeDeliveryMailbox(messageIds: string[]): Promise<void> {
+    const unique = [...new Set(messageIds.filter(Boolean))].slice(0, 100);
+    if (unique.length === 0) return;
+    const config = await ensureGlobalReady();
+    if (!config.workerUrl.trim() || !config.userId) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const body = await fetchWithAuth('delivery-mailbox/ack', config, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messageIds: unique }),
+        signal: controller.signal,
+      }, '确认云端消息');
+      if (!body?.success) throw new Error(body?.error?.message || '确认云端消息失败。');
+    } finally {
+      clearTimeout(timer);
+    }
   },
 
   // 生成 worker env 用的 AMSG_MASTER_KEY（32 字节 → 64 位 hex）。
@@ -1328,6 +1416,7 @@ export const ActiveMsgClient = {
       promptHint?: string;
       userMessage?: string;
       expirePolicy?: ActiveMsg2ExpirePolicy;
+      switchFallback?: boolean;
     };
     /** 编辑/续期时传旧任务 uuid：先取消它再新建（不传 = 纯新建）。 */
     replaceTaskUuid?: string;
@@ -1357,12 +1446,29 @@ export const ActiveMsgClient = {
     // 别存自己手上那个墙钟串——角色写的是它那边的钟、面板填的是设备的钟，两种串长得一样，
     // 落盘后谁也认不出该按哪个时区读，本地一律 new Date() 按设备解析就会差一个时差。
     const firstSendTime = ensureFutureTime(task.firstSendTime, tzId);
+    if (config.experienceMode === 'switch'
+        && validateSwitchWakeTime(Date.parse(firstSendTime)) === 'too_far') {
+      throw new Error('主动唤醒的下一次时间最远只能安排在未来 7 天内。');
+    }
+    const userTzId = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const quiet = resolveQuietHoursRange(
+      config.experienceMode === 'switch' ? config.switchQuietStart : undefined,
+      config.experienceMode === 'switch' ? config.switchQuietEnd : undefined,
+    );
+    if (task.mode !== 'fixed' && isAmsgQuietHours(
+      Date.parse(firstSendTime), userTzId, quiet.start, quiet.end,
+    )) {
+      throw new Error(buildAmsgQuietHoursMessage(quiet.start, quiet.end));
+    }
     // AI 模式的 prompt 只有一条来源：firePack 上传 client_state，worker 到点现场填槽。
     // 任务体里不再冻结一份渲染好的 prompt——读不到 fire_pack 就直接报错，没有第二条路，
     // 留着那份快照只是白占请求体（完整角色卡 + 世界书）。
     const firePack = task.mode === 'fixed'
       ? null
-      : await buildFirePack(char, userProfile, groups, realtimeConfig);
+      : await buildFirePack(
+        char, userProfile, groups, realtimeConfig, undefined, config.experienceMode,
+        config.switchQuietStart, config.switchQuietEnd,
+      );
     // 防穿帮闸锚点：排程这一刻的最后一条真实用户消息（见 utils/amsg2ExpireGuard.ts）。
     // 与 fire_pack 的 lastUserMessageAt 同源，直接复用——各读各的就是同一段 200 条历史
     // 扫两遍。fixed 任务恒 force，锚点用不到，也就不必去读。
@@ -1397,6 +1503,7 @@ export const ActiveMsgClient = {
         amsgClientTaskId: clientTaskId,
         amsgExpirePolicy: resolveExpirePolicy(task.mode, task.expirePolicy),
         amsgAnchorMs: anchorMs,
+        ...(task.switchFallback ? { amsgSwitchFallback: true } : {}),
       },
     };
 
@@ -1434,7 +1541,7 @@ export const ActiveMsgClient = {
     if (firePack) {
       const now = Date.now();
       await putClientStateOrThrow(client, [
-        ...(await buildCharStateEntries(char, firePack, now)),
+        ...(await buildCharStateEntries(char, firePack, now, config)),
         buildToolConfigEntry(realtimeConfig, now),
       ], '上传云端状态');
     }
@@ -1477,6 +1584,67 @@ export const ActiveMsgClient = {
     };
   },
 
+  /**
+   * 给 Instant Worker 准备主动消息 2.0 的云端工具桥。
+   *
+   * 角色可能在用户关掉 App 之后才返回 tool_calls，所以真正的 schedule/cancel/list
+   * 不能留在浏览器执行。这里先把最新 fire_pack/tool_pack 与推送订阅同步到 AMSG
+   * Worker，再只返回执行工具所需的最小配置；Instant Worker 随后可直接完成排程。
+   */
+  async prepareInstantToolBridge(params: {
+    char: CharacterProfile;
+    config: ActiveMsg2CharacterConfig;
+    userProfile: UserProfile;
+    groups: GroupProfile[];
+    realtimeConfig: RealtimeConfig;
+    apiConfig: APIConfig;
+  }): Promise<InstantAmsg2BridgeConfig> {
+    const { char, config, userProfile, groups, realtimeConfig, apiConfig } = params;
+    const globalConfig = await ensureWorkerReady();
+    const client = await initializeClient(globalConfig);
+
+    // 未来任务最终仍靠这份用户级订阅送达。每次覆盖写是幂等的，也顺手修复换过
+    // endpoint 但 worker 还留着旧地址的状态。
+    const nativeToken = readNativePushToken();
+    if (nativeToken) await this.registerNativePushToken(nativeToken);
+    else await this.registerPushSubscription();
+
+    const firePack = await buildFirePack(
+      char, userProfile, groups, realtimeConfig, undefined, config.experienceMode,
+      config.switchQuietStart, config.switchQuietEnd,
+    );
+    const now = Date.now();
+    await putClientStateOrThrow(client, [
+      ...(await buildCharStateEntries(char, firePack, now, config)),
+      buildToolConfigEntry(realtimeConfig, now),
+    ], '为 Instant Push 同步主动消息上下文');
+
+    const activeApi = resolveApiConfig(char, config, apiConfig);
+    const avatarUrl = toRemoteAvatarUrl(char.avatar);
+    return {
+      workerUrl: globalConfig.workerUrl,
+      userId: globalConfig.userId,
+      ...(globalConfig.serverToken ? { serverToken: globalConfig.serverToken } : {}),
+      charId: char.id,
+      charName: char.name,
+      ...(avatarUrl ? { avatarUrl } : {}),
+      tzId: firePack.tzId,
+      userTzId: firePack.userTzId,
+      switchQuietStart: firePack.switchQuietStart,
+      switchQuietEnd: firePack.switchQuietEnd,
+      anchorMs: firePack.lastUserMessageAt ?? 0,
+      experienceMode: config.experienceMode ?? 'classic',
+      enabled: config.enabled !== false,
+      ...(config.maxTokens && config.maxTokens > 0 ? { maxTokens: config.maxTokens } : {}),
+      api: {
+        baseUrl: normalizeChatApiUrl(activeApi.baseUrl),
+        apiKey: activeApi.apiKey,
+        model: activeApi.model,
+      },
+      tasks: [...(config.tasks ?? [])],
+    };
+  },
+
   // 同角色活跃会话租约：只 PUT 这一条几十字节的 chat_presence，不复用胖 fire_pack。
   // worker 对 expire AI 任务到点前先读它——新鲜则 skip，避免正在聊天时又弹主动消息。
   // 写入失败由调用方（amsgStateSync 的 lease timer）只 warn，45s TTL 自然失效。
@@ -1491,6 +1659,34 @@ export const ActiveMsgClient = {
     }]);
     if (!response?.success) {
       throw new Error(response?.error?.message || '上传活跃会话租约失败。');
+    }
+  },
+
+  async syncSwitchControl(
+    charId: string,
+    enabled: boolean,
+    experienceMode: ActiveMsg2CharacterConfig['experienceMode'] = 'switch',
+  ): Promise<void> {
+    await this.writeClientStateValue(
+      amsgStateNamespace(charId),
+      AMSG_SWITCH_CONTROL_KEY,
+      JSON.stringify({ enabled, experienceMode: experienceMode ?? 'classic', updatedAt: Date.now() }),
+    );
+  },
+
+  // 一起听生成租约：只在既有 music-wake prompt 真正跑模型期间续租。
+  // AMSG worker 看见它后让路，避免云端和本地各生成一条。
+  async syncMusicWakePresence(charId: string, presence: AmsgMusicWakePresence): Promise<void> {
+    const globalConfig = await ensureWorkerReady();
+    const client = await initializeClient(globalConfig);
+    const response = await client.putClientState([{
+      namespace: amsgStateNamespace(charId),
+      key: AMSG_MUSIC_WAKE_PRESENCE_KEY,
+      value: JSON.stringify(presence),
+      updatedAt: presence.activeAt,
+    }]);
+    if (!response?.success) {
+      throw new Error(response?.error?.message || '上传一起听生成租约失败。');
     }
   },
 
@@ -1519,7 +1715,7 @@ export const ActiveMsgClient = {
       );
       // 大值由 amsg-server 2.6.0-next.4+ 在 worker 存储层透明分块，整条直传，
       // 内容一个字不裁；老 worker 拒超限条目 → 设置页 capabilities 探测亮牌。
-      entries.push(...(await buildCharStateEntries(item.char, firePack, now)));
+      entries.push(...(await buildCharStateEntries(item.char, firePack, now, item.config)));
     }
     const response = await client.putClientState(entries);
     if (!response?.success) {

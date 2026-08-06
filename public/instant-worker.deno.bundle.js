@@ -2242,6 +2242,1364 @@ function sanitizeTable(value) {
   return value;
 }
 
+// node_modules/.pnpm/@rei-standard+amsg-shared@0.4.0-next.3/node_modules/@rei-standard/amsg-shared/dist/index.mjs
+var TEXT_ENCODER2 = new TextEncoder();
+var TEXT_DECODER2 = new TextDecoder("utf-8", { fatal: false });
+function utf82(str) {
+  return TEXT_ENCODER2.encode(String(str));
+}
+function base64UrlToBytes2(input) {
+  const s = String(input).replace(/-/g, "+").replace(/_/g, "/");
+  const pad = (4 - s.length % 4) % 4;
+  const padded = s + "=".repeat(pad);
+  const bin = typeof atob === "function" ? atob(padded) : Buffer.from(padded, "base64").toString("binary");
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+var LLM_MESSAGES_ERROR = Object.freeze({
+  MESSAGES_NOT_ARRAY: "MESSAGES_NOT_ARRAY",
+  MESSAGE_NOT_OBJECT: "MESSAGE_NOT_OBJECT",
+  INVALID_ROLE: "INVALID_ROLE",
+  TOOL_CALL_MALFORMED: "TOOL_CALL_MALFORMED",
+  TOOL_CONTENT_INVALID: "TOOL_CONTENT_INVALID",
+  TOOL_CALL_ID_MISSING: "TOOL_CALL_ID_MISSING",
+  CONTENT_EMPTY_STRING: "CONTENT_EMPTY_STRING",
+  CONTENT_EMPTY_ARRAY: "CONTENT_EMPTY_ARRAY",
+  CONTENT_INVALID_TYPE: "CONTENT_INVALID_TYPE"
+});
+var KEY_INFO_PREFIX2 = utf82("WebPush: info\0");
+var CEK_INFO2 = utf82("Content-Encoding: aes128gcm\0");
+var NONCE_INFO2 = utf82("Content-Encoding: nonce\0");
+var VAPID_TOKEN_LIFETIME2 = 12 * 3600;
+var REI_SW_EVENT = Object.freeze({
+  CONTENT_RECEIVED: "rei-amsg-content-received",
+  REASONING_RECEIVED: "rei-amsg-reasoning-received",
+  TOOL_REQUEST_RECEIVED: "rei-amsg-tool-request-received",
+  ERROR_RECEIVED: "rei-amsg-error-received",
+  MULTIPART_EXPIRED: "rei-amsg-multipart-expired",
+  UNKNOWN_RECEIVED: "rei-amsg-unknown-received"
+});
+var REI_SW_MESSAGE_TYPE = Object.freeze({
+  ENQUEUE_REQUEST: "REI_ENQUEUE_REQUEST",
+  DELIVER: "REI_AMSG_DELIVER",
+  FLUSH_QUEUE: "REI_FLUSH_QUEUE",
+  QUEUE_RESULT: "REI_QUEUE_RESULT"
+});
+var REI_AMSG_DELIVER_MESSAGE_TYPE = REI_SW_MESSAGE_TYPE.DELIVER;
+var MESSAGE_KIND2 = Object.freeze({
+  CONTENT: "content",
+  REASONING: "reasoning",
+  TOOL_REQUEST: "tool_request",
+  ERROR: "error"
+});
+var MESSAGE_TYPE2 = Object.freeze({
+  INSTANT: "instant",
+  FIXED: "fixed",
+  PROMPTED: "prompted",
+  AUTO: "auto"
+});
+var PUSH_SOURCE2 = Object.freeze({
+  INSTANT: "instant",
+  SCHEDULED: "scheduled"
+});
+var REASONING_CHUNK_ENCODER2 = new TextEncoder();
+var REASONING_CHUNK_DECODER2 = new TextDecoder("utf-8", { fatal: true });
+function isValidUrl2(value) {
+  if (typeof value !== "string") return false;
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+var AVATAR_URL_MAX_LENGTH2 = 2048;
+function validateAvatarUrl2(value) {
+  if (value === void 0 || value === null) return null;
+  if (typeof value !== "string") {
+    return "avatarUrl \u5FC5\u987B\u662F\u5B57\u7B26\u4E32";
+  }
+  if (/^data:/i.test(value)) {
+    return "\u5934\u50CF\u4E0D\u652F\u6301\u4F20\u5165 data: URI\uFF0C\u8BF7\u6539\u4E3A\u516C\u7F51\u53EF\u8BBF\u95EE\u7684 https:// \u56FE\u7247 URL";
+  }
+  if (value.length > AVATAR_URL_MAX_LENGTH2) {
+    return `\u5934\u50CF URL \u957F\u5EA6 ${value.length} \u5B57\u7B26\u8D85\u8FC7 ${AVATAR_URL_MAX_LENGTH2} \u4E0A\u9650\uFF0C\u8BF7\u6539\u4E3A\u66F4\u77ED\u7684\u56FE\u7247 URL`;
+  }
+  if (!isValidUrl2(value)) {
+    return "avatarUrl \u4E0D\u662F\u5408\u6CD5 URL";
+  }
+  return null;
+}
+
+// node_modules/.pnpm/@rei-standard+amsg-client@2.9.0-next.7/node_modules/@rei-standard/amsg-client/dist/index.mjs
+var TEXT_ENCODER3 = new TextEncoder();
+function makeLocalError(code, message, details) {
+  const err = new Error(`[rei-standard-amsg-client] ${message}`);
+  err.code = code;
+  if (details) err.details = details;
+  return err;
+}
+function isThenable(value) {
+  return !!value && (typeof value === "object" || typeof value === "function") && typeof value.then === "function";
+}
+var SSE_LINE_NORMALIZE = /\r\n?/g;
+function classifyContentType(contentType) {
+  const main = (contentType || "").split(";")[0].trim().toLowerCase();
+  if (main === "text/event-stream") return "sse";
+  if (main === "application/json") return "json";
+  if (/^application\/[\w.+-]+\+json$/.test(main)) return "json";
+  return "unknown";
+}
+var COMPRESS_REQUEST_DEFAULT_THRESHOLD = 16384;
+var COMPRESS_REQUEST_HEADER = "X-Amsg-Request-Encoding";
+async function maybeCompressRequestBody(body, compressRequest) {
+  if (!compressRequest) return { body, header: null };
+  const threshold = typeof compressRequest === "object" && typeof compressRequest.thresholdBytes === "number" ? compressRequest.thresholdBytes : COMPRESS_REQUEST_DEFAULT_THRESHOLD;
+  try {
+    if (typeof CompressionStream === "undefined") return { body, header: null };
+    const bytes = new TextEncoder().encode(body);
+    if (bytes.length <= threshold) return { body, header: null };
+    const gz = new Uint8Array(
+      await new Response(
+        new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))
+      ).arrayBuffer()
+    );
+    return { body: gz, header: COMPRESS_REQUEST_HEADER };
+  } catch {
+    return { body, header: null };
+  }
+}
+var ReiClient = class {
+  /**
+   * @param {ReiClientConfig} config
+   */
+  constructor(config) {
+    if (!config || !config.baseUrl) throw new Error("[rei-standard-amsg-client] baseUrl is required");
+    const instantEncryption = config.instantEncryption !== false;
+    if (!config.userId && instantEncryption) {
+      throw new Error(
+        "[rei-standard-amsg-client] userId is required (omit only when instantEncryption: false)"
+      );
+    }
+    this._baseUrl = config.baseUrl.replace(/\/+$/, "");
+    this._customBaseUrls = {};
+    if (config.customBaseUrls && typeof config.customBaseUrls === "object") {
+      for (const [name, url] of Object.entries(config.customBaseUrls)) {
+        if (typeof url === "string" && url) {
+          this._customBaseUrls[name] = url.replace(/\/+$/, "");
+        }
+      }
+    }
+    this._userId = config.userId || "";
+    this._userKey = null;
+    this._instantEncryption = instantEncryption;
+    this._instantClientToken = typeof config.instantClientToken === "string" && config.instantClientToken ? config.instantClientToken : "";
+    this._serverToken = typeof config.serverToken === "string" && config.serverToken ? config.serverToken : "";
+    this._maxPayloadBytes = normalizeMaxPayloadBytes(config.maxPayloadBytes);
+    this._lowLevelWarned = /* @__PURE__ */ new Set();
+  }
+  /**
+   * Resolve the base URL for a given endpoint, falling back to `baseUrl`.
+   *
+   * @private
+   * @param {string} endpointName
+   * @returns {string}
+   */
+  _resolveBaseUrl(endpointName) {
+    return this._customBaseUrls[endpointName] || this._baseUrl;
+  }
+  /**
+   * Attach the single-user shared secret to amsg-server endpoint requests.
+   * Never applied to the instant path (that uses instantClientToken).
+   * @private
+   * @param {Record<string, string>} headers
+   * @returns {Record<string, string>}
+   */
+  _withServerToken(headers) {
+    if (this._serverToken) headers["X-Client-Token"] = this._serverToken;
+    return headers;
+  }
+  // ─── Initialisation ─────────────────────────────────────────────
+  /**
+   * Fetch the user-specific encryption key.
+   * Must be called before any encrypted request.
+   *
+   * In plaintext-instant mode (`instantEncryption: false`) this is a no-op:
+   * `sendInstant()` / `deliver()` do not need a userKey. Note that if you
+   * also intend to call `scheduleMessage` / `listMessages` / `updateMessage`
+   * (which always use AES-256-GCM), you must construct with
+   * `instantEncryption: true` (the default) — those methods will throw
+   * "Not initialised" otherwise.
+   */
+  async init() {
+    if (this._instantEncryption === false) {
+      return;
+    }
+    const res = await fetch(`${this._baseUrl}/get-user-key`, {
+      method: "GET",
+      headers: this._withServerToken({ "X-User-Id": this._userId })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error?.message || "Failed to fetch user key");
+    const userKey = json?.data?.userKey;
+    if (typeof userKey !== "string" || !/^[0-9a-f]{64}$/i.test(userKey)) {
+      throw new Error("[rei-standard-amsg-client] Invalid user key format");
+    }
+    this._userKey = this._hexToUint8Array(userKey);
+  }
+  /**
+   * Fetch the amsg-server worker's own VAPID public key.
+   *
+   * A browser needs this as `applicationServerKey` when creating a Web Push
+   * subscription. Each self-hosted worker owns its VAPID keypair, so pull the
+   * key at runtime rather than baking it into the frontend. Sends
+   * `X-Client-Token` when a `serverToken` is configured.
+   *
+   * @returns {Promise<string>} The base64url VAPID public key.
+   * @throws {Error} When the worker has no VAPID public key configured (503).
+   */
+  async getVapidPublicKey() {
+    const res = await fetch(`${this._baseUrl}/vapid-public-key`, {
+      method: "GET",
+      headers: this._withServerToken({})
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error?.message || "Failed to fetch VAPID public key");
+    return json.publicKey;
+  }
+  /**
+   * Fetch the worker's capability manifest (single-user amsg-server 2.7.0+,
+   * `GET /capabilities`).
+   *
+   * Feature detection for deploy drift: an outdated worker lacks newer
+   * endpoints/behaviors silently, so the frontend can call this once and
+   * show a "worker needs a redeploy" hint instead of leaving new features
+   * dead. Feature names are library-defined strings (e.g. `client-state`,
+   * `client-state-chunking`, `agentic-hooks`) that grow over time.
+   *
+   * Sends `X-Client-Token` when a `serverToken` is configured.
+   *
+   * @returns {Promise<{ serverVersion: string, features: string[] } | null>}
+   *   `null` when the worker predates the endpoint (HTTP 404) or the
+   *   response is not JSON (e.g. a proxy error page). Other failures
+   *   (wrong token, 5xx with a JSON envelope) throw.
+   */
+  async getCapabilities() {
+    const res = await fetch(`${this._baseUrl}/capabilities`, {
+      method: "GET",
+      headers: this._withServerToken({})
+    });
+    if (res.status === 404) return null;
+    let json;
+    try {
+      json = await res.json();
+    } catch {
+      return null;
+    }
+    if (!json?.success) throw new Error(json?.error?.message || "Failed to fetch capabilities");
+    return {
+      serverVersion: typeof json.serverVersion === "string" ? json.serverVersion : "",
+      features: Array.isArray(json.features) ? json.features : []
+    };
+  }
+  // ─── Public API ─────────────────────────────────────────────────
+  /**
+   * Schedule a message.
+   *
+   * Note: For `messageType: 'instant'`, prefer `deliver()` (2.5.0+) or
+   * `sendInstant()`. Both route through `@rei-standard/amsg-instant`
+   * (stateless, no DB round-trip) rather than `amsg-server`'s schedule-
+   * message endpoint. This method still works for instant via amsg-server
+   * for backward compatibility — see CHANGELOG / README for details.
+   *
+   * The payload is automatically encrypted before transmission.
+   *
+   * If `avatarUrl` is unusable (`data:` URI, > 2 KB, or non-string), the
+   * client soft-strips it on the payload and emits a `console.warn` — the
+   * schedule still ships, just without an avatar. If `maxPayloadBytes` is
+   * configured, oversized JSON payloads throw `PAYLOAD_TOO_LARGE_LOCAL`.
+   *
+   * @param {Object} payload - Schedule message payload.
+   * @returns {Promise<Object>} API response body.
+   */
+  async scheduleMessage(payload) {
+    this._sanitizeAvatarUrl(payload);
+    const json = JSON.stringify(payload);
+    this._assertPayloadSize(json, "scheduleMessage");
+    const encrypted = await this._encrypt(json);
+    const res = await fetch(`${this._baseUrl}/schedule-message`, {
+      method: "POST",
+      headers: this._withServerToken({
+        "Content-Type": "application/json",
+        "X-User-Id": this._userId,
+        "X-Payload-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      }),
+      body: JSON.stringify(encrypted)
+    });
+    return res.json();
+  }
+  /**
+   * **Low-level JSON dispatcher.** Use `deliver()` for new code — it
+   * gives you a correct `send-failed` vs `delivered` verdict by
+   * coordinating transport with an out-of-band observation channel.
+   *
+   * Posts an instant message via `@rei-standard/amsg-instant` and
+   * returns whatever the worker returns. **HTTP 200 ≠ delivery
+   * confirmation** when amsg-instant is configured with backup Web
+   * Push (default in 0.9.0+): the dispatch succeeded but the message
+   * may still land via the backup channel even if this call rejected,
+   * and a 200 here does not guarantee the consumer ever saw it. If
+   * you only care about the transport response (no delivery
+   * coordination needed), this stays useful — otherwise prefer
+   * `deliver()`.
+   *
+   * Two transport modes (chosen by constructor `instantEncryption`):
+   *
+   * - **Encrypted (default)** — payload is AES-256-GCM encrypted with the
+   *   `userKey` fetched by `init()`. Compatible with amsg-instant 0.1.x and
+   *   with amsg-server's `schedule-message` instant path. Sends
+   *   `X-User-Id` + `X-Payload-Encrypted: true` + `X-Encryption-Version: 1`.
+   *
+   * - **Plaintext** (`instantEncryption: false`) — payload is sent as raw
+   *   JSON. Targets amsg-instant 0.2.x+. Sends `X-Client-Token` if
+   *   `instantClientToken` was configured.
+   *
+   * Routes to `customBaseUrls.instant` if configured, otherwise `baseUrl`.
+   *
+   * @param {Object} payload - Instant message payload.
+   * @param {string} [endpointPath] - Path under the resolved base URL. Default '/instant'.
+   * @param {{ authorization?: string, expectsBackupPush?: boolean }} [opts]
+   *   - `authorization`: optional auth header to forward.
+   *   - `expectsBackupPush`: opt-in dev reminder. Set to `true` to log a
+   *     one-shot console.warn that this is a low-level transport and
+   *     "HTTP 200 ≠ delivery confirmation" once the worker has backup
+   *     push enabled (amsg-instant 0.9.0+ default). Default (omitted) is
+   *     silent.
+   * @returns {Promise<Object>} `{ success, data?: { messagesSent, sentAt }, error? }`
+   */
+  async sendInstant(payload, endpointPath = "/instant", opts = {}) {
+    this._maybeWarnLowLevel("sendInstant", opts);
+    const { url, headers, body } = await this._buildInstantRequest(
+      payload,
+      endpointPath,
+      { authorization: opts.authorization, methodName: "sendInstant" }
+    );
+    headers["Accept"] = "application/json";
+    const res = await fetch(url, { method: "POST", headers, body });
+    return res.json();
+  }
+  /**
+   * **Low-level SSE consumer.** Use `deliver()` for new code — it gives
+   * you a correct `send-failed` vs `delivered` verdict by coordinating
+   * transport with an out-of-band observation channel.
+   *
+   * **Rejection ≠ delivery failure** when amsg-instant is configured
+   * with backup Web Push (default in 0.9.0+): SSE may reject for many
+   * unrelated reasons (iOS background tab killed fetch, network blip,
+   * worker 5xx) while the backup push still lands the message. Treating
+   * the rejection as the canonical error path is wrong for that worker
+   * configuration. If you need the foreground SSE chunk hook without
+   * delivery coordination (you have your own observed channel), this
+   * stays useful — otherwise prefer `deliver()`.
+   *
+   * Error semantics: any failure (network, protocol, abort, `onPayload`
+   * callback throwing) rejects the returned Promise. `options.onError`
+   * fires before the rejection as a side-channel notification — it does
+   * NOT suppress the throw. Always wrap calls in `try / await`.
+   *
+   * @param {Object} payload - Instant message payload.
+   * @param {string} [endpointPath] - Path under the resolved base URL. Default '/instant'.
+   * @param {Object} options
+   * @param {Record<string, string>} [options.headers]
+   * @param {(payload: unknown) => Promise<void> | void} options.onPayload
+   * @param {(error: unknown) => void} [options.onError]
+   * @param {() => void} [options.onDone]
+   * @param {AbortSignal} [options.signal]
+   * @param {boolean} [options.expectsBackupPush] - Opt-in dev reminder. Set
+   *   to `true` to log a one-shot console.warn that "rejection ≠ delivery
+   *   failure" once the worker has backup push enabled (amsg-instant 0.9.0+
+   *   default). Default (omitted) is silent.
+   * @returns {Promise<void>}
+   */
+  async consumeInstantStream(payload, endpointPath = "/instant", options = {}) {
+    this._maybeWarnLowLevel("consumeInstantStream", options);
+    const { url, headers, body } = await this._buildInstantRequest(
+      payload,
+      endpointPath,
+      { headers: options.headers, methodName: "consumeInstantStream" }
+    );
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: options.signal
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Instant request failed: ${res.status} ${text}`);
+    }
+    const contentType = res.headers.get("content-type") || "";
+    if (classifyContentType(contentType) !== "sse") {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Expected text/event-stream, got ${contentType}: ${text}`);
+    }
+    if (!res.body) {
+      throw new Error("Response body is null");
+    }
+    try {
+      await this._consumeSseStream(res, { onPayload: options.onPayload });
+      if (options.onDone) options.onDone();
+    } catch (err) {
+      if (options.onError) {
+        try {
+          options.onError(err);
+        } catch {
+        }
+      }
+      throw err;
+    }
+  }
+  /**
+   * Deliver a message with an explicit delivery contract.
+   *
+   * `deliver()` is the recommended primitive for new code. It coordinates
+   * the foreground transport (SSE / JSON, picked automatically by
+   * response Content-Type) with an optional out-of-band observation
+   * channel that the caller supplies as a Promise — the library doesn't
+   * care what produces that Promise (Service Worker broadcast, IPC,
+   * native push handler, polling, anything). It returns a single
+   * `DeliveryResult` with a five-value `outcome` so you can distinguish
+   * `delivered` (truth-grade) from `cancelled` / `timeout` / `send-failed`
+   * without inferring delivery from transport rejections.
+   *
+   * Why this exists: when the server uses always-on backup Web Push
+   * (amsg-instant 0.9.0+ default), `sendInstant`'s HTTP 200 and
+   * `consumeInstantStream`'s rejection are both ambiguous w.r.t. actual
+   * delivery — the backup channel can still deliver after a transport
+   * reject, and a clean transport doesn't prove the consumer ever
+   * observed the message. `deliver()` resolves that ambiguity by
+   * making the observation channel a first-class input.
+   *
+   * @param {Object}         payload  - Instant message payload (same shape as `sendInstant`).
+   * @param {DeliverOptions} opts     - Delivery contract; see typedef.
+   * @returns {Promise<DeliveryResult>}
+   */
+  async deliver(payload, opts) {
+    if (!opts || typeof opts !== "object") {
+      throw new TypeError("[rei-standard-amsg-client] deliver() requires an options object");
+    }
+    const {
+      delivery,
+      timeoutMs,
+      onChunk,
+      postTransportGraceMs,
+      signal,
+      headers,
+      authorization,
+      endpointPath,
+      onRawRead,
+      compressRequest
+    } = opts;
+    if (!delivery || typeof delivery !== "object") {
+      throw new TypeError("[rei-standard-amsg-client] deliver() requires opts.delivery (discriminated union)");
+    }
+    if (delivery.mode !== "observed" && delivery.mode !== "transport-only") {
+      throw new TypeError(
+        '[rei-standard-amsg-client] opts.delivery.mode must be "observed" or "transport-only"'
+      );
+    }
+    if (delivery.mode === "observed" && !isThenable(delivery.observed)) {
+      throw new TypeError(
+        "[rei-standard-amsg-client] opts.delivery.observed must be a Promise<ObservedDeliveryReceipt>"
+      );
+    }
+    if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new TypeError("[rei-standard-amsg-client] opts.timeoutMs must be a positive finite number");
+    }
+    if (postTransportGraceMs !== void 0 && (typeof postTransportGraceMs !== "number" || !Number.isFinite(postTransportGraceMs) || postTransportGraceMs < 0)) {
+      throw new TypeError(
+        "[rei-standard-amsg-client] opts.postTransportGraceMs, if set, must be a non-negative finite number"
+      );
+    }
+    const start = Date.now();
+    const detail = { waitedMs: 0 };
+    if (signal && signal.aborted) {
+      detail.cancelledByCaller = true;
+      return { ok: false, outcome: "cancelled", detail };
+    }
+    const built = await this._buildInstantRequest(
+      payload,
+      endpointPath || "/instant",
+      { headers, authorization, methodName: "deliver" }
+    );
+    if (signal && signal.aborted) {
+      detail.cancelledByCaller = true;
+      detail.waitedMs = Date.now() - start;
+      return { ok: false, outcome: "cancelled", detail };
+    }
+    let finalized = false;
+    let validatedObserved = null;
+    let observedP = null;
+    if (delivery.mode === "observed") {
+      validatedObserved = this._waitForValidReceipt(delivery.observed);
+      observedP = validatedObserved.then((receipt) => ({ tag: "delivered", receipt }));
+    }
+    const wrappedOnChunk = onChunk ? async (chunk) => {
+      try {
+        await onChunk(chunk);
+      } catch (err) {
+        if (finalized) return;
+        if (detail.chunkHandlerError === void 0) detail.chunkHandlerError = err;
+      }
+    } : void 0;
+    const internalAbort = new AbortController();
+    let transportEnded = false;
+    let transportError;
+    const transportPromise = (async () => {
+      try {
+        const result = await this._runInstantTransport(built, {
+          signal: internalAbort.signal,
+          onChunk: wrappedOnChunk,
+          onRawRead,
+          compressRequest
+        });
+        if (finalized) return;
+        transportEnded = true;
+        if (result && result.kind === "json") detail.transportResponse = result.body;
+      } catch (err) {
+        if (finalized) return;
+        transportError = err;
+      }
+    })();
+    let timeoutId;
+    const timeoutP = new Promise((resolve) => {
+      timeoutId = setTimeout(() => resolve({ tag: "timeout" }), timeoutMs);
+    });
+    const signalListeners = [];
+    let cancelledP = null;
+    if (signal) {
+      cancelledP = new Promise((resolve) => {
+        const cancelListener = () => resolve({ tag: "cancelled" });
+        const abortForwarder = () => internalAbort.abort();
+        signal.addEventListener("abort", cancelListener, { once: true });
+        signal.addEventListener("abort", abortForwarder, { once: true });
+        signalListeners.push(cancelListener, abortForwarder);
+        if (signal.aborted) {
+          cancelListener();
+          abortForwarder();
+        }
+      });
+    }
+    const transportP = transportPromise.then(() => ({ tag: "transport-ended" }));
+    const racers = [transportP, timeoutP];
+    if (observedP) racers.push(observedP);
+    if (cancelledP) racers.push(cancelledP);
+    const winner = await Promise.race(racers);
+    const finalize = (outcome, ok, extras) => {
+      finalized = true;
+      clearTimeout(timeoutId);
+      internalAbort.abort();
+      if (signal) {
+        for (const l of signalListeners) signal.removeEventListener("abort", l);
+      }
+      detail.waitedMs = Date.now() - start;
+      if (transportEnded) detail.transportEnded = true;
+      if (transportError !== void 0) detail.transportError = transportError;
+      if (extras) Object.assign(detail, extras);
+      return { ok, outcome, detail };
+    };
+    const remainingBudget = () => Math.max(0, timeoutMs - (Date.now() - start));
+    if (winner.tag === "delivered") {
+      return finalize("delivered", true, { receipt: winner.receipt });
+    }
+    if (winner.tag === "cancelled") {
+      detail.cancelledByCaller = true;
+      if (validatedObserved) {
+        internalAbort.abort();
+        const cancelGrace = this._computeGrace(postTransportGraceMs, timeoutMs, remainingBudget()) / 2;
+        const lateReceipt = await this._raceObservedWithTimeout(validatedObserved, cancelGrace);
+        if (lateReceipt) {
+          return finalize("delivered", true, { receipt: lateReceipt });
+        }
+      }
+      return finalize("cancelled", false);
+    }
+    if (winner.tag === "timeout") {
+      return finalize("timeout", false);
+    }
+    clearTimeout(timeoutId);
+    if (!validatedObserved) {
+      if (transportError !== void 0) return finalize("send-failed", false);
+      return finalize("completed-unconfirmed", false, { transportEnded: true });
+    }
+    const grace = this._computeGrace(postTransportGraceMs, timeoutMs, remainingBudget());
+    const observedLateP = this._raceObservedWithTimeout(validatedObserved, grace).then((receipt) => ({ tag: "late", receipt }));
+    const lateRacers = [observedLateP];
+    if (cancelledP) lateRacers.push(cancelledP);
+    const lateWinner = await Promise.race(lateRacers);
+    if (lateWinner.tag === "cancelled") {
+      detail.cancelledByCaller = true;
+      return finalize("cancelled", false);
+    }
+    if (lateWinner.receipt) {
+      return finalize("delivered", true, { receipt: lateWinner.receipt });
+    }
+    if (transportError !== void 0) {
+      return finalize("send-failed", false);
+    }
+    return finalize("timeout", false, { transportEnded: true, observationChannelStalled: true });
+  }
+  /**
+   * Update an existing scheduled message.
+   *
+   * If `updates.avatarUrl` is unusable (`data:` URI, > 2 KB, or non-string),
+   * the client soft-strips it from the patch and emits a `console.warn` —
+   * the rest of the update still applies, and the stored avatar is left
+   * untouched. If `maxPayloadBytes` is configured, oversized JSON patches
+   * throw `PAYLOAD_TOO_LARGE_LOCAL`.
+   *
+   * @param {string} uuid    - Task UUID.
+   * @param {Object} updates - Fields to update.
+   * @returns {Promise<Object>}
+   */
+  async updateMessage(uuid, updates) {
+    if (this._sanitizeAvatarUrl(updates)) {
+      delete updates.avatarUrl;
+    }
+    const json = JSON.stringify(updates);
+    this._assertPayloadSize(json, "updateMessage");
+    const encrypted = await this._encrypt(json);
+    const res = await fetch(`${this._baseUrl}/update-message?id=${encodeURIComponent(uuid)}`, {
+      method: "PUT",
+      headers: this._withServerToken({
+        "Content-Type": "application/json",
+        "X-User-Id": this._userId,
+        "X-Payload-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      }),
+      body: JSON.stringify(encrypted)
+    });
+    return res.json();
+  }
+  /**
+   * Cancel / delete a scheduled message.
+   *
+   * @param {string} uuid - Task UUID.
+   * @returns {Promise<Object>}
+   */
+  async cancelMessage(uuid) {
+    const res = await fetch(`${this._baseUrl}/cancel-message?id=${encodeURIComponent(uuid)}`, {
+      method: "DELETE",
+      headers: this._withServerToken({ "X-User-Id": this._userId })
+    });
+    return res.json();
+  }
+  /**
+   * List the current user's messages with optional filters.
+   *
+   * @param {Object} [opts]
+   * @param {string} [opts.status]
+   * @param {number} [opts.limit]
+   * @param {number} [opts.offset]
+   * @returns {Promise<Object>}
+   */
+  async listMessages(opts = {}) {
+    const params = new URLSearchParams();
+    if (opts.status) params.set("status", opts.status);
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    if (opts.offset != null) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    const url = `${this._baseUrl}/messages${qs ? "?" + qs : ""}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: this._withServerToken({
+        "X-User-Id": this._userId,
+        "X-Response-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      })
+    });
+    const json = await res.json();
+    if (!json?.success || json?.encrypted !== true) return json;
+    const decrypted = await this._decrypt(json.data);
+    return {
+      success: true,
+      encrypted: true,
+      version: json.version || 1,
+      data: decrypted
+    };
+  }
+  /**
+   * Read one task, with its **full** `metadata` (amsg-server 2.6.0+
+   * `GET /message`).
+   *
+   * `listMessages` 的每条任务只带 `charId` / `clientTaskId` 两个 metadata 子
+   * 字段——一页最多 100 条，整份 metadata 驮上去会把响应撑得很大。要改
+   * metadata 时得用这个：`updateMessage` 对 `metadata` 是**整体替换**，只改其
+   * 中一个键就必须先读回完整的那份改完再传，只传一部分会把宿主存在里面的其余
+   * 键一起冲掉。
+   *
+   * 只读得到还没发出去的任务；已完成 / 已失败的返回 409
+   * `TASK_ALREADY_COMPLETED`，不存在返回 404 `TASK_NOT_FOUND`（与
+   * `updateMessage` 同一口径）。老 worker 没有这个路由 → 404 `NOT_FOUND`，用
+   * `getCapabilities()` 的 `get-message-detail` 探测。
+   *
+   * @param {string} uuid - Task UUID.
+   * @returns {Promise<Object>} `{ success, encrypted, version, data: { task } }`
+   */
+  async getMessage(uuid) {
+    const res = await fetch(`${this._baseUrl}/message?id=${encodeURIComponent(uuid)}`, {
+      method: "GET",
+      headers: this._withServerToken({
+        "X-User-Id": this._userId,
+        "X-Response-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      })
+    });
+    const json = await res.json();
+    if (!json?.success || json?.encrypted !== true) return json;
+    return {
+      success: true,
+      encrypted: true,
+      version: json.version || 1,
+      data: await this._decrypt(json.data)
+    };
+  }
+  // ─── Client state (single-user cloud mirror) ────────────────────
+  /**
+   * Batch-upsert client-state entries (single-user worker,
+   * amsg-server 2.6.0+ `/client-state`).
+   *
+   * The worker keeps one live copy per (namespace, key); this client is
+   * the only writer. Send everything that changed in ONE call — e.g.
+   * inside the few-seconds window before iOS backgrounds the page — the
+   * server upserts the whole batch in a single DB round trip. Upserts
+   * are last-write-wins on `updatedAt`: entries older than the stored
+   * row are skipped, so re-sending a stale batch is harmless.
+   *
+   * The payload is encrypted like every other amsg-server call
+   * (requires `init()`); the worker re-encrypts each value at rest
+   * under the per-user key.
+   *
+   * Large values: on amsg-server 2.7.0+ a value over 200KB is stored
+   * chunked across rows by the worker itself — no client-side splitting
+   * needed, and reads return the original value reassembled. The default
+   * per-value ceiling is 5MB (worker factory config `maxStateValueBytes`).
+   * Older workers reject the whole batch for oversized values; probe with
+   * `getCapabilities()` (feature `client-state-chunking`) when you need
+   * to know which behavior you'll get.
+   *
+   * Partial failure: an invalid/oversized entry only rejects itself.
+   * When at least one entry is rejected the response carries
+   * `data.rejected: [{ index, namespace, key, code, message }]`; when all
+   * entries are accepted the response shape is unchanged (no `rejected`).
+   *
+   * @param {Array<{ namespace: string, key: string, value: string, updatedAt: number }>} entries
+   *   - `value`: pre-serialized string (the SDK does not stringify it for you).
+   *   - `updatedAt`: epoch milliseconds.
+   * @returns {Promise<Object>} `{ success, data?: { upserted, skipped, rejected? }, error? }`
+   */
+  async putClientState(entries) {
+    if (!Array.isArray(entries) || entries.length === 0) {
+      throw new TypeError("[rei-standard-amsg-client] entries must be a non-empty array");
+    }
+    const json = JSON.stringify({ entries });
+    this._assertPayloadSize(json, "putClientState");
+    const encrypted = await this._encrypt(json);
+    const res = await fetch(`${this._baseUrl}/client-state`, {
+      method: "PUT",
+      headers: this._withServerToken({
+        "Content-Type": "application/json",
+        "X-User-Id": this._userId,
+        "X-Payload-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      }),
+      body: JSON.stringify(encrypted)
+    });
+    return res.json();
+  }
+  /**
+   * Read every entry of one client-state namespace.
+   *
+   * The response rides the encrypted-response envelope (same as
+   * `listMessages`); this method decrypts it and returns plaintext
+   * values.
+   *
+   * @param {string} namespace
+   * @returns {Promise<Object>} `{ success, data?: { namespace, entries }, error? }`
+   *   where `entries` is `Array<{ namespace, key, value, updatedAt }>`.
+   */
+  async getClientState(namespace) {
+    if (typeof namespace !== "string" || !namespace.trim()) {
+      throw new TypeError("[rei-standard-amsg-client] namespace must be a non-empty string");
+    }
+    const res = await fetch(
+      `${this._baseUrl}/client-state?namespace=${encodeURIComponent(namespace)}`,
+      {
+        method: "GET",
+        headers: this._withServerToken({
+          "X-User-Id": this._userId,
+          "X-Response-Encrypted": "true",
+          "X-Encryption-Version": "1"
+        })
+      }
+    );
+    const json = await res.json();
+    if (!json?.success || json?.encrypted !== true) return json;
+    const decrypted = await this._decrypt(json.data);
+    return {
+      success: true,
+      encrypted: true,
+      version: json.version || 1,
+      data: decrypted
+    };
+  }
+  /**
+   * Wipe every client-state entry of this user, across all namespaces —
+   * e.g. behind a "clear cloud state" settings action.
+   *
+   * @returns {Promise<Object>} `{ success, data?: { deleted }, error? }`
+   */
+  async clearClientState() {
+    const res = await fetch(`${this._baseUrl}/client-state`, {
+      method: "DELETE",
+      headers: this._withServerToken({ "X-User-Id": this._userId })
+    });
+    return res.json();
+  }
+  // ─── Push Subscription ──────────────────────────────────────────
+  /**
+   * Subscribe to Web Push notifications.
+   *
+   * 拿到订阅之后要用 {@link ReiClient#putPushSubscription} 把它登记到服务端，
+   * 定时任务到点才知道往哪推。
+   *
+   * @param {string} vapidPublicKey - The server's VAPID public key.
+   * @param {ServiceWorkerRegistration} registration - An active SW registration.
+   * @returns {Promise<PushSubscription>}
+   */
+  async subscribePush(vapidPublicKey, registration) {
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlToBytes2(vapidPublicKey)
+    });
+    return subscription;
+  }
+  /**
+   * 登记（或覆盖）这个用户的 Web Push 订阅。
+   *
+   * 服务端一个用户存一份订阅，所有定时任务到点投递时都读它——包括角色在
+   * fire 里给自己排的、客户端根本不知道存在的那些任务。用户清了站点数据、
+   * 重装了 PWA、或者推送服务轮换了 endpoint 之后，调一次这个就全好了。
+   *
+   * 什么时候调：`subscribePush()` 拿到订阅之后调一次；之后每次应用启动确认
+   * 订阅仍然有效时再调一次（幂等覆盖，重复调没有副作用）。
+   *
+   * 载荷像其它接口一样加密（需要先 `init()`），服务端落库时再用 per-user
+   * key 加密一次。
+   *
+   * @param {PushSubscription|Object} subscription - `pushManager.subscribe()` 的结果
+   *   （或它的 `toJSON()`）。至少要有非空的 `endpoint`。
+   * @param {{ updatedAt?: number }} [opts] - `updatedAt` 为 epoch 毫秒，默认由服务端取当前时刻。
+   * @returns {Promise<Object>} `{ success, data?: { updatedAt }, error? }`
+   */
+  async putPushSubscription(subscription, opts = {}) {
+    const plain = subscription && typeof subscription.toJSON === "function" ? subscription.toJSON() : subscription;
+    if (!plain || typeof plain !== "object" || typeof plain.endpoint !== "string" || !plain.endpoint) {
+      throw new TypeError("[rei-standard-amsg-client] subscription must be an object with a non-empty endpoint");
+    }
+    const body = { subscription: plain };
+    if (opts.updatedAt !== void 0) body.updatedAt = opts.updatedAt;
+    const json = JSON.stringify(body);
+    this._assertPayloadSize(json, "putPushSubscription");
+    const encrypted = await this._encrypt(json);
+    const res = await fetch(`${this._baseUrl}/push-subscription`, {
+      method: "PUT",
+      headers: this._withServerToken({
+        "Content-Type": "application/json",
+        "X-User-Id": this._userId,
+        "X-Payload-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      }),
+      body: JSON.stringify(encrypted)
+    });
+    return res.json();
+  }
+  /**
+   * 服务端登记的订阅现状。
+   *
+   * 返回的是「有没有、什么时候登记的、endpoint 是哪个」，不含订阅的密钥部分
+   * ——设置页显示状态、或者拿 `endpoint` 跟本地订阅对一下是不是同一个，这些
+   * 就够了。
+   *
+   * @returns {Promise<Object>} `{ success, data?: { exists, updatedAt, endpoint }, error? }`
+   */
+  async getPushSubscription() {
+    const res = await fetch(`${this._baseUrl}/push-subscription`, {
+      method: "GET",
+      headers: this._withServerToken({ "X-User-Id": this._userId })
+    });
+    return res.json();
+  }
+  /**
+   * 删掉服务端登记的订阅（设置页的「停止接收推送」）。
+   *
+   * 删掉之后已有的定时任务到点会投递失败并记下原因，不会静默消失。
+   *
+   * @returns {Promise<Object>} `{ success, data?: { deleted }, error? }`
+   */
+  async deletePushSubscription() {
+    const res = await fetch(`${this._baseUrl}/push-subscription`, {
+      method: "DELETE",
+      headers: this._withServerToken({ "X-User-Id": this._userId })
+    });
+    return res.json();
+  }
+  // ─── Local preflight (no network) ────────────────────────────────
+  /**
+   * Sanitize `avatarUrl` on an outgoing payload. If the value is unusable
+   * (`data:` URI / oversized / non-string), set the field to `null` on the
+   * payload, log a `console.warn`, and let the rest of the request go
+   * through. Avatar is cosmetic — failing the entire schedule / instant
+   * call over a bad image URL is too punishing. Mirrors the server-side
+   * soft-strip in `@rei-standard/amsg-server` 2.3.3+ and `@rei-standard/amsg-instant`
+   * 0.7.1+. See standards §6.2.
+   *
+   * @private
+   * @param {object|null|undefined} target - Payload-like object holding `avatarUrl`.
+   * @returns {boolean} `true` if the field was stripped, `false` otherwise.
+   */
+  _sanitizeAvatarUrl(target) {
+    if (!target || typeof target !== "object") return false;
+    const reason = validateAvatarUrl2(target.avatarUrl);
+    if (reason) {
+      console.warn("[rei-standard-amsg-client] avatarUrl \u4E0D\u5408\u6CD5\uFF0C\u5DF2\u7F6E\u7A7A\uFF1A", reason);
+      target.avatarUrl = null;
+      return true;
+    }
+    return false;
+  }
+  /**
+   * Enforce the optional local request payload cap before encryption.
+   * By default there is no SDK-level request-size limit; runtime, proxy,
+   * database, and LLM-provider limits remain the deployer's boundary.
+   *
+   * @private
+   * @param {string} bodyJson  - `JSON.stringify(payload)`.
+   * @param {string} methodName
+   */
+  _assertPayloadSize(bodyJson, methodName) {
+    if (this._maxPayloadBytes == null) return;
+    const bytes = TEXT_ENCODER3.encode(bodyJson).length;
+    if (bytes > this._maxPayloadBytes) {
+      throw makeLocalError(
+        "PAYLOAD_TOO_LARGE_LOCAL",
+        `${methodName} payload \u4F53\u79EF ${bytes} \u5B57\u8282\u8D85\u8FC7\u672C\u5730\u4E0A\u9650 ${this._maxPayloadBytes} \u5B57\u8282`,
+        { method: methodName, actualBytes: bytes, limitBytes: this._maxPayloadBytes }
+      );
+    }
+  }
+  // ─── Transport helpers (shared by sendInstant / consumeInstantStream / deliver) ─
+  /**
+   * Build the URL, headers, and body for an instant-endpoint POST.
+   * Used by `sendInstant`, `consumeInstantStream`, and `deliver`.
+   *
+   * @private
+   * @param {Object} payload
+   * @param {string} endpointPath
+   * @param {{ headers?: Record<string, string>, authorization?: string, methodName: string }} opts
+   * @returns {Promise<{ url: string, headers: Record<string, string>, body: string }>}
+   */
+  async _buildInstantRequest(payload, endpointPath, opts) {
+    const { headers: extraHeaders, authorization, methodName } = opts;
+    this._sanitizeAvatarUrl(payload);
+    const json = JSON.stringify(payload);
+    this._assertPayloadSize(json, methodName);
+    const headers = { "Content-Type": "application/json", ...extraHeaders || {} };
+    let body;
+    if (this._instantEncryption === false) {
+      body = json;
+      if (this._instantClientToken) headers["X-Client-Token"] = this._instantClientToken;
+    } else {
+      const encrypted = await this._encrypt(json);
+      headers["X-User-Id"] = this._userId;
+      headers["X-Payload-Encrypted"] = "true";
+      headers["X-Encryption-Version"] = "1";
+      body = JSON.stringify(encrypted);
+    }
+    if (authorization) headers["Authorization"] = authorization;
+    const path = endpointPath.startsWith("/") ? endpointPath : `/${endpointPath}`;
+    const url = `${this._resolveBaseUrl("instant")}${path}`;
+    return { url, headers, body };
+  }
+  /**
+   * Run the foreground transport for `deliver()`. Takes a request pre-built
+   * by `_buildInstantRequest` so the caller can surface local-validation
+   * errors (encryption, payload-size) synchronously, instead of having
+   * them buried inside the post-transport grace race.
+   * Picks SSE or JSON based on the response Content-Type. Resolves on
+   * natural stream EOF / parsed JSON; throws on network / protocol / SSE
+   * error frame / AbortError.
+   *
+   * @private
+   * @param {{ url: string, headers: Record<string, string>, body: string }} built
+   * @param {{ signal: AbortSignal, onChunk?: (p: unknown) => Promise<void> | void, onRawRead?: (meta: RawReadMeta) => void, compressRequest?: boolean | { thresholdBytes?: number } }} opts
+   *   `onRawRead` is forwarded to the SSE consumer for raw read-loop telemetry (see `DeliverOptions.onRawRead`).
+   *   `compressRequest` opts the request body into gzip before `fetch` (see `DeliverOptions.compressRequest`).
+   * @returns {Promise<{ kind: 'sse' } | { kind: 'json', body: unknown }>}
+   */
+  async _runInstantTransport(built, opts) {
+    const { signal, onChunk, onRawRead, compressRequest } = opts;
+    const { url, headers, body } = built;
+    const { body: wireBody, header: compressionHeader } = await maybeCompressRequestBody(body, compressRequest);
+    const wireHeaders = compressionHeader ? { ...headers, [compressionHeader]: "gzip" } : headers;
+    const res = await fetch(url, { method: "POST", headers: wireHeaders, body: wireBody, signal });
+    if (!res.ok) {
+      const text2 = await res.text().catch(() => "");
+      const err = new Error(`Instant request failed: ${res.status} ${text2}`);
+      err.status = res.status;
+      throw err;
+    }
+    const rawContentType = res.headers.get("content-type");
+    const contentType = rawContentType || "";
+    const kind = classifyContentType(contentType);
+    if (kind === "sse") {
+      if (!res.body) throw new Error("Response body is null");
+      await this._consumeSseStream(res, {
+        onPayload: onChunk,
+        onRawRead,
+        responseMeta: {
+          status: res.status,
+          contentEncoding: res.headers.get("content-encoding"),
+          contentType: rawContentType
+        }
+      });
+      return { kind: "sse" };
+    }
+    if (kind === "json") {
+      const json = await res.json();
+      return { kind: "json", body: json };
+    }
+    const text = await res.text().catch(() => "");
+    throw new Error(`Expected text/event-stream or application/json, got ${contentType}: ${text}`);
+  }
+  /**
+   * Consume an SSE response body, dispatching `event: payload` frames to
+   * `onPayload`. Resolves on `event: done` or natural EOF. Throws on
+   * `event: error` frames, `onPayload` throws, or stream read errors.
+   *
+   * @private
+   * @param {Response} res
+   * @param {{
+   *   onPayload?: (p: unknown) => Promise<void> | void,
+   *   onRawRead?: (meta: RawReadMeta) => void,
+   *   responseMeta?: { status?: number, contentEncoding?: string | null, contentType?: string | null }
+   * }} opts
+   *   `onRawRead` (if supplied) fires once per `reader.read()` before any SSE parsing/filtering — it sees
+   *   raw bytes including `: keepalive` comment frames. Throws from it are swallowed. `responseMeta` is
+   *   attached to the FIRST `onRawRead` call only. See `DeliverOptions.onRawRead`.
+   * @returns {Promise<void>}
+   */
+  async _consumeSseStream(res, opts) {
+    const { onPayload, onRawRead, responseMeta } = opts;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let thrown;
+    const previewDecoder = onRawRead ? new TextDecoder() : null;
+    let rawReadFired = false;
+    const emitRawRead = (done, value) => {
+      if (!onRawRead) return;
+      try {
+        let textPreview = "";
+        if (value && value.byteLength) {
+          textPreview = previewDecoder.decode(value).slice(0, 120);
+        }
+        const meta = {
+          ts: Date.now(),
+          byteLength: value && value.byteLength ? value.byteLength : 0,
+          done: !!done,
+          textPreview
+        };
+        if (!rawReadFired) {
+          meta.status = responseMeta ? responseMeta.status : void 0;
+          meta.contentEncoding = responseMeta ? responseMeta.contentEncoding : void 0;
+          meta.contentType = responseMeta ? responseMeta.contentType : void 0;
+        }
+        rawReadFired = true;
+        onRawRead(meta);
+      } catch {
+      }
+    };
+    const processFrame = async (part) => {
+      if (!part.trim()) return null;
+      let eventName = "message";
+      let data = "";
+      const lines = part.split("\n");
+      for (const line of lines) {
+        if (line.startsWith(":")) continue;
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          const piece = line.slice(5).trim();
+          data = data ? `${data}
+${piece}` : piece;
+        }
+      }
+      if (eventName === "done") return "done";
+      if (eventName === "error") {
+        let parsedErr;
+        try {
+          parsedErr = JSON.parse(data);
+        } catch {
+          parsedErr = { code: "PARSE_ERROR", message: data };
+        }
+        const err = new Error(parsedErr.message || "Stream error");
+        err.code = parsedErr.code;
+        throw err;
+      }
+      if (eventName === "payload") {
+        let parsedPayload;
+        try {
+          parsedPayload = JSON.parse(data);
+        } catch {
+          return null;
+        }
+        if (onPayload) await onPayload(parsedPayload);
+      }
+      return null;
+    };
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        emitRawRead(done, value);
+        if (done) {
+          buffer += decoder.decode();
+          const finalNormalized = buffer.replace(SSE_LINE_NORMALIZE, "\n");
+          if (finalNormalized.trim()) {
+            await processFrame(finalNormalized);
+          }
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const trailingCr = buffer.endsWith("\r");
+        const head = trailingCr ? buffer.slice(0, -1) : buffer;
+        const normalized = head.replace(SSE_LINE_NORMALIZE, "\n");
+        const parts = normalized.split("\n\n");
+        buffer = (parts.pop() || "") + (trailingCr ? "\r" : "");
+        for (const part of parts) {
+          const result = await processFrame(part);
+          if (result === "done") return;
+        }
+      }
+    } catch (err) {
+      thrown = err;
+    } finally {
+      if (thrown) {
+        try {
+          await reader.cancel(thrown);
+        } catch {
+        }
+        try {
+          reader.releaseLock();
+        } catch {
+        }
+        throw thrown;
+      }
+      try {
+        reader.releaseLock();
+      } catch {
+      }
+    }
+  }
+  // ─── deliver() helpers ──────────────────────────────────────────
+  /**
+   * Wraps the caller's observed Promise so it only settles on a valid
+   * `ObservedDeliveryReceipt` (per RFC: at least one of messageId /
+   * sessionId must be a non-empty string). Invalid receipts and
+   * rejections leave the returned Promise pending — the race's timeout
+   * or abort branches take over.
+   *
+   * @private
+   * @param {Promise<ObservedDeliveryReceipt>} source
+   * @returns {Promise<ObservedDeliveryReceipt>}
+   */
+  _waitForValidReceipt(source) {
+    return new Promise((resolve) => {
+      Promise.resolve(source).then(
+        (receipt) => {
+          if (this._validateReceipt(receipt)) {
+            resolve(receipt);
+          }
+        },
+        () => {
+        }
+      );
+    });
+  }
+  /**
+   * Identity check: a receipt must be an object with at least one of
+   * `messageId` or `sessionId` as a non-empty string. Caller-supplied
+   * observation channels can produce arbitrary shapes; this gate
+   * prevents an empty-resolve from being interpreted as a successful
+   * delivery (a common shape of caller bug).
+   *
+   * @private
+   * @param {unknown} receipt
+   * @returns {boolean}
+   */
+  _validateReceipt(receipt) {
+    if (!receipt || typeof receipt !== "object") return false;
+    const hasMsgId = typeof receipt.messageId === "string" && receipt.messageId.length > 0;
+    const hasSessionId = typeof receipt.sessionId === "string" && receipt.sessionId.length > 0;
+    return hasMsgId || hasSessionId;
+  }
+  /**
+   * Race a Promise against a timeout. Returns the resolved value if the
+   * Promise wins, or `null` if the timeout fires first. Promise rejection
+   * is treated as "did not arrive" (same as timeout, returns `null`).
+   *
+   * @private
+   * @template T
+   * @param {Promise<T>} promise
+   * @param {number} ms
+   * @returns {Promise<T | null>}
+   */
+  _raceObservedWithTimeout(promise, ms) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve(null);
+      }, Math.max(0, ms));
+      Promise.resolve(promise).then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        },
+        () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(null);
+        }
+      );
+    });
+  }
+  /**
+   * Post-transport grace formula. Defaults to
+   * `min(remainingBudget, max(5000ms, timeoutMs * 0.1))`. Caller override
+   * is capped by remaining budget so it can never exceed the total timeout.
+   *
+   * @private
+   * @param {number | undefined} override
+   * @param {number} totalTimeoutMs
+   * @param {number} remainingMs
+   * @returns {number}
+   */
+  _computeGrace(override, totalTimeoutMs, remainingMs) {
+    if (typeof override === "number" && Number.isFinite(override) && override >= 0) {
+      return Math.min(override, remainingMs);
+    }
+    const defaultGrace = Math.max(5e3, Math.floor(totalTimeoutMs * 0.1));
+    return Math.min(defaultGrace, remainingMs);
+  }
+  /**
+   * One-shot dev reminder for low-level instant APIs. The warning is opt-in
+   * per call via `opts.expectsBackupPush === true` and fires at most once
+   * per ReiClient instance per method name. Default (omitted or `false`)
+   * is silent.
+   *
+   * @private
+   * @param {string} methodName
+   * @param {{ expectsBackupPush?: boolean }} opts
+   */
+  _maybeWarnLowLevel(methodName, opts) {
+    if (!opts || opts.expectsBackupPush !== true) return;
+    if (this._lowLevelWarned.has(methodName)) return;
+    this._lowLevelWarned.add(methodName);
+    const verdict = methodName === "sendInstant" ? "HTTP 200 \u2260 delivery confirmation" : "rejection \u2260 delivery failure";
+    console.warn(
+      `[rei-standard-amsg-client] ${methodName} is a low-level transport \u2014 ${verdict} when the worker is configured with always-on backup Web Push (amsg-instant 0.9.0+ default). Prefer client.deliver() for a correct delivered / cancelled / timeout / send-failed verdict.`
+    );
+  }
+  // ─── Crypto helpers (Web Crypto API) ────────────────────────────
+  /**
+   * Encrypt plaintext with AES-256-GCM.
+   * @private
+   * @param {string} plaintext
+   * @returns {Promise<{ iv: string, authTag: string, encryptedData: string }>}
+   */
+  async _encrypt(plaintext) {
+    if (!this._userKey) throw new Error("[rei-standard-amsg-client] Not initialised. Call init() first.");
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await crypto.subtle.importKey("raw", this._userKey, { name: "AES-GCM" }, false, ["encrypt"]);
+    const encoded = TEXT_ENCODER3.encode(plaintext);
+    const cipherBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+    const cipherArr = new Uint8Array(cipherBuf);
+    const encryptedData = cipherArr.slice(0, cipherArr.length - 16);
+    const authTag = cipherArr.slice(cipherArr.length - 16);
+    return {
+      iv: this._toBase64(iv),
+      authTag: this._toBase64(authTag),
+      encryptedData: this._toBase64(encryptedData)
+    };
+  }
+  /**
+   * Decrypt an encrypted API payload.
+   * @private
+   * @param {{ iv: string, authTag: string, encryptedData: string }} encryptedPayload
+   * @returns {Promise<Object>}
+   */
+  async _decrypt(encryptedPayload) {
+    if (!this._userKey) throw new Error("[rei-standard-amsg-client] Not initialised. Call init() first.");
+    const { iv, authTag, encryptedData } = encryptedPayload || {};
+    if (typeof iv !== "string" || typeof authTag !== "string" || typeof encryptedData !== "string") {
+      throw new Error("[rei-standard-amsg-client] Invalid encrypted payload");
+    }
+    const ivBytes = this._fromBase64(iv);
+    const authTagBytes = this._fromBase64(authTag);
+    const encryptedBytes = this._fromBase64(encryptedData);
+    const cipherBytes = new Uint8Array(encryptedBytes.length + authTagBytes.length);
+    cipherBytes.set(encryptedBytes);
+    cipherBytes.set(authTagBytes, encryptedBytes.length);
+    const key = await crypto.subtle.importKey("raw", this._userKey, { name: "AES-GCM" }, false, ["decrypt"]);
+    const plainBuffer = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivBytes }, key, cipherBytes);
+    return JSON.parse(new TextDecoder().decode(plainBuffer));
+  }
+  /** @private */
+  _toBase64(uint8) {
+    const binary = Array.from(uint8, (byte) => String.fromCharCode(byte)).join("");
+    return btoa(binary);
+  }
+  /** @private */
+  _fromBase64(base64) {
+    const raw = atob(base64);
+    const arr = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+    return arr;
+  }
+  /** @private */
+  _hexToUint8Array(hex) {
+    const arr = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+      arr[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+    }
+    return arr;
+  }
+};
+function normalizeMaxPayloadBytes(value) {
+  if (value === void 0 || value === null) return null;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new TypeError("[rei-standard-amsg-client] maxPayloadBytes must be a positive integer when set");
+  }
+  return value;
+}
+
 // node_modules/.pnpm/@rei-standard+amsg-instant@0.10.1-next.2/node_modules/@rei-standard/amsg-instant/dist/index.mjs
 var PUSH_PAYLOAD_BYTE_ENCODER2 = new TextEncoder();
 function segmentTextWithProtectedBlocks(text, options) {
@@ -2329,7 +3687,7 @@ var stripSourceTags = (t) => t.replace(/\s*\[(?:聊天|通话|约会)\]\s*/g, "\
 var stripTimestamps = (t) => t.replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\]\s*/g, "").replace(/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s*/gm, "").replace(/（[上下]午\d{1,2}[：:]\d{2}）/g, "").replace(/\(\d{1,2}:\d{2}\s*[AP]M\)/gi, "");
 var stripChineseDate = (t) => t.replace(/\[\d{4}[-/年]\d{1,2}[-/月]\d{1,2}.*?\]/g, "");
 var stripRoleNamePrefix = (t) => t.replace(/^[\w一-龥]+:\s*/, "");
-var stripBusinessTagsForBubble = (t) => t.replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|MUSIC_ACTION|MUSIC_WAKE_AFTER)[:\s][\s\S]*?\]\]/g, "").replace(/\[\[(?:MUSIC_TOGETHER_REQUEST)\]\]/g, "").replace(/\[\[MUSIC_SHARE:[\s\S]*?\]\]/g, "").replace(/\[\[\s*[记記][录錄]\s*[:：][\s\S]*?\]\]/g, "").replace(/\[schedule_message[^\]]*\]/g, "");
+var stripBusinessTagsForBubble = (t) => t.replace(/\[\[(?:ACTION|RECALL|SEARCH|DIARY|READ_DIARY|FS_DIARY|FS_READ_DIARY|DIARY_START|DIARY_END|FS_DIARY_START|FS_DIARY_END|MUSIC_ACTION|MUSIC_WAKE_AFTER|AMSG_WAKE_AT)[:\s][\s\S]*?\]\]/g, "").replace(/\[\[(?:MUSIC_TOGETHER_REQUEST)\]\]/g, "").replace(/\[\[MUSIC_SHARE:[\s\S]*?\]\]/g, "").replace(/\[\[\s*[记記][录錄]\s*[:：][\s\S]*?\]\]/g, "").replace(/\[schedule_message[^\]]*\]/g, "");
 var stripBusinessTagsForNotification = (t) => stripBusinessTagsForBubble(t).replace(/\[\[(?:READ_NOTE|XHS_[A-Z_]+|LIFE|NEWS_CARD)[:\s][\s\S]*?\]\]/g, "").replace(/\[\[XHS_[A-Z_]+\]\]/g, "");
 var stripAllDoubleBracketTags = (t) => t.replace(/\[\[[\s\S]*?\]\]/g, "");
 var stripQuotes = (t) => t.replace(/\[\[(?:QU[OA]TE|引用)[：:][\s\S]*?\]\]/g, "").replace(/\[(?:QU[OA]TE|引用)[：:][^\]]*\]/g, "").replace(/\[回复\s*[""“][^""”]*?[""”](?:\.{0,3})\]\s*[：:]?\s*/g, "").replace(/\[[^\[\]\n「」]{0,24}引用了[^\[\]\n「」]{0,24}「[^」\n]*?」[^\[\]\n]{0,24}\]\s*/g, "");
@@ -2779,6 +4137,11 @@ var DATA_TAGS = [
   }
 ];
 var SIDE_EFFECT_TAGS = [
+  // Switch 自主唤醒。Worker 只从通知正文剥离，真实排程由客户端按用户设备时区执行。
+  {
+    re: /\[\[AMSG_WAKE_AT:\s*([^\]\r\n]+?)\s*\]\]/gi,
+    toDirective: (m) => ({ type: "amsg_wake_at", localDateTime: m[1].trim() })
+  },
   // [[ACTION:POKE]]
   {
     re: /\[\[ACTION:POKE\]\]/g,
@@ -2966,8 +4329,225 @@ function classifyLLMOutput(text) {
   return { kind: "finish", cleanedText, sanitizedBody, directives: dedupedDirectives };
 }
 
+// utils/timezone.ts
+var nowInTimeZone = (tz, base = /* @__PURE__ */ new Date()) => {
+  if (!tz) return base;
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    }).formatToParts(base);
+    const map = {};
+    for (const p of parts) map[p.type] = p.value;
+    let hour = parseInt(map.hour, 10);
+    if (hour === 24) hour = 0;
+    return new Date(
+      parseInt(map.year, 10),
+      parseInt(map.month, 10) - 1,
+      parseInt(map.day, 10),
+      hour,
+      parseInt(map.minute, 10),
+      parseInt(map.second, 10)
+    );
+  } catch {
+    return base;
+  }
+};
+var wallClockToTimestamp = (wallClockText, tz) => {
+  const asDeviceLocal = new Date(wallClockText.trim().replace(" ", "T")).getTime();
+  if (!tz || Number.isNaN(asDeviceLocal)) return asDeviceLocal;
+  let t = asDeviceLocal;
+  for (let i = 0; i < 2; i++) {
+    const drift = nowInTimeZone(tz, new Date(t)).getTime() - asDeviceLocal;
+    if (drift === 0) break;
+    t -= drift;
+  }
+  return t;
+};
+
+// utils/amsgFirePack.ts
+var AMSG_STATE_NAMESPACE_PREFIX = "amsg:char:";
+var amsgStateNamespace = (charId) => `${AMSG_STATE_NAMESPACE_PREFIX}${charId}`;
+var AMSG_SWITCH_CONTROL_KEY = "switch_control";
+
+// utils/amsgQuietHours.ts
+var DEFAULT_AMSG_QUIET_START = "04:00";
+var DEFAULT_AMSG_QUIET_END = "10:00";
+var isValidQuietTimeValue = (value) => {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return false;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+};
+var describeQuietHoursRange = (start, end) => {
+  if (!isValidQuietTimeValue(start) || !isValidQuietTimeValue(end)) return "\u8BF7\u9009\u62E9\u5B8C\u6574\u7684\u5F00\u59CB\u548C\u7ED3\u675F\u65F6\u95F4";
+  if (start === end) return "\u5F00\u59CB\u4E0E\u7ED3\u675F\u65F6\u95F4\u4E0D\u80FD\u76F8\u540C";
+  return end < start ? `\u6BCF\u5929 ${start} \u81F3\u6B21\u65E5 ${end}` : `\u6BCF\u5929 ${start} \u81F3\u5F53\u5929 ${end}`;
+};
+var resolveQuietHoursRange = (start, end) => {
+  const resolvedStart = start && isValidQuietTimeValue(start) ? start : DEFAULT_AMSG_QUIET_START;
+  const resolvedEnd = end && isValidQuietTimeValue(end) ? end : DEFAULT_AMSG_QUIET_END;
+  return resolvedStart === resolvedEnd ? { start: DEFAULT_AMSG_QUIET_START, end: DEFAULT_AMSG_QUIET_END } : { start: resolvedStart, end: resolvedEnd };
+};
+var timeValueToMinutes = (value) => {
+  const [hour, minute] = value.split(":").map(Number);
+  return hour * 60 + minute;
+};
+var isAmsgQuietHours = (timestampMs, userTzId, quietStart = DEFAULT_AMSG_QUIET_START, quietEnd = DEFAULT_AMSG_QUIET_END) => {
+  if (!Number.isFinite(timestampMs) || !userTzId) return false;
+  const range = resolveQuietHoursRange(quietStart, quietEnd);
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: userTzId,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(new Date(timestampMs));
+    const hour = Number(parts.find((part) => part.type === "hour")?.value);
+    const minute = Number(parts.find((part) => part.type === "minute")?.value);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return false;
+    const current = hour * 60 + minute;
+    const start = timeValueToMinutes(range.start);
+    const end = timeValueToMinutes(range.end);
+    return start < end ? current >= start && current < end : current >= start || current < end;
+  } catch {
+    return false;
+  }
+};
+var buildAmsgQuietHoursMessage = (start, end) => {
+  const range = resolveQuietHoursRange(start, end);
+  return `\u9759\u9ED8\u65F6\u95F4\u4E3A${describeQuietHoursRange(range.start, range.end)}\uFF08\u6309\u7528\u6237\u6240\u5728\u65F6\u533A\uFF09\uFF0C\u8BF7\u6539\u5230\u9759\u9ED8\u65F6\u95F4\u4E4B\u5916\u3002`;
+};
+
+// utils/amsgFireSchedule.ts
+var MAX_FIRE_SCHEDULES = 2;
+var EXPIRE_POLICY_DESCRIPTION = [
+  "\u9632\u7A7F\u5E2E\u7B56\u7565\u3002",
+  "expire\uFF08\u9ED8\u8BA4\uFF0C\u5927\u591A\u6570\u60C5\u51B5\u7528\u5B83\uFF09\uFF1A\u5230\u70B9\u65F6\u5982\u679C\u6392\u7A0B\u4E4B\u540E\u5BF9\u8BDD\u5DF2\u6709\u65B0\u8FDB\u5C55\u3001\u6216\u7528\u6237\u6B64\u523B\u6B63\u5728\u804A\u5929\uFF0C\u8FD9\u6761\u81EA\u52A8\u4F5C\u5E9F\u2014\u2014\u4E4B\u540E\u4F60\u4F1A\u5728\u6392\u7A0B\u73B0\u72B6\u91CC\u770B\u5230\uFF0C\u7531\u4F60\u51B3\u5B9A\u81EA\u7136\u5E26\u51FA\u3001\u7EED\u671F\u8FD8\u662F\u653E\u5F03\u3002",
+  "\u6311\u8BDD\u9898\u3001\u60F3\u627E\u4EBA\u804A\u5929\u8FD9\u7C7B\u300C\u60F3\u8BF4\u70B9\u4EC0\u4E48\u300D\u7684\u6392\u7A0B\u4E00\u5F8B\u7528\u5B83\uFF1A\u7528\u6237\u4EBA\u90FD\u56DE\u6765\u4E86\uFF0C\u4F60\u8FD8\u7167\u7740\u51E0\u5C0F\u65F6\u524D\u7684\u60F3\u6CD5\u5F00\u53E3\uFF0C\u4F1A\u5F88\u5047\u3002",
+  'force\uFF1A\u4E0D\u7BA1\u7528\u6237\u5728\u4E0D\u5728\u804A\u5929\u90FD\u7167\u53D1\u3002\u7528\u5728\u300C\u5230\u90A3\u4E2A\u70B9\u5FC5\u987B\u8BF4\u8FD9\u4EF6\u5177\u4F53\u7684\u4E8B\u300D\u4E0A\uFF0C\u4E24\u79CD\u6765\u6E90\u90FD\u7B97\u2014\u2014\u7528\u6237\u660E\u786E\u8981\u6C42\u7684\uFF08\u5982"8\u70B9\u53EB\u6211\u8D77\u5E8A"\uFF09\uFF0C\u4EE5\u53CA\u4F60\u81EA\u5DF1\u8BB8\u4E0B\u7684\uFF08\u5982"\u6C64\u7096\u4E0A\u4E86\uFF0C\u4E24\u5C0F\u65F6\u540E\u597D\u4E86\u53EB\u4F60""\u4F60\u90A3\u4E2A\u4F1A\u6211\u5230\u70B9\u63D0\u9192\u4F60"\uFF09\u3002',
+  "\u8FD9\u7C7B\u5151\u73B0\u7684\u662F\u4E00\u4E2A\u5177\u4F53\u627F\u8BFA\uFF0C\u7528\u6237\u4E2D\u9014\u56DE\u6765\u804A\u8FC7\u5929\u4E5F\u4E0D\u5F71\u54CD\u5B83\u8BE5\u54CD\u3002"
+].join("\n");
+var FIRE_TOOL_DESCRIPTION = [
+  "\u7ED9\u81EA\u5DF1\u6392\u4E0B\u4E00\u6761\u4E3B\u52A8\u6D88\u606F\uFF1A\u5230\u6307\u5B9A\u65F6\u95F4\u540E\u4F60\u4F1A\u518D\u6839\u636E\u90A3\u65F6\u7684\u4E0A\u4E0B\u6587\u751F\u6210\u4E00\u6761\u63A8\u9001\u7ED9\u7528\u6237\u3002",
+  "\u4F60\u73B0\u5728\u6B63\u5728\u53D1\u4E00\u6761\u4E3B\u52A8\u6D88\u606F\uFF0C\u8FD9\u4E2A\u5DE5\u5177\u8BA9\u4F60\u628A\u8BDD\u63A5\u7740\u5F80\u4E0B\u8BF4\u2014\u2014\u6BD4\u5982\u8FD9\u6761\u5148\u8BF4\u4E00\u534A\uFF0C\u8FC7\u4E00\u4E24\u4E2A\u5C0F\u65F6\u518D\u63A5\u4E0A\u53BB\uFF1B\u6216\u8005\u4F60\u8BF4\u4E86\u8981\u53BB\u505A\u67D0\u4EF6\u4E8B\uFF0C\u505A\u5B8C\u7684\u65F6\u95F4\u70B9\u56DE\u6765\u544A\u8BC9\u7528\u6237\u3002",
+  "\u6392\u4E0B\u7684\u8FD9\u6761\u5230\u70B9\u65F6\u4F1A\u77E5\u9053\u4F60\u8FD9\u6B21\u8BF4\u4E86\u4EC0\u4E48\uFF0C\u80FD\u63A5\u5F97\u4E0A\uFF0C\u4E0D\u7528\u5728\u53C2\u6570\u91CC\u590D\u8FF0\u3002",
+  "send_at \u662F\u5F00\u59CB\u751F\u6210\u7684\u65F6\u95F4\uFF0C\u4E0D\u662F\u9001\u8FBE\u65F6\u95F4\uFF08\u751F\u6210\u6709\u5341\u51E0\u79D2\u5EF6\u8FDF\uFF09\uFF0C\u4E14\u5FC5\u987B\u81F3\u5C11\u6BD4\u73B0\u5728\u665A 1 \u5206\u949F\u3002",
+  `\u4E00\u6B21\u6700\u591A\u6392 ${MAX_FIRE_SCHEDULES} \u6761\uFF1B\u6BCF\u4E2A\u89D2\u8272\u540C\u65F6\u6302\u7684\u4EFB\u52A1\u4E5F\u6709\u4E0A\u9650\uFF0C\u6392\u4E0D\u4E0B\u65F6\u4F1A\u544A\u8BC9\u4F60\u3002`,
+  "\u6CA1\u6709\u300C\u63A5\u7740\u8BF4\u300D\u7684\u5FC5\u8981\u5C31\u522B\u6392\u2014\u2014\u4E3A\u4E86\u6392\u800C\u6392\u51FA\u6765\u7684\u540E\u7EED\uFF0C\u7528\u6237\u8BFB\u8D77\u6765\u5C31\u662F\u6CA1\u8BDD\u627E\u8BDD\u3002"
+].join("\n");
+var buildTaskInstruction = (mode, promptHint) => {
+  if (mode === "prompted") {
+    return [
+      "\u8FD9\u662F\u4E00\u6761\u9700\u8981 AI \u53C2\u4E0E\u751F\u6210\u7684\u4E3B\u52A8\u6D88\u606F\u3002",
+      "\u8BF7\u4E25\u683C\u56F4\u7ED5\u4E0B\u9762\u7684\u989D\u5916\u63D0\u793A\u53D1\u8D77\u79C1\u804A\uFF0C\u4F46\u4ECD\u7136\u4FDD\u6301\u50CF\u771F\u4EBA\u4E00\u6837\u81EA\u7136\uFF0C\u4E0D\u8981\u50CF\u7CFB\u7EDF\u4EFB\u52A1\u6C47\u62A5\u3002",
+      `\u989D\u5916\u63D0\u793A\uFF1A${promptHint?.trim() || "\u65E0"}`
+    ].join("\n");
+  }
+  return [
+    "\u8FD9\u662F\u4E00\u6761\u9700\u8981 AI \u81EA\u4E3B\u751F\u6210\u7684\u4E3B\u52A8\u6D88\u606F\u3002",
+    "\u8BF7\u7ED3\u5408\u89D2\u8272\u8BBE\u5B9A\u3001\u5173\u7CFB\u72B6\u6001\u3001\u6700\u8FD1\u4E0A\u4E0B\u6587\u4E0E\u5F53\u524D\u65F6\u95F4\uFF0C\u81EA\u7136\u5730\u4E3B\u52A8\u627E\u7528\u6237\u8BF4\u4E00\u5230\u4E09\u53E5\u79C1\u804A\u6D88\u606F\u3002",
+    promptHint?.trim() ? `\u53EF\u9009\u7075\u611F\u8865\u5145\uFF1A${promptHint.trim()}` : "\u53EF\u9009\u7075\u611F\u8865\u5145\uFF1A\u65E0"
+  ].join("\n");
+};
+var hasExplicitOffset = (s) => /(?:Z|[+-]\d{2}:?\d{2})$/i.test(s.trim());
+var resolveSendAtMs = (raw, tz) => {
+  const text = raw.trim();
+  if (hasExplicitOffset(text)) return new Date(text).getTime();
+  return wallClockToTimestamp(text, tz.tzId);
+};
+
+// utils/amsg2ExpireGuard.ts
+var ACTIVE_CHAT_WINDOW_MS = 10 * 6e4;
+var FIRE_GRACE_MS = 9e4;
+var DEFAULT_LOOKBACK_MS = 48 * 36e5;
+var DAY_MS = 24 * 36e5;
+var recurrencePeriodMs = (recurrenceType) => recurrenceType === "daily" ? DAY_MS : recurrenceType === "weekly" ? 7 * DAY_MS : null;
+var DELIVERED_WINDOW_MS = 30 * 6e4;
+
+// utils/amsg2Tasks.ts
+var MAX_AUTONOMOUS_WAKES_PER_HOUR = 3;
+var AUTONOMOUS_WAKE_WINDOW_MS = 60 * 6e4;
+var MAX_SWITCH_WAKE_AHEAD_MS = 7 * 24 * 60 * 6e4;
+var validateSwitchWakeTime = (candidateMs, nowMs = Date.now()) => {
+  if (!Number.isFinite(candidateMs)) return "invalid";
+  if (candidateMs <= nowMs) return "past";
+  if (candidateMs - nowMs > MAX_SWITCH_WAKE_AHEAD_MS) return "too_far";
+  return null;
+};
+var wouldExceedAutonomousWakeRate = (tasks, candidateMs, nowMs = Date.now(), excludeTaskUuid, observedWakeMs = []) => {
+  if (!Number.isFinite(candidateMs)) return false;
+  const existing = tasks.filter((task) => task.taskUuid !== excludeTaskUuid && task.status === "scheduled" && task.mode !== "fixed" && !task.switchFallback).map((task) => currentOccurrenceMs(task, nowMs)).filter((value) => value !== null && Number.isFinite(value));
+  const entries = [
+    ...existing.map((time) => ({ time, candidate: false })),
+    ...observedWakeMs.filter((time) => Number.isFinite(time)).map((time) => ({ time, candidate: false })),
+    { time: candidateMs, candidate: true }
+  ].sort((a, b) => a.time - b.time || Number(a.candidate) - Number(b.candidate));
+  const times = entries.map((entry) => entry.time);
+  const candidateIndex = entries.findIndex((entry) => entry.candidate);
+  for (let start = 0; start <= candidateIndex; start += 1) {
+    if (candidateMs - times[start] >= AUTONOMOUS_WAKE_WINDOW_MS) continue;
+    let end = start;
+    while (end < times.length && times[end] - times[start] < AUTONOMOUS_WAKE_WINDOW_MS) end += 1;
+    if (candidateIndex >= start && candidateIndex < end && end - start > MAX_AUTONOMOUS_WAKES_PER_HOUR) {
+      return true;
+    }
+  }
+  return false;
+};
+var currentOccurrenceMs = (task, nowMs) => {
+  const remoteNext = task.nextSendAt ? new Date(task.nextSendAt).getTime() : NaN;
+  if (Number.isFinite(remoteNext) && remoteNext + FIRE_GRACE_MS > nowMs) return remoteNext;
+  const first = new Date(task.firstSendTime).getTime();
+  if (!Number.isFinite(first)) return null;
+  const periodMs = recurrencePeriodMs(task.recurrenceType);
+  if (periodMs === null) return first;
+  const k = Math.max(0, Math.floor((nowMs - FIRE_GRACE_MS - first) / periodMs) + 1);
+  return first + k * periodMs;
+};
+
 // utils/instantWorkerVersion.ts
-var INSTANT_WORKER_VERSION = "2026-07-17";
+var INSTANT_WORKER_VERSION = "2026-08-05";
+
+// utils/thinkingGate.ts
+var CLAUDE_TOOL_MIN_THINKING_BUDGET = 1024;
+var ensureClaudeToolThinkingBudget = (body) => {
+  if (!Array.isArray(body.tools) || body.tools.length === 0) return body;
+  if (!/claude.*thinking/i.test(String(body.model || ""))) return body;
+  const existingBudget = Number(body.thinking?.budget_tokens);
+  if (body.thinking?.type === "enabled" && Number.isFinite(existingBudget) && existingBudget >= CLAUDE_TOOL_MIN_THINKING_BUDGET) return body;
+  body.thinking = { type: "enabled", budget_tokens: CLAUDE_TOOL_MIN_THINKING_BUDGET };
+  body.extra_body = {
+    ...body.extra_body || {},
+    thinking: { type: "enabled", budget_tokens: CLAUDE_TOOL_MIN_THINKING_BUDGET }
+  };
+  delete body.temperature;
+  delete body.top_p;
+  return body;
+};
+
+// utils/toolSchemaCompat.ts
+var ensureClaudeToolSchema = (body) => {
+  if (!/claude/i.test(String(body.model || "")) || !Array.isArray(body.tools)) return body;
+  body.tools = body.tools.map((tool) => {
+    if (tool?.type !== "function" || !tool.function?.name) return tool;
+    return {
+      name: tool.function.name,
+      ...tool.function.description ? { description: tool.function.description } : {},
+      input_schema: tool.function.parameters || { type: "object", properties: {} }
+    };
+  });
+  if (body.tool_choice === "auto") body.tool_choice = { type: "auto" };
+  if (body.tool_choice === "required") body.tool_choice = { type: "any" };
+  return body;
+};
 
 // worker/instant-push/src/index.ts
 var MULTIPART_TRANSPORT = { enabled: true };
@@ -2994,6 +4574,16 @@ var D1_DELETE_EXPIRED_SQL = `DELETE FROM ${D1_BLOB_TABLE} WHERE expires_at < ?`;
 var d1SchemaReadyPromise = null;
 var lastD1CleanupAt = 0;
 var d1CleanupPromise = null;
+var AMSG2_TOOL_NAMES = /* @__PURE__ */ new Set([
+  "schedule_active_message",
+  "cancel_active_message",
+  "renew_active_message",
+  "list_active_messages"
+]);
+var AMSG2_PLACEHOLDER_PROMPT = "AMSG2_PLACEHOLDER_PROMPT\uFF08\u6B63\u5F0F prompt \u5230\u70B9\u7531 worker onBeforeFire \u4E0B\u53D1\uFF1B\u770B\u5230\u8FD9\u6761\u8BF4\u660E fire hooks \u672A\u751F\u6548\uFF09";
+var MAX_ACTIVE_TASKS_PER_CHAR = 5;
+var instantAmsgSessions = /* @__PURE__ */ new Map();
+var INSTANT_AMSG_SESSION_TTL_MS = 10 * 6e4;
 var ERROR_EVENT_TYPES = /* @__PURE__ */ new Set([
   "hook_threw",
   "loop_exceeded",
@@ -3252,8 +4842,250 @@ async function handleCapabilitiesRequest(request, env) {
     }
   });
 }
+function isInstantAmsgBridge(value) {
+  const v = value;
+  return !!v && typeof v.workerUrl === "string" && /^https:\/\//i.test(v.workerUrl) && typeof v.userId === "string" && !!v.userId && typeof v.charId === "string" && !!v.charId && typeof v.charName === "string" && typeof v.tzId === "string" && !!v.tzId && typeof v.userTzId === "string" && !!v.userTzId && typeof v.anchorMs === "number" && !!v.api && typeof v.api.baseUrl === "string" && typeof v.api.apiKey === "string" && typeof v.api.model === "string" && Array.isArray(v.tasks);
+}
+function sanitizeInstantAmsgTools(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (tool) => tool?.type === "function" && AMSG2_TOOL_NAMES.has(tool?.function?.name) && typeof tool?.function?.description === "string" && tool?.function?.parameters && typeof tool.function.parameters === "object"
+  );
+}
+function messagePrefixMatches(candidate, prefix) {
+  if (candidate.length < prefix.length) return false;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (JSON.stringify(candidate[i]) !== JSON.stringify(prefix[i])) return false;
+  }
+  return true;
+}
+function injectInstantAmsgTools(body, sessions) {
+  if (!body?.model || !Array.isArray(body.messages)) return body;
+  const state = sessions.find(
+    (entry) => entry.tools.length > 0 && messagePrefixMatches(body.messages, entry.requestMessages)
+  );
+  if (!state) return body;
+  const patched = ensureClaudeToolSchema({ ...body, tools: state.tools, tool_choice: "auto" });
+  return ensureClaudeToolThinkingBudget(patched);
+}
+async function fetchWithInstantAmsgTools(input, init) {
+  if (typeof init?.body !== "string") return globalThis.fetch(input, init);
+  let body;
+  try {
+    body = JSON.parse(init.body);
+  } catch {
+    return globalThis.fetch(input, init);
+  }
+  const patched = injectInstantAmsgTools(body, [...instantAmsgSessions.values()]);
+  if (patched === body) return globalThis.fetch(input, init);
+  return globalThis.fetch(input, {
+    ...init,
+    body: JSON.stringify(patched)
+  });
+}
+async function getAmsgClient(state) {
+  if (state.client) return state.client;
+  const client = new ReiClient({
+    baseUrl: state.bridge.workerUrl.replace(/\/+$/, ""),
+    userId: state.bridge.userId,
+    serverToken: state.bridge.serverToken || void 0
+  });
+  await client.init();
+  state.client = client;
+  return client;
+}
+async function cancelBridgeTask(client, taskUuid) {
+  const response = await client.cancelMessage(taskUuid);
+  if (response?.success) return;
+  if (response?.error?.code === "TASK_NOT_FOUND") return;
+  throw new Error(response?.error?.message || "\u4E3B\u52A8\u6D88\u606F\u4EFB\u52A1\u53D6\u6D88\u5931\u8D25");
+}
+function shortTaskId(uuid) {
+  return uuid.slice(0, 8);
+}
+function findBridgeTask(state, rawId) {
+  const id = typeof rawId === "string" ? rawId.trim() : "";
+  if (id) return state.tasks.find((task) => task.taskUuid === id || task.taskUuid.startsWith(id)) ?? null;
+  const pending = state.tasks.filter((task) => task.status === "scheduled");
+  return pending.length === 1 ? pending[0] : null;
+}
+function describeBridgeTasks(state) {
+  if (!state.tasks.length) return "\u5F53\u524D\u89D2\u8272\u6CA1\u6709\u4EFB\u4F55\u5B9A\u65F6\u4E3B\u52A8\u6D88\u606F\u4EFB\u52A1\u3002";
+  return `\u5F53\u524D\u89D2\u8272\u7684\u4EFB\u52A1\u5217\u8868\uFF1A
+${state.tasks.map((task) => {
+    const recurrence = task.recurrenceType === "daily" ? "\u6BCF\u5929" : task.recurrenceType === "weekly" ? "\u6BCF\u5468" : "\u4E00\u6B21\u6027";
+    const mode = task.mode === "prompted" ? `\u63D0\u793A\u65B9\u5411\u300C${task.promptHint || ""}\u300D` : "\u81EA\u52A8\u751F\u6210";
+    return `- [${shortTaskId(task.taskUuid)}] ${task.firstSendTime} \xB7 ${recurrence} \xB7 ${mode}`;
+  }).join("\n")}`;
+}
+async function scheduleBridgeTask(state, args, replaceTask, keepReplaced = false) {
+  if (state.bridge.enabled === false) return "\u4E3B\u52A8\u6D88\u606F\u5DF2\u7ECF\u5173\u95ED\uFF0C\u8FD9\u6B21\u4E0D\u4F1A\u5EFA\u7ACB\u65B0\u7684\u5524\u9192\u3002";
+  if (state.bridge.experienceMode === "switch") {
+    const client2 = await getAmsgClient(state);
+    const response2 = await client2.getClientState(amsgStateNamespace(state.bridge.charId));
+    if (!response2?.success) {
+      return response2?.error?.message ? `\u65E0\u6CD5\u786E\u8BA4\u4E3B\u52A8\u5524\u9192\u5F53\u524D\u5F00\u5173\u72B6\u6001\uFF1A${response2.error.message}` : "\u65E0\u6CD5\u786E\u8BA4\u4E3B\u52A8\u5524\u9192\u5F53\u524D\u5F00\u5173\u72B6\u6001\uFF0C\u672C\u6B21\u4E0D\u4F1A\u5EFA\u7ACB\u65B0\u7684\u5524\u9192\u3002";
+    }
+    if (response2.success) {
+      const entries = response2.data?.entries ?? [];
+      const raw = entries.find((entry) => entry.key === AMSG_SWITCH_CONTROL_KEY)?.value;
+      if (raw) {
+        try {
+          const control = JSON.parse(raw);
+          if (control.enabled === false || control.experienceMode !== "switch") {
+            return "\u4E3B\u52A8\u5524\u9192\u5DF2\u7ECF\u5173\u95ED\u6216\u5207\u6362\u5230\u539F\u7248\uFF0C\u8FD9\u6B21\u4E0D\u4F1A\u5EFA\u7ACB\u65B0\u7684\u5524\u9192\u3002";
+          }
+        } catch {
+          console.warn("[instant-push] ignored malformed switch_control state");
+        }
+      }
+    }
+  }
+  if (state.bridge.experienceMode === "switch" && !replaceTask) {
+    replaceTask = state.tasks.find((task) => task.status === "scheduled" && !task.switchFallback);
+  }
+  if (state.tasks.filter((task) => task.status === "scheduled" && task.taskUuid !== replaceTask?.taskUuid).length >= MAX_ACTIVE_TASKS_PER_CHAR) {
+    return `\u8BE5\u89D2\u8272\u7684\u5F85\u89E6\u53D1\u4EFB\u52A1\u5DF2\u8FBE\u4E0A\u9650 ${MAX_ACTIVE_TASKS_PER_CHAR} \u4E2A\uFF0C\u8BF7\u5148\u53D6\u6D88\u6216\u5408\u5E76\u5DF2\u6709\u4EFB\u52A1\u3002`;
+  }
+  const sendAtRaw = String(args.send_at || "").trim();
+  const sendAtMs = resolveSendAtMs(sendAtRaw, { tzId: state.bridge.tzId });
+  if (!Number.isFinite(sendAtMs)) return "send_at \u4E0D\u662F\u6709\u6548\u65F6\u95F4\uFF0C\u8BF7\u6309 YYYY-MM-DDTHH:mm:ss \u91CD\u65B0\u586B\u5199\u3002";
+  if (sendAtMs <= Date.now()) return "send_at \u5FC5\u987B\u665A\u4E8E\u5F53\u524D\u65F6\u95F4\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u672A\u6765\u65F6\u95F4\u3002";
+  if (state.bridge.experienceMode === "switch" && validateSwitchWakeTime(sendAtMs) === "too_far") {
+    return "\u4E3B\u52A8\u5524\u9192\u7684\u4E0B\u4E00\u6B21\u65F6\u95F4\u6700\u8FDC\u53EA\u80FD\u5B89\u6392\u5728\u672A\u6765 7 \u5929\u5185\u3002";
+  }
+  if (isAmsgQuietHours(
+    sendAtMs,
+    state.bridge.userTzId,
+    state.bridge.switchQuietStart,
+    state.bridge.switchQuietEnd
+  )) {
+    return buildAmsgQuietHoursMessage(
+      state.bridge.switchQuietStart,
+      state.bridge.switchQuietEnd
+    );
+  }
+  if (wouldExceedAutonomousWakeRate(state.tasks, sendAtMs, Date.now(), replaceTask?.taskUuid)) {
+    return "\u8FD9\u4E2A\u65F6\u95F4\u4F1A\u8BA9\u4E00\u5C0F\u65F6\u5185\u7684\u81EA\u4E3B\u5524\u9192\u8D85\u8FC7 3 \u6B21\u3002\u8BF7\u6362\u5230\u66F4\u665A\u7684\u65F6\u95F4\u3002";
+  }
+  const mode = args.mode === "prompted" ? "prompted" : "auto";
+  const recurrence = ["daily", "weekly"].includes(String(args.recurrence)) ? String(args.recurrence) : "none";
+  const expirePolicy = args.expire_policy === "force" ? "force" : "expire";
+  const promptHint = typeof args.prompt_hint === "string" && args.prompt_hint.trim() ? args.prompt_hint.trim() : void 0;
+  const clientTaskId = crypto.randomUUID();
+  const firstSendTime = new Date(sendAtMs).toISOString();
+  const payload = {
+    contactName: state.bridge.charName,
+    ...state.bridge.avatarUrl ? { avatarUrl: state.bridge.avatarUrl } : {},
+    messageType: mode,
+    messageSubtype: "chat",
+    firstSendTime,
+    recurrenceType: recurrence,
+    tzId: state.bridge.tzId,
+    messages: [{ role: "user", content: AMSG2_PLACEHOLDER_PROMPT }],
+    apiUrl: state.bridge.api.baseUrl,
+    apiKey: state.bridge.api.apiKey,
+    primaryModel: state.bridge.api.model,
+    ...state.bridge.maxTokens ? { maxTokens: state.bridge.maxTokens } : {},
+    metadata: {
+      charId: state.bridge.charId,
+      charName: state.bridge.charName,
+      source: "active_msg_2",
+      amsgMode: mode,
+      amsgClientTaskId: clientTaskId,
+      amsgExpirePolicy: expirePolicy,
+      amsgAnchorMs: state.bridge.anchorMs,
+      amsgTaskInstruction: buildTaskInstruction(mode, promptHint)
+    }
+  };
+  const client = await getAmsgClient(state);
+  const response = await client.scheduleMessage(payload);
+  if (!response?.success || typeof response?.data?.uuid !== "string") {
+    throw new Error(response?.error?.message || "\u4E3B\u52A8\u6D88\u606F\u4EFB\u52A1\u521B\u5EFA\u5931\u8D25");
+  }
+  const record = {
+    taskUuid: response.data.uuid,
+    clientTaskId,
+    mode,
+    firstSendTime,
+    ...typeof response.data.nextSendAt === "string" ? { nextSendAt: response.data.nextSendAt } : {},
+    recurrenceType: recurrence,
+    ...promptHint ? { promptHint } : {},
+    expirePolicy,
+    anchorLastUserMsgAt: state.bridge.anchorMs,
+    source: "character",
+    status: "scheduled",
+    createdAt: Date.now()
+  };
+  state.created.push(record);
+  state.tasks = [
+    ...state.tasks.filter((task) => keepReplaced || task.taskUuid !== replaceTask?.taskUuid),
+    record
+  ];
+  let cancelWarning = "";
+  if (replaceTask && !keepReplaced) {
+    try {
+      await cancelBridgeTask(client, replaceTask.taskUuid);
+      state.cancelled.push(replaceTask.taskUuid);
+    } catch (error) {
+      state.tasks = [replaceTask, ...state.tasks];
+      cancelWarning = `\uFF0C\u4F46\u539F\u4EFB\u52A1 [${shortTaskId(replaceTask.taskUuid)}] \u53D6\u6D88\u5931\u8D25\u3001\u53EF\u80FD\u4ECD\u4F1A\u89E6\u53D1`;
+      console.warn("[instant-push] AMSG replace cancel failed", error);
+    }
+  }
+  return `\u5B9A\u65F6\u4E3B\u52A8\u6D88\u606F\u5DF2\u521B\u5EFA [${shortTaskId(record.taskUuid)}]\uFF0C\u5C06\u5728 ${firstSendTime} \u5F00\u59CB\u751F\u6210${cancelWarning}\u3002`;
+}
+async function executeInstantAmsgTool(state, name, args) {
+  if (name === "list_active_messages") return describeBridgeTasks(state);
+  if (name === "schedule_active_message") return scheduleBridgeTask(state, args);
+  const target = findBridgeTask(state, args.task_id);
+  if (!target) {
+    return state.tasks.length > 1 ? "\u5F53\u524D\u6709\u591A\u4E2A\u4EFB\u52A1\uFF0C\u8BF7\u5148\u7528 list_active_messages \u67E5\u8BE2\uFF0C\u518D\u5E26 task_id \u6307\u5B9A\u3002" : "\u6CA1\u6709\u627E\u5230\u53EF\u64CD\u4F5C\u7684\u4E3B\u52A8\u6D88\u606F\u4EFB\u52A1\u3002";
+  }
+  const client = await getAmsgClient(state);
+  if (name === "cancel_active_message") {
+    await cancelBridgeTask(client, target.taskUuid);
+    state.tasks = state.tasks.filter((task) => task.taskUuid !== target.taskUuid);
+    state.created = state.created.filter((task) => task.taskUuid !== target.taskUuid);
+    state.cancelled.push(target.taskUuid);
+    return `\u5DF2\u53D6\u6D88\u4EFB\u52A1 [${shortTaskId(target.taskUuid)}]\u3002`;
+  }
+  if (name === "renew_active_message") {
+    if (target.mode === "fixed") return "\u56FA\u5B9A\u6D88\u606F\u4EFB\u52A1\u8BF7\u5728\u8BBE\u7F6E\u9762\u677F\u8C03\u6574\u3002";
+    const recurring = target.recurrenceType !== "none";
+    return scheduleBridgeTask(state, {
+      ...args,
+      mode: target.mode,
+      prompt_hint: target.promptHint,
+      recurrence: recurring ? "none" : target.recurrenceType,
+      expire_policy: target.expirePolicy
+    }, target, recurring);
+  }
+  return `\u4E0D\u652F\u6301\u7684\u4E3B\u52A8\u6D88\u606F\u5DE5\u5177\uFF1A${name}`;
+}
+function attachInstantAmsgChanges(decision, state) {
+  if (!state || decision?.decision !== "finish" || !Array.isArray(decision.pushPayloads)) return decision;
+  const cancelled = [...new Set(state.cancelled)];
+  const liveTaskIds = new Set(state.tasks.map((task) => task.taskUuid));
+  const created = state.created.filter(
+    (task) => liveTaskIds.has(task.taskUuid) && !cancelled.includes(task.taskUuid)
+  );
+  if (!created.length && !cancelled.length) return decision;
+  const last = decision.pushPayloads.length - 1;
+  if (last < 0) return decision;
+  decision.pushPayloads[last] = {
+    ...decision.pushPayloads[last],
+    metadata: {
+      ...decision.pushPayloads[last]?.metadata || {},
+      ...created.length ? { amsgSelfScheduled: created } : {},
+      ...cancelled.length ? { amsgCancelledTaskIds: cancelled } : {}
+    }
+  };
+  return decision;
+}
 function buildAmsgOptions(env) {
   return {
+    fetch: fetchWithInstantAmsgTools,
     vapid: {
       email: env.VAPID_EMAIL || "mailto:noreply@example.com",
       publicKey: env.VAPID_PUBLIC_KEY,
@@ -3277,13 +5109,28 @@ var cfWorker = createCloudflareWorker((env) => {
       immediateKeepalive: true
     },
     onLLMOutput,
-    onBeforeLoop: ({ requestBody }) => {
-      if (!requestBody?.emotionEval) return void 0;
-      return { emotionEval: runEmotionEval(requestBody) };
+    onBeforeLoop: ({ requestBody, sessionId }) => {
+      const now = Date.now();
+      for (const [id, state] of instantAmsgSessions) {
+        if (now - state.createdAt > INSTANT_AMSG_SESSION_TTL_MS) instantAmsgSessions.delete(id);
+      }
+      const tools = sanitizeInstantAmsgTools(requestBody?.tools);
+      if (isInstantAmsgBridge(requestBody?.amsg2Bridge) && tools.length > 0) {
+        instantAmsgSessions.set(sessionId, {
+          bridge: requestBody.amsg2Bridge,
+          requestMessages: Array.isArray(requestBody.messages) ? [...requestBody.messages] : [],
+          tools,
+          tasks: [...requestBody.amsg2Bridge.tasks],
+          created: [],
+          cancelled: [],
+          createdAt: now
+        });
+      }
+      return requestBody?.emotionEval ? { emotionEval: runEmotionEval(requestBody) } : {};
     },
     onAfterLoop: async ({ deliver, pending, requestBody, sessionId }) => {
-      if (!pending?.emotionEval) return;
       try {
+        if (!pending?.emotionEval) return;
         const { raw: emotionRaw, error: emotionError } = await pending.emotionEval;
         const charId = requestBody?.charId || requestBody?.metadata?.charId || "";
         await deliver({
@@ -3306,6 +5153,8 @@ var cfWorker = createCloudflareWorker((env) => {
         });
       } catch (err) {
         console.warn("[instant] emotion eval failed in onAfterLoop:", err);
+      } finally {
+        instantAmsgSessions.delete(sessionId);
       }
     }
   };
@@ -3445,8 +5294,41 @@ var src_default = {
   }
 };
 async function onLLMOutput(ctx) {
+  const state = instantAmsgSessions.get(ctx.sessionId);
+  const toolCalls = Array.isArray(ctx?.llmResponse?.choices?.[0]?.message?.tool_calls) ? ctx.llmResponse.choices[0].message.tool_calls : [];
+  const amsgCalls = toolCalls.filter((call) => AMSG2_TOOL_NAMES.has(call?.function?.name));
+  if (state && amsgCalls.length > 0) {
+    const toolMessages = [];
+    for (const call of amsgCalls) {
+      const name = String(call.function.name);
+      let args = {};
+      try {
+        args = JSON.parse(call.function.arguments || "{}");
+      } catch {
+        args = {};
+      }
+      let content;
+      try {
+        content = await executeInstantAmsgTool(state, name, args);
+      } catch (error) {
+        content = `\u4E3B\u52A8\u6D88\u606F\u5DE5\u5177\u6267\u884C\u5931\u8D25\uFF1A${error?.message || String(error)}`;
+      }
+      toolMessages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        name,
+        content
+      });
+    }
+    return {
+      decision: "continue",
+      nextHistory: [...ctx.messages, ...toolMessages]
+    };
+  }
+  const llmOutputText = String(ctx.llmOutputText ?? "");
+  const classified = classifyLLMOutput(llmOutputText);
   const decision = buildPushDecision({
-    llmOutputText: String(ctx.llmOutputText ?? ""),
+    llmOutputText,
     sessionId: ctx.sessionId,
     iteration: Number(ctx.iteration ?? 0),
     contactName: ctx.contactName ?? "",
@@ -3454,7 +5336,44 @@ async function onLLMOutput(ctx) {
     // metadata 透传: 客户端 sendInstantPush 时塞了 charId; SW 路由要它分发到具体角色
     callerMetadata: ctx.metadata && typeof ctx.metadata === "object" ? ctx.metadata : {}
   });
-  return decision;
+  if (state && state.bridge.experienceMode === "switch" && decision.decision === "finish" && classified.kind === "finish" && classified.cleanedText) {
+    const wake = classified.directives.find((directive) => directive.type === "amsg_wake_at");
+    if (wake?.type === "amsg_wake_at") {
+      const before = state.created.length;
+      let feedback = "";
+      try {
+        feedback = await scheduleBridgeTask(state, {
+          send_at: wake.localDateTime,
+          mode: "auto",
+          recurrence: "none",
+          expire_policy: "force"
+        });
+      } catch (error) {
+        feedback = `\u5EFA\u7ACB\u4E0B\u4E00\u6B21\u5524\u9192\u5931\u8D25\uFF1A${error?.message || String(error)}`;
+      }
+      if (state.created.length === before && (state.wakeScheduleRetries ?? 0) < 1) {
+        state.wakeScheduleRetries = (state.wakeScheduleRetries ?? 0) + 1;
+        return {
+          decision: "continue",
+          nextHistory: [
+            ...ctx.messages,
+            { role: "assistant", content: llmOutputText },
+            {
+              role: "system",
+              content: `[\u7CFB\u7EDF\uFF1A\u4F60\u521A\u624D\u7ED9\u81EA\u5DF1\u5B89\u6392\u4E0B\u4E00\u6B21\u5524\u9192\u6CA1\u6709\u6210\u529F\u3002\u539F\u56E0\uFF1A${feedback} \u8BF7\u6839\u636E\u9650\u5236\u91CD\u65B0\u9009\u62E9\u6709\u6548\u65F6\u95F4\uFF0C\u6216\u4E0D\u518D\u5B89\u6392\uFF1B\u4E0D\u8981\u5411\u7528\u6237\u89E3\u91CA\u7CFB\u7EDF\u89C4\u5219\u3002]`
+            }
+          ]
+        };
+      }
+      for (const payload of decision.pushPayloads) {
+        const directives = payload?.metadata?.directives;
+        if (Array.isArray(directives)) {
+          payload.metadata.directives = directives.filter((directive) => directive?.type !== "amsg_wake_at");
+        }
+      }
+    }
+  }
+  return attachInstantAmsgChanges(decision, state);
 }
 function buildPushDecision(input, deps) {
   const { llmOutputText, sessionId, iteration, contactName, avatarUrl, callerMetadata } = input;

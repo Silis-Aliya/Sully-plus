@@ -56,6 +56,60 @@ describe('buildAmsg2TaskContextText', () => {
     expect(text).toContain('进行中：');
   });
 
+  it('Switch 只教授隐藏唤醒指令，并按用户名所在地填写时间', () => {
+    const text = buildAmsg2TaskContextText(
+      [], [], Date.parse('2026-08-05T10:00:00Z'), undefined, undefined, '条条', 'switch', [], 'UTC',
+    );
+    expect(text).toContain('【自主联系】');
+    expect(text).toContain('【唤醒额度·仅你可见】');
+    expect(text).toContain('当前 60 分钟内已用 0 次，剩余 3 次');
+    expect(text).toContain('下次最早可安排在 2026-08-05 10:01:00');
+    expect(text).toContain('不要向条条解释或复述');
+    expect(text).toContain('静默时间：每天 04:00 至当天 10:00；不得在此期间安排唤醒');
+    expect(text).toContain('[[AMSG_WAKE_AT: YYYY-MM-DDTHH:mm:ss]]');
+    expect(text).toContain('时间按照条条所在地的当地时间填写，不要附带时区后缀');
+    expect(text).toContain('一次只安排下一次；拿不准时可以不安排');
+    expect(text).toContain('任意连续 60 分钟内，最多只能有 3 次自主唤醒');
+    expect(text).toContain('额度用完时，不得早于系统提示的最早可用时间');
+    expect(text).not.toContain('schedule_active_message');
+    expect(text).not.toContain('【你的主动消息排程·仅你可见】');
+  });
+
+  it('Switch 显示用户自定义的跨夜静默时间', () => {
+    const text = buildAmsg2TaskContextText(
+      [], [], Date.parse('2026-08-05T10:00:00Z'), undefined, undefined,
+      '条条', 'switch', [], 'UTC', '15:00', '09:00',
+    );
+    expect(text).toContain('静默时间：每天 15:00 至次日 09:00；不得在此期间安排唤醒');
+  });
+
+  it('Switch 唤醒额度会统计最近一小时并给出下一次最早时间', () => {
+    const now = Date.parse('2026-08-05T10:00:00Z');
+    const recent = [50, 30, 10].map((minutesAgo, index) => ({
+      ...pendingTask,
+      taskUuid: `recent-${index}`,
+      clientTaskId: `recent-client-${index}`,
+      mode: 'auto' as const,
+      firstSendTime: new Date(now - minutesAgo * 60_000).toISOString(),
+    }));
+    const text = buildAmsg2TaskContextText(
+      [], [], now, undefined, undefined, '条条', 'switch', recent, 'UTC',
+    );
+    expect(text).toContain('当前 60 分钟内已用 3 次，剩余 0 次');
+    expect(text).toContain('下次最早可安排在 2026-08-05 10:10:00');
+  });
+
+  it('Switch 不把旧版每日兜底展示给角色或算进额度', () => {
+    const fallback = { ...pendingTask, switchFallback: true, recurrenceType: 'daily' as const };
+    const text = buildAmsg2TaskContextText(
+      [fallback], [], Date.parse('2026-08-05T10:00:00Z'), undefined,
+      undefined, '条条', 'switch', [fallback], 'UTC',
+    );
+    expect(text).toContain('当前 60 分钟内已用 0 次，剩余 3 次');
+    expect(text).not.toContain('进行中：');
+    expect(text).not.toContain('schedule/cancel/renew');
+  });
+
   it('用 ChatApp 用户名称呼对方，不再使用泛称', () => {
     const text = buildAmsg2TaskContextText([], [], Date.now(), undefined, undefined, '条条');
     expect(text).toContain('你和条条的联系');
@@ -91,14 +145,18 @@ describe('buildAmsg2TaskContextText', () => {
   });
 
   // 回归守卫：手动取消以前没有任何回执，角色下次还照着旧承诺说「放心我叫你」。
-  it('手动取消的回执单独成段，并说明不必向用户求证', () => {
+  it('手动取消的回执带用户名，并允许自然处理但禁止恢复原唤醒', () => {
     const cancelled: Amsg2ExpiredNoticeRecord = {
       ...expired, id: `${expired.id}:cancelled`, kind: 'user-cancelled',
     };
-    const text = buildAmsg2TaskContextText([], [cancelled], Date.now(), undefined)!;
-    expect(text).toContain('已被手动取消');
+    const text = buildAmsg2TaskContextText([], [cancelled], Date.now(), undefined, undefined, '条条')!;
+    expect(text).toContain('已被条条手动取消');
     expect(text).toContain('[aabbccdd]');
-    expect(text).toContain('不必向用户求证');
+    expect(text).toContain('条条取消了这次原定的唤醒');
+    expect(text).toContain('自由、自然地决定是否提起、是否询问，或直接略过');
+    expect(text).toContain('不要反复求证');
+    expect(text).toContain('不要擅自恢复或按原计划重新安排这次唤醒');
+    expect(text).not.toContain('用 schedule_active_message 重新排一条');
     // 手动取消不该混进「自动作废」那段的三选一引导里（续期对它没有意义）
     expect(text).not.toContain('到点时对话正在进行');
   });
@@ -109,7 +167,7 @@ describe('buildAmsg2TaskContextText', () => {
     };
     const text = buildAmsg2TaskContextText([], [expired, cancelled], Date.now(), undefined)!;
     expect(text).toContain('已作废（到点时对话正在进行');
-    expect(text).toContain('已被手动取消');
+    expect(text).toContain('已被对方手动取消');
   });
 
   // 回归守卫：工具循环的第二轮起，这份清单是现算的，里面会有角色本轮刚排好的任务。

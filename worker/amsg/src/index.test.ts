@@ -17,6 +17,7 @@ import {
   AMSG_FIRE_PACK_KEY,
   AMSG_LAST_SKIP_KEY,
   AMSG_SELF_LOG_KEY,
+  AMSG_SWITCH_CONTROL_KEY,
   AMSG_SLOT_CURRENT_TIME,
   AMSG_SLOT_SELF_LOG,
   AMSG_SLOT_TASK_INSTRUCTION,
@@ -27,6 +28,8 @@ import {
   parseSelfLog,
 } from '../../../utils/amsgFirePack';
 import { AMSG_CHAT_PRESENCE_KEY } from '../../../utils/amsgChatPresence';
+import { AMSG_MUSIC_WAKE_PRESENCE_KEY } from '../../../utils/amsgMusicWakePresence';
+import { AMSG_XHS_WAKE_GATE_KEY } from '../../../utils/amsgXhsWakeGate';
 import { AMSG_TOOL_CONFIG_KEY, AMSG_TOOL_PACK_KEY } from '../../../utils/amsgToolPack';
 import { buildMcpNameMap, MCP_FIRE_NAME_BUDGET, type McpFireServer } from '../../../utils/mcpFireCore';
 import { MAX_FIRE_SCHEDULES } from '../../../utils/amsgFireSchedule';
@@ -48,6 +51,8 @@ const firePackValue = (
   lastUserMessageAt,
   tzId: 'Asia/Shanghai',
   userTzId: 'Asia/Shanghai',
+  switchQuietStart: '04:00',
+  switchQuietEnd: '10:00',
   targetName: '小明',
   builtAt: PACK_BUILT_AT,
   pendingTasks: [],
@@ -63,6 +68,12 @@ const presenceValue = (
   charId: opts.charId ?? CHAR_ID,
   activeAt,
   lastUserMessageAt: opts.lastUserMessageAt === undefined ? activeAt : opts.lastUserMessageAt,
+});
+
+const musicWakePresenceValue = (activeAt: number, charId = CHAR_ID) => JSON.stringify({
+  v: 1,
+  charId,
+  activeAt,
 });
 
 // tool_pack / tool_config 与 fire_pack 同批原子上传，所以默认造齐——缺任何一份都是
@@ -99,6 +110,8 @@ const makeCtx = (opts: {
   globalRows?: Array<{ key: string; value: string }>;
   recurrenceType?: string;
   nextSendAt?: string | null;
+  now?: Date;
+  scheduleTask?: (options: any) => Promise<any>;
   /** 写不进 client_state 时的样子：跳过原因写失败不该连累这次 skip。 */
   writeStateFails?: boolean;
 }) => {
@@ -135,8 +148,9 @@ const makeCtx = (opts: {
       userId: 'u1',
       readState,
       writeState,
-      now: NOW,
+      now: opts.now ?? NOW,
       scratch,
+      scheduleTask: opts.scheduleTask,
     } as any,
     scratch,
     readState,
@@ -173,12 +187,148 @@ describe('onBeforeFire 四道门', () => {
     expect((scratch.fire as any).occurrenceMs).toBe(Date.parse('2026-07-25T12:00:00.000Z'));
   });
 
+  it('云端开关已关闭 → 残留任务直接 skip，缺 fire_pack 也不调用模型', async () => {
+    const { ctx, writeState } = makeCtx({
+      charRows: [{
+        key: AMSG_SWITCH_CONTROL_KEY,
+        value: JSON.stringify({ enabled: false, experienceMode: 'switch' }),
+      }],
+    });
+
+    await expect(amsgHooks.onBeforeFire(ctx)).resolves.toEqual({ skip: true });
+    expect(writeState).toHaveBeenCalledTimes(1);
+    const written = JSON.parse(String(writeState.mock.calls[0][1][0].value));
+    expect(written.reason).toBe('active-msg-disabled');
+  });
+
+  it('switch_control 损坏时保持兼容放行，不误杀历史任务', async () => {
+    const { ctx } = makeCtx({
+      charRows: [
+        { key: AMSG_SWITCH_CONTROL_KEY, value: '{bad-json' },
+        { key: AMSG_FIRE_PACK_KEY, value: firePackValue() },
+        { key: AMSG_TOOL_PACK_KEY, value: toolPackValue },
+      ],
+    });
+
+    expect(fired(await amsgHooks.onBeforeFire(ctx)).messages).toHaveLength(1);
+  });
+
   it('活跃会话租约新鲜 → skip，而且排在 fire_pack 检查之前（缺 fire_pack 也照样 skip）', async () => {
     const { ctx } = makeCtx({
       // 故意不给 fire_pack：如果 presence 门被挪到后面，这里会变成抛错而不是 skip
       charRows: [{ key: AMSG_CHAT_PRESENCE_KEY, value: presenceValue(NOW.getTime() - 5_000) }],
     });
     await expect(amsgHooks.onBeforeFire(ctx)).resolves.toEqual({ skip: true });
+  });
+
+  it('用户时区 04:00-10:00 直接静默，不启动模型', async () => {
+    // NOW=12:00Z，在洛杉矶夏令时是 05:00。
+    const { ctx, writeState } = makeCtx({
+      charRows: [
+        { key: AMSG_FIRE_PACK_KEY, value: firePackValue(null, { userTzId: 'America/Los_Angeles' }) },
+        { key: AMSG_TOOL_PACK_KEY, value: toolPackValue },
+      ],
+    });
+    await expect(amsgHooks.onBeforeFire(ctx)).resolves.toEqual({ skip: true });
+    const written = JSON.parse(String(writeState.mock.calls[0][1][0].value));
+    expect(written.reason).toBe('quiet-hours');
+  });
+
+  it('Switch 静默命中后在静默结束时恢复一次新的自主唤醒机会', async () => {
+    const scheduleTask = vi.fn(async (options: any) => ({
+      created: true, id: 99, uuid: options.uuid, nextSendAt: options.firstSendTime,
+    }));
+    const { ctx } = makeCtx({
+      charRows: [
+        {
+          key: AMSG_FIRE_PACK_KEY,
+          value: firePackValue(null, {
+            experienceMode: 'switch',
+            userTzId: 'America/Los_Angeles',
+          }),
+        },
+        { key: AMSG_TOOL_PACK_KEY, value: toolPackValue },
+      ],
+      scheduleTask,
+    });
+
+    await expect(amsgHooks.onBeforeFire(ctx)).resolves.toEqual({ skip: true });
+    expect(scheduleTask).toHaveBeenCalledTimes(1);
+    const recovery = scheduleTask.mock.calls[0][0];
+    expect(recovery.firstSendTime).toBe('2026-07-25T17:00:00.000Z');
+    expect(recovery.recurrenceType).toBe('none');
+    expect(recovery.messageType).toBe('auto');
+    expect(recovery.metadata.amsgExpirePolicy).toBe('force');
+    expect(recovery.metadata.amsgQuietRecovery).toBe(true);
+  });
+
+  it('Classic 静默命中后不创建 Switch 恢复任务', async () => {
+    const scheduleTask = vi.fn();
+    const { ctx } = makeCtx({
+      charRows: [
+        { key: AMSG_FIRE_PACK_KEY, value: firePackValue(null, { userTzId: 'America/Los_Angeles' }) },
+        { key: AMSG_TOOL_PACK_KEY, value: toolPackValue },
+      ],
+      scheduleTask,
+    });
+
+    await expect(amsgHooks.onBeforeFire(ctx)).resolves.toEqual({ skip: true });
+    expect(scheduleTask).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured cross-midnight quiet range before starting the model', async () => {
+    // NOW=12:00Z is 20:00 in Shanghai, inside the custom 15:00-next-day-09:00 range.
+    const { ctx, writeState } = makeCtx({
+      charRows: [
+        {
+          key: AMSG_FIRE_PACK_KEY,
+          value: firePackValue(null, {
+            userTzId: 'Asia/Shanghai',
+            switchQuietStart: '15:00',
+            switchQuietEnd: '09:00',
+          }),
+        },
+        { key: AMSG_TOOL_PACK_KEY, value: toolPackValue },
+      ],
+    });
+    await expect(amsgHooks.onBeforeFire(ctx)).resolves.toEqual({ skip: true });
+    const written = JSON.parse(String(writeState.mock.calls[0][1][0].value));
+    expect(written.reason).toBe('quiet-hours');
+  });
+
+  it('一起听唤醒租约新鲜 → AMSG 让路，缺 fire_pack 也不再开第二轮模型', async () => {
+    const { ctx } = makeCtx({
+      charRows: [{
+        key: AMSG_MUSIC_WAKE_PRESENCE_KEY,
+        value: musicWakePresenceValue(NOW.getTime() - 5_000),
+      }],
+    });
+    await expect(amsgHooks.onBeforeFire(ctx)).resolves.toEqual({ skip: true });
+  });
+
+  it('一起听唤醒优先级高于 force AI 任务', async () => {
+    const { ctx } = makeCtx({
+      metadata: { amsgExpirePolicy: 'force' },
+      charRows: [{
+        key: AMSG_MUSIC_WAKE_PRESENCE_KEY,
+        value: musicWakePresenceValue(NOW.getTime() - 5_000),
+      }],
+    });
+    await expect(amsgHooks.onBeforeFire(ctx)).resolves.toEqual({ skip: true });
+  });
+
+  it('一起听唤醒租约过期后不再拦 AMSG', async () => {
+    const { ctx } = makeCtx({
+      charRows: [
+        {
+          key: AMSG_MUSIC_WAKE_PRESENCE_KEY,
+          value: musicWakePresenceValue(NOW.getTime() - 120_000),
+        },
+        { key: AMSG_FIRE_PACK_KEY, value: firePackValue() },
+        { key: AMSG_TOOL_PACK_KEY, value: toolPackValue },
+      ],
+    });
+    expect(fired(await amsgHooks.onBeforeFire(ctx)).messages).toHaveLength(1);
   });
 
   it('force 策略不吃活跃租约这道门（闹钟型照发）', async () => {
@@ -192,6 +342,37 @@ describe('onBeforeFire 四道门', () => {
     });
     const result = await amsgHooks.onBeforeFire(ctx);
     expect(fired(result).messages).toHaveLength(1);
+  });
+
+  it('Switch 到点时正在实时聊天仍让路，Classic force 语义不受影响', async () => {
+    const { ctx } = makeCtx({
+      metadata: { amsgExpirePolicy: 'force' },
+      charRows: [
+        { key: AMSG_CHAT_PRESENCE_KEY, value: presenceValue(NOW.getTime() - 5_000) },
+        {
+          key: AMSG_FIRE_PACK_KEY,
+          value: firePackValue(null, { experienceMode: 'switch' }),
+        },
+        { key: AMSG_TOOL_PACK_KEY, value: toolPackValue },
+      ],
+    });
+    await expect(amsgHooks.onBeforeFire(ctx)).resolves.toEqual({ skip: true });
+  });
+
+  it('旧 Switch 任务仍写 expire 时，等待期间的新留言不会使原定闹钟作废', async () => {
+    const anchorMs = NOW.getTime() - 60 * 60_000;
+    const userMessageAt = NOW.getTime() - 10 * 60_000;
+    const { ctx } = makeCtx({
+      metadata: { amsgExpirePolicy: 'expire', amsgAnchorMs: anchorMs },
+      charRows: [
+        {
+          key: AMSG_FIRE_PACK_KEY,
+          value: firePackValue(userMessageAt, { experienceMode: 'switch' }),
+        },
+        { key: AMSG_TOOL_PACK_KEY, value: toolPackValue },
+      ],
+    });
+    expect(fired(await amsgHooks.onBeforeFire(ctx)).messages).toHaveLength(1);
   });
 
   it('租约过期（超 TTL）不拦', async () => {
@@ -781,6 +962,230 @@ describe('轮次上限与上游共用同一个数', () => {
   });
 });
 
+describe('Switch 一次性唤醒与可选续排', () => {
+  const switchRows = () => [
+    { key: AMSG_FIRE_PACK_KEY, value: firePackValue(null, { experienceMode: 'switch' }) },
+    { key: AMSG_TOOL_PACK_KEY, value: toolPackValue },
+  ];
+  const scheduleTask = vi.fn(async (options: any) => ({
+    created: true as const,
+    id: 7,
+    uuid: options.uuid,
+    nextSendAt: options.firstSendTime,
+  }));
+
+  afterEach(() => scheduleTask.mockClear());
+
+  it('仅在云端 XHS 可用时给自主唤醒加入可选浏览提示', async () => {
+    const xhsToolPack = JSON.stringify({
+      ...JSON.parse(toolPackValue),
+      xhsEnabled: true,
+    });
+    const xhsToolConfig = JSON.stringify({
+      ...JSON.parse(toolConfigValue),
+      xhsMcpConfig: {
+        enabled: true,
+        serverUrl: 'https://xhs.example.com/mcp',
+      },
+    });
+    const { ctx } = makeCtx({
+      charRows: [
+        { key: AMSG_FIRE_PACK_KEY, value: firePackValue(null, { experienceMode: 'switch' }) },
+        { key: AMSG_TOOL_PACK_KEY, value: xhsToolPack },
+        {
+          key: AMSG_XHS_WAKE_GATE_KEY,
+          value: JSON.stringify({ v: 1, occurrenceMs: NOW.getTime(), eligible: true }),
+        },
+      ],
+      globalRows: [{ key: AMSG_TOOL_CONFIG_KEY, value: xhsToolConfig }],
+      scheduleTask,
+    });
+
+    const prepared = fired(await amsgHooks.onBeforeFire(ctx));
+    expect(prepared.messages[0].content).toContain('你可以自由决定是否浏览或搜索');
+    expect(prepared.messages[0].content).toContain('[[XHS_DETAIL: noteId]]');
+    expect(prepared.messages[0].content).toContain('可以分享多篇');
+    expect(prepared.messages[0].content).toContain('不要每次醒来都固定浏览');
+  });
+
+  it('上一次开放过 XHS 时，本次强制关闭并写下稳定结果', async () => {
+    const xhsToolPack = JSON.stringify({ ...JSON.parse(toolPackValue), xhsEnabled: true });
+    const xhsToolConfig = JSON.stringify({
+      ...JSON.parse(toolConfigValue),
+      xhsMcpConfig: { enabled: true, serverUrl: 'https://xhs.example.com/mcp' },
+    });
+    const { ctx, writeState } = makeCtx({
+      charRows: [
+        { key: AMSG_FIRE_PACK_KEY, value: firePackValue(null, { experienceMode: 'switch' }) },
+        { key: AMSG_TOOL_PACK_KEY, value: xhsToolPack },
+        {
+          key: AMSG_XHS_WAKE_GATE_KEY,
+          value: JSON.stringify({ v: 1, occurrenceMs: NOW.getTime() - 60_000, eligible: true }),
+        },
+      ],
+      globalRows: [{ key: AMSG_TOOL_CONFIG_KEY, value: xhsToolConfig }],
+      scheduleTask,
+    });
+
+    const prepared = fired(await amsgHooks.onBeforeFire(ctx));
+    expect(prepared.messages[0].content).not.toContain('（小红书浏览）');
+    const gateWrite = writeState.mock.calls.flatMap((call) => call[1])
+      .find((entry: any) => entry.key === AMSG_XHS_WAKE_GATE_KEY);
+    expect(JSON.parse(gateWrite.value)).toEqual({
+      v: 1,
+      occurrenceMs: NOW.getTime(),
+      eligible: false,
+    });
+  });
+
+  it('旧前端上传的常驻 XHS 能力段由 Worker 清掉，不必等待前端重新同步', async () => {
+    const legacyTemplate = [
+      `现在是 ${AMSG_SLOT_CURRENT_TIME}。`,
+      '【角色系统设定】',
+      '角色本身的设定保留。',
+      '9. **📕 小红书（你的社交账号）**:',
+      '你可以自由地搜索、浏览、查看详情、点赞和分享。',
+      '[[XHS_BROWSE]]',
+      '[[XHS_DETAIL: noteId]]',
+      '（注意：上面角色设定里的状态是快照。）',
+      `【本次任务】${AMSG_SLOT_TASK_INSTRUCTION}`,
+    ].join('\n');
+    const { ctx } = makeCtx({
+      charRows: [
+        {
+          key: AMSG_FIRE_PACK_KEY,
+          value: firePackValue(null, { experienceMode: 'switch', template: legacyTemplate }),
+        },
+        { key: AMSG_TOOL_PACK_KEY, value: toolPackValue },
+      ],
+      scheduleTask,
+    });
+
+    const prepared = fired(await amsgHooks.onBeforeFire(ctx));
+    expect(prepared.messages[0].content).toContain('角色本身的设定保留。');
+    expect(prepared.messages[0].content).not.toContain('你可以自由地搜索、浏览、查看详情');
+    expect(prepared.messages[0].content).not.toContain('[[XHS_BROWSE]]');
+    expect(prepared.messages[0].content).not.toContain('[[XHS_DETAIL: noteId]]');
+  });
+
+  it('未抽中 XHS 时直接剥掉残留标签，不进入额外工具轮', async () => {
+    const xhsToolPack = JSON.stringify({ ...JSON.parse(toolPackValue), xhsEnabled: true });
+    const xhsToolConfig = JSON.stringify({
+      ...JSON.parse(toolConfigValue),
+      xhsMcpConfig: { enabled: true, serverUrl: 'https://xhs.example.com/mcp' },
+    });
+    const { ctx, scratch, writeState } = makeCtx({
+      charRows: [
+        { key: AMSG_FIRE_PACK_KEY, value: firePackValue(null, { experienceMode: 'switch' }) },
+        { key: AMSG_TOOL_PACK_KEY, value: xhsToolPack },
+        {
+          key: AMSG_XHS_WAKE_GATE_KEY,
+          value: JSON.stringify({ v: 1, occurrenceMs: NOW.getTime(), eligible: false }),
+        },
+      ],
+      globalRows: [{ key: AMSG_TOOL_CONFIG_KEY, value: xhsToolConfig }],
+      scheduleTask,
+    });
+    await amsgHooks.onBeforeFire(ctx);
+
+    const decision = await amsgHooks.onLLMOutput({
+      sessionId: 'sess_switch_xhs_not_selected', taskId: 42, llmResponse: {},
+      llmOutputText: '忽然还是更想直接和你说话。\n[[XHS_BROWSE]]\n[[XHS_SHARE: 1]]',
+      contactName: 'Nyah', metadata: { charId: CHAR_ID, amsgMode: 'auto' },
+      scratch, writeState, scheduleTask, iteration: 0,
+    } as any) as any;
+
+    expect(decision.decision).toBe('finish');
+    expect(decision.pushPayloads.map((payload: any) => payload.message).join('\n'))
+      .toBe('忽然还是更想直接和你说话。');
+    expect(JSON.stringify(decision)).not.toContain('xhs_');
+  });
+
+  it('自主唤醒必须先发现再看详情，违规调用后直接收尾', async () => {
+    const { ctx, scratch, writeState } = makeCtx({ charRows: switchRows(), scheduleTask });
+    await amsgHooks.onBeforeFire(ctx);
+    const session = { sessionId: 'sess_switch_xhs', scratch, iteration: 0 } as any;
+
+    const [detail] = await amsgHooks.executeToolCalls([
+      { id: 'x1', function: { name: 'xhs_detail', arguments: '{"noteId":"note-1"}' } },
+    ], session);
+    expect(detail.content).toContain('不能凭空打开笔记详情');
+
+    const [search] = await amsgHooks.executeToolCalls([
+      { id: 'x2', function: { name: 'xhs_search', arguments: '{"keyword":"猫"}' } },
+    ], session);
+    expect(search.content).toContain('小红书浏览已经结束');
+
+    const decision = await amsgHooks.onLLMOutput({
+      sessionId: 'sess_switch_xhs', taskId: 42, llmResponse: {},
+      llmOutputText: '那我就先不继续翻了，忽然还是更想和你说说话。\n[[XHS_SEARCH: 猫]]',
+      contactName: 'Nyah', metadata: { charId: CHAR_ID, amsgMode: 'auto' },
+      scratch, writeState, scheduleTask, iteration: 1,
+    } as any) as any;
+    expect(decision.decision).not.toBe('tool-request');
+    expect(['finish', 'skip-push']).toContain(decision.decision);
+  });
+
+  it('醒来提示不暴露原版排程工具；标签被剥掉并建立唯一一次后续唤醒', async () => {
+    const { ctx, scratch, writeState } = makeCtx({ charRows: switchRows(), scheduleTask });
+    const prepared = fired(await amsgHooks.onBeforeFire(ctx));
+
+    expect(prepared.messages[0].content).toContain('【自主唤醒】');
+    expect(prepared.messages[0].content).toContain('[[AMSG_WAKE_AT: YYYY-MM-DDTHH:mm:ss]]');
+    expect(prepared.messages[0].content).toContain('当前 60 分钟内已用 1 次，剩余 2 次');
+    expect(prepared.tools?.some((tool) => tool.function.name === 'schedule_active_message') ?? false)
+      .toBe(false);
+
+    const decision = await amsgHooks.onLLMOutput({
+      sessionId: 'sess_switch_42',
+      taskId: 42,
+      llmResponse: {},
+      llmOutputText: '刚刚忽然想起你了。\n[[AMSG_WAKE_AT: 2026-07-26T10:30:00]]',
+      contactName: 'Nyah',
+      metadata: { charId: CHAR_ID, amsgClientTaskId: 'client-task-1', amsgMode: 'auto' },
+      scratch,
+      writeState,
+      scheduleTask,
+    } as any) as any;
+
+    expect(decision.decision).toBe('finish');
+    expect(decision.pushPayloads[0].message).toBe('刚刚忽然想起你了。');
+    expect(JSON.stringify(decision.pushPayloads)).not.toContain('AMSG_WAKE_AT');
+    expect(scheduleTask).toHaveBeenCalledTimes(1);
+    const options = scheduleTask.mock.calls[0][0];
+    expect(options.firstSendTime).toBe('2026-07-26T02:30:00.000Z');
+    expect(options.recurrenceType).toBe('none');
+    expect(options.messageType).toBe('auto');
+    expect(options.metadata.amsgExpirePolicy).toBe('force');
+    expect(decision.pushPayloads[0].metadata.amsgSelfScheduled).toHaveLength(1);
+  });
+
+  it('没有输出下一次标签时照常发消息且链路自然结束', async () => {
+    const { ctx, scratch, writeState } = makeCtx({ charRows: switchRows(), scheduleTask });
+    await amsgHooks.onBeforeFire(ctx);
+    const decision = await amsgHooks.onLLMOutput({
+      sessionId: 'sess_switch_sleep', taskId: 42, llmResponse: {},
+      llmOutputText: '晚安，今天就到这里。', contactName: 'Nyah',
+      metadata: { charId: CHAR_ID, amsgMode: 'auto' }, scratch, writeState, scheduleTask,
+    } as any) as any;
+
+    expect(decision.decision).toBe('finish');
+    expect(decision.pushPayloads[0].message).toBe('晚安，今天就到这里。');
+    expect(scheduleTask).not.toHaveBeenCalled();
+  });
+
+  it('旧版 daily 兜底永远跳过，不再启动模型', async () => {
+    const { ctx } = makeCtx({
+      charRows: switchRows(),
+      recurrenceType: 'daily',
+      metadata: { amsgSwitchFallback: true },
+      scheduleTask,
+    });
+    expect(await amsgHooks.onBeforeFire(ctx)).toEqual({ skip: true });
+  });
+
+});
+
 // 通用 MCP 的执行环节：worker 直连用户自己配的服务器（服务端 fetch 没有 CORS，
 // 不经代理）。这里钉三件事——真的打到了配置里那个地址并带上凭据、同一次 fire 内
 // 握手只做一次、以及任何失败都以 ok:false 回喂而不是把整条 fire 炸掉。
@@ -906,6 +1311,8 @@ describe('self_log — 角色自述回写', () => {
 
   /** 带自述槽位的 fire_pack（当前客户端打的包长这样）。 */
   const slottedFirePack = (builtAt: number = PACK_BUILT_AT) => JSON.stringify({
+    switchQuietStart: '04:00',
+    switchQuietEnd: '10:00',
     v: FIRE_PACK_VERSION,
     template: `【最近对话上下文】\n用户：先睡了${AMSG_SLOT_SELF_LOG}\n\n【本次任务】\n${AMSG_SLOT_TASK_INSTRUCTION}`,
     lastUserMessageAt: null,
@@ -1090,6 +1497,8 @@ describe('self_log — 角色自述回写', () => {
       lastUserMessageAt: null,
       tzId: 'Asia/Shanghai',
       userTzId: 'Asia/Shanghai',
+      switchQuietStart: '04:00',
+      switchQuietEnd: '10:00',
       targetName: '小明',
       pendingTasks: [],
       scene: null,
@@ -1212,12 +1621,18 @@ describe('自排后续任务', () => {
   const makeStash = (over: Record<string, unknown> = {}) => ({
     session: { narrations: [], toolCalls: [], duplicateToolCalls: 0, mcpCallSeq: 0 },
     occurrenceMs: Date.parse('2026-07-25T12:00:00.000Z'),
+    fireNowMs: Date.parse('2026-07-25T12:00:00.000Z'),
     selfLog: { v: 2 as const, basePackAt: 1, entries: [], tasks: [] },
     pendingTaskCount: 0,
+    pendingTasks: [],
     scheduledTasks: [],
     charId: CHAR_ID,
+    experienceMode: 'classic',
     anchorMs: 1_700_000_000_000,
     tz: { tzId: 'Asia/Shanghai' },
+    userTzId: 'Asia/Shanghai',
+    switchQuietStart: '04:00',
+    switchQuietEnd: '10:00',
     taskUuid: TASK_UUID,
     taskRowId: '42',
     ...over,
@@ -1249,6 +1664,20 @@ describe('自排后续任务', () => {
     expect(stash.scheduledTasks).toHaveLength(1);
     expect(stash.selfLog.tasks).toHaveLength(1);
     expect(stash.selfLog.tasks[0].source).toBe('character');
+  });
+
+  it('Switch 续排忽略 expire 参数：等待期间的新留言留给下次醒来读取', async () => {
+    const stash = makeStash({ experienceMode: 'switch' });
+    await runFireScheduleTool(
+      stash,
+      okSchedule,
+      { send_at: sendAt, expire_policy: 'expire' },
+      NOW_MS,
+    );
+
+    const opts = okSchedule.mock.calls[0][0];
+    expect(opts.metadata.amsgExpirePolicy).toBe('force');
+    expect(stash.scheduledTasks[0].expirePolicy).toBe('force');
   });
 
   // 幽灵任务回归守卫：角色排了任务，但这轮最终一句话都没发出去（只做了副作用 / 空生成 /
@@ -1357,6 +1786,79 @@ describe('自排后续任务', () => {
     expect(okSchedule).not.toHaveBeenCalled();
   });
 
+  it('滚动一小时已有三次自主唤醒时，第四次续排会被打回', async () => {
+    const pendingTasks = [10, 20, 30].map((minutes, index) => ({
+      taskUuid: `pending-${index}`,
+      clientTaskId: `pending-client-${index}`,
+      mode: 'auto' as const,
+      firstSendTime: new Date(NOW_MS + minutes * 60_000).toISOString(),
+      recurrenceType: 'none' as const,
+      expirePolicy: 'expire' as const,
+      source: 'character' as const,
+      status: 'scheduled' as const,
+      createdAt: NOW_MS,
+    }));
+    const stash = makeStash({ pendingTasks, pendingTaskCount: pendingTasks.length });
+    const out = await runFireScheduleTool(
+      stash,
+      okSchedule,
+      { send_at: new Date(NOW_MS + 40 * 60_000).toISOString() },
+      NOW_MS,
+    );
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('hourly_rate_limit');
+    expect(okSchedule).not.toHaveBeenCalled();
+  });
+
+  it('已经发出的唤醒也占频率额度，不能靠触发后续排绕过', async () => {
+    const stash = makeStash({
+      selfLog: {
+        v: 2 as const,
+        basePackAt: 1,
+        entries: [
+          { at: NOW_MS - 20 * 60_000, text: '第一条' },
+          { at: NOW_MS - 10 * 60_000, text: '第二条' },
+        ],
+        tasks: [],
+      },
+    });
+    const out = await runFireScheduleTool(
+      stash,
+      okSchedule,
+      { send_at: new Date(NOW_MS + 10 * 60_000).toISOString() },
+      NOW_MS,
+    );
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('hourly_rate_limit');
+    expect(okSchedule).not.toHaveBeenCalled();
+  });
+
+  it('角色不能把后续自主唤醒排进用户的睡眠时间', async () => {
+    // sendAt=13:30Z，在洛杉矶夏令时是 06:30。
+    const stash = makeStash({ userTzId: 'America/Los_Angeles' });
+    const out = await runFireScheduleTool(stash, okSchedule, { send_at: sendAt }, NOW_MS);
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('quiet_hours');
+    expect(okSchedule).not.toHaveBeenCalled();
+  });
+
+  it('rejects self-scheduling inside the configured cross-midnight quiet range', async () => {
+    const stash = makeStash({
+      userTzId: 'Asia/Shanghai',
+      switchQuietStart: '15:00',
+      switchQuietEnd: '09:00',
+    });
+    const out = await runFireScheduleTool(
+      stash,
+      okSchedule,
+      { send_at: new Date(NOW_MS + 90 * 60_000).toISOString() },
+      NOW_MS,
+    );
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('quiet_hours');
+    expect(okSchedule).not.toHaveBeenCalled();
+  });
+
   it('参数写歪 → 回喂一句能照做的话，不抛错（抛错等于整条任务重跑）', async () => {
     const stash = makeStash();
     const out = await runFireScheduleTool(stash, okSchedule, { send_at: '明天' }, NOW_MS);
@@ -1367,7 +1869,9 @@ describe('自排后续任务', () => {
 
   // ③ 在 fire 工具入口的落地：角色写的裸墙钟按 stash.tz（fire_pack 的参照系）解析。
   it('裸 send_at 按角色时区解析（UTC 运行时不再差一个时差）', async () => {
-    const stash = makeStash();   // Asia/Shanghai
+    // 这条只测角色墙钟换算；用户所在地设为纽约，避免 09:00 上海对应的时刻
+    // 落进用户 04:00-10:00 睡眠时段，让安静闸抢走本用例的测试目标。
+    const stash = makeStash({ userTzId: 'America/New_York' });   // 角色仍是 Asia/Shanghai
     const out = await runFireScheduleTool(
       stash, okSchedule, { send_at: '2026-07-26T09:00:00' }, NOW_MS,
     );

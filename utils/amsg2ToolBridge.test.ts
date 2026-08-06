@@ -23,8 +23,9 @@ const UUIDS = [
 ];
 const shortOf = (uuid: string) => uuid.slice(0, 8);
 
-// 排程接口把角色写的墙钟折成的绝对时刻（上海 2026-08-03 21:00 / 纽约同日 09:00）。
-const RESOLVED_ISO = '2026-08-03T13:00:00.000Z';
+// 排程接口把角色写的墙钟折成的绝对时刻（纽约夏令时 09:00）。用足够远的
+// 未来日期，避免样例过去 48 小时后被任务清理逻辑当成陈旧记录。
+const RESOLVED_ISO = '2099-08-03T13:00:00.000Z';
 
 // 模拟 React：updateCharacter 只记录落盘的 config，绝不回写 char——
 // 这样只有「session 自己兜住最新 config」才能让同轮后续调用读到累加结果。
@@ -173,6 +174,33 @@ describe('amsg2ToolBridge 同一轮多次调用累加', () => {
     // 但 session 读得到累加后的两条。
     expect(deps.getConfig()?.tasks).toHaveLength(2);
   });
+
+  it('Switch 一轮内再次 schedule 会替换唯一的下一次唤醒', async () => {
+    const { deps, persisted } = makeSession({
+      activeMsg2Config: { enabled: true, experienceMode: 'switch', tasks: [] },
+    });
+    await executeAmsg2Tool('schedule_active_message', { send_at: future(1) }, deps);
+    await executeAmsg2Tool('schedule_active_message', { send_at: future(2) }, deps);
+
+    expect(lastTasks(persisted).map((task: any) => task.taskUuid)).toEqual([UUIDS[1]]);
+    expect(ActiveMsgClient.scheduleCharacterTask).toHaveBeenLastCalledWith(
+      expect.objectContaining({ replaceTaskUuid: UUIDS[0] }),
+    );
+  });
+
+  it('Switch 自排闹钟强制保留：用户只留言不按闪电时不会按 expire 作废', async () => {
+    const { deps, persisted } = makeSession({
+      activeMsg2Config: { enabled: true, experienceMode: 'switch', tasks: [] },
+    });
+    await executeAmsg2Tool('schedule_active_message', {
+      send_at: future(), expire_policy: 'expire',
+    }, deps);
+
+    expect(lastTasks(persisted)[0].expirePolicy).toBe('force');
+    expect(ActiveMsgClient.scheduleCharacterTask).toHaveBeenLastCalledWith(
+      expect.objectContaining({ task: expect.objectContaining({ expirePolicy: 'force' }) }),
+    );
+  });
 });
 
 // ─── 角色级开关 ───
@@ -194,7 +222,8 @@ describe('角色级开关 enabled=false', () => {
     expect(isAmsg2EnabledForChar(charWith(undefined))).toBe(true);
   });
 
-  it('落盘不把 enabled 改写成 true（工具调用不得替用户重新开启功能）', async () => {
+  it('关闭后直接拒绝排程，不落盘也不替用户重新开启功能', async () => {
+    (ActiveMsgClient.scheduleCharacterTask as any).mockClear();
     let n = 0;
     (ActiveMsgClient.scheduleCharacterTask as any).mockImplementation(async () => ({
       uuid: UUIDS[n++], clientTaskId: 'cid', anchorMs: 0, replacedCancelFailed: false,
@@ -207,9 +236,11 @@ describe('角色级开关 enabled=false', () => {
         if (updates.activeMsg2Config) persisted.push(updates.activeMsg2Config);
       },
     });
-    await executeAmsg2Tool('schedule_active_message', { send_at: future() }, deps);
+    const result = await executeAmsg2Tool('schedule_active_message', { send_at: future() }, deps);
 
-    expect(persisted[persisted.length - 1].enabled).toBe(false);
+    expect(result).toContain('已经关闭');
+    expect(persisted).toHaveLength(0);
+    expect(ActiveMsgClient.scheduleCharacterTask).not.toHaveBeenCalled();
   });
 });
 

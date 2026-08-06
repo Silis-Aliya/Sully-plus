@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import Modal from '../os/Modal';
 import {
   ActiveMsg2CharacterConfig,
+  ActiveMsg2ExperienceMode,
   ActiveMsg2ExpirePolicy,
   ActiveMsg2Mode,
   ActiveMsg2Recurrence,
@@ -18,6 +19,12 @@ import { type AmsgLastSkip, describeLastSkip } from '../../utils/amsgFirePack';
 import { buildUserCancelledNotices } from '../../utils/amsg2TaskContext';
 import { trackEvent } from '../../utils/analytics';
 import {
+  DEFAULT_AMSG_QUIET_END,
+  DEFAULT_AMSG_QUIET_START,
+  describeQuietHoursRange,
+  isValidQuietTimeValue,
+} from '../../utils/amsgQuietHours';
+import {
   applyRemoteTaskDelta,
   applyScheduledTask,
   currentOccurrenceMs,
@@ -28,6 +35,7 @@ import {
   describeTaskProgress,
   formatTaskTime,
   fromDatetimeLocalValue,
+  getPendingTasks,
   isAmsg2EnabledForChar,
   isPendingTask,
   isRemoteMissingTask,
@@ -64,9 +72,9 @@ interface ActiveMsg2SettingsModalProps {
 }
 
 const MODE_OPTIONS = [
-  { id: 'fixed', label: '固定', desc: '到点直接发你写好的内容' },
-  { id: 'auto', label: '自动', desc: '用当前角色设定和聊天快照自己生成' },
-  { id: 'prompted', label: '提示词', desc: '围绕你写的方向生成主动消息' },
+  { id: 'auto', label: '自动生成', desc: '到点根据最新角色状态和聊天生成' },
+  { id: 'fixed', label: '固定内容', desc: '到点直接发你写好的内容' },
+  { id: 'prompted', label: '指定方向', desc: '围绕你写的方向生成主动消息' },
 ] as const;
 
 const RECURRENCE_OPTIONS = [
@@ -93,6 +101,9 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
 
   // 开关初值走和工具注入门同一个判定：面板显示「关」而角色其实还能排程，界面就在骗人。
   const [enabled, setEnabled] = useState(() => isAmsg2EnabledForChar(char));
+  const [experienceMode, setExperienceMode] = useState<ActiveMsg2ExperienceMode>(saved?.experienceMode ?? 'classic');
+  const [switchQuietStart, setSwitchQuietStart] = useState(saved?.switchQuietStart ?? DEFAULT_AMSG_QUIET_START);
+  const [switchQuietEnd, setSwitchQuietEnd] = useState(saved?.switchQuietEnd ?? DEFAULT_AMSG_QUIET_END);
   const [mode, setMode] = useState<ActiveMsg2Mode>('auto');
   const [firstSendTime, setFirstSendTime] = useState(getDefaultActiveMsgFirstSendTime());
   const [recurrenceType, setRecurrenceType] = useState<ActiveMsg2Recurrence>('none');
@@ -131,6 +142,9 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     const config = char.activeMsg2Config;
     const list = config?.tasks ?? [];
     setEnabled(config?.enabled ?? false);
+    setExperienceMode(config?.experienceMode ?? 'classic');
+    setSwitchQuietStart(config?.switchQuietStart ?? DEFAULT_AMSG_QUIET_START);
+    setSwitchQuietEnd(config?.switchQuietEnd ?? DEFAULT_AMSG_QUIET_END);
     setMaxTokens(config?.maxTokens ? String(config.maxTokens) : '');
     setUseSecondaryApi(config?.useSecondaryApi ?? false);
     setSecUrl(config?.secondaryApi?.baseUrl ?? '');
@@ -228,6 +242,9 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     extra?: Partial<ActiveMsg2CharacterConfig>,
   ): ActiveMsg2CharacterConfig => ({
     enabled: true,
+    experienceMode,
+    switchQuietStart,
+    switchQuietEnd,
     tasks: tasksOf(prev?.tasks ?? []),
     maxTokens: maxTokens.trim() ? Number(maxTokens) : undefined,
     useSecondaryApi: useSecondaryApi && !!secUrl,
@@ -293,6 +310,9 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
     setIsSubmitting(true);
     try {
       if (!enabled) {
+        // 先关云端闸门，再取消任务。这样即使旧的 Instant Push 请求仍在生成，
+        // 它真正续排前重读到的也是“已关闭”，不会把 Switch 复活。
+        await ActiveMsgClient.syncSwitchControl(char.id, false, saved?.experienceMode ?? experienceMode);
         // 关闭 2.0 = 取消该角色全部远端任务（远端清单优先的口径见 cancelAllTasksForChar，
         // 与删角色共用一份）。取消失败的保留在本地清单里，下次重开面板可重试。
         const { targets, failed } = await ActiveMsgClient.cancelAllTasksForChar(
@@ -320,33 +340,85 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       }
 
       if (!globalReady) throw new Error('请先去系统设置里完成“主动消息 2.0”的全局配置。');
+      if (experienceMode === 'switch') {
+        if (!isValidQuietTimeValue(switchQuietStart) || !isValidQuietTimeValue(switchQuietEnd)) {
+          throw new Error('请选择完整、有效的主动唤醒静默时间。');
+        }
+        if (switchQuietStart === switchQuietEnd) {
+          throw new Error('主动唤醒静默时段的开始与结束时间不能相同。');
+        }
+      }
+
+      const savedExperienceMode = saved?.experienceMode ?? 'classic';
+      const switchingExperience = experienceMode !== savedExperienceMode;
+      if (switchingExperience && tasks.length > 0) {
+        const { targets, failed } = await ActiveMsgClient.cancelAllTasksForChar(
+          char.id,
+          tasks.map((task) => task.taskUuid),
+        );
+        const attempted = new Set(targets);
+        const cancelled = tasks.filter((task) => attempted.has(task.taskUuid) && !failed.has(task.taskUuid));
+        await writeCancelledNotices(cancelled);
+        setKnownRemoteUuids((prev) => applyRemoteTaskDelta(prev, {
+          gone: cancelled.map((task) => task.taskUuid),
+        }));
+        onSave((prev) => buildConfig(
+          prev,
+          (list) => keepUncancelledTasks(list, attempted, failed, {
+            failed: '切换模式时远端取消失败，可重试',
+            appeared: '切换模式期间新出现，未被取消，请单独处理',
+          }),
+          {
+            experienceMode: failed.size ? savedExperienceMode : experienceMode,
+            lastSyncedAt: Date.now(),
+          },
+        ));
+        if (failed.size) {
+          throw new Error(`有 ${failed.size} 个旧模式任务远端取消失败，已停止切换；请重试。`);
+        }
+      }
 
       // 时间框里的是用户桌上的钟，先折成绝对时刻再往下传。裸墙钟交出去的话，排程接口
       // 会按角色时区解释它（那条规则是给角色自己排程用的），角色一开自定义时区就差一个
       // 时差。落盘也存这一份，面板显示与远端对账因此认的是同一个时刻。
       const firstSendAt = fromDatetimeLocalValue(firstSendTime);
-
+      // Switch 的首次唤醒和后续自排都只响一次。角色没有续排时链路自然结束，等下一次
+      // 正常聊天生成再决定是否重新启动；force 让等待期间未触发回复的留言成为到点上下文。
+      const switchMode = experienceMode === 'switch';
+      const taskMode: ActiveMsg2Mode = switchMode ? 'auto' : mode;
+      const taskPromptHint = !switchMode && mode === 'prompted'
+        ? promptHint.trim() || undefined
+        : (!switchMode && mode === 'auto' ? promptHint.trim() || undefined : undefined);
+      const taskRecurrence: ActiveMsg2Recurrence = switchMode ? 'none' : recurrenceType;
+      const taskExpirePolicy: ActiveMsg2ExpirePolicy = switchMode ? 'force' : expirePolicy;
+      const schedulingTasks = switchingExperience ? [] : tasks;
+      const replaceTaskUuid = switchingExperience
+        ? undefined
+        : (editingTaskUuid ?? (switchMode
+          ? getPendingTasks({ ...saved, tasks: schedulingTasks }, Date.now())
+            .find((task) => !task.switchFallback)?.taskUuid
+          : undefined));
       // 传给排程接口的这份只用来读角色级设置（封顶校验 / 副 API），不参与落盘。
-      const config = buildConfig(saved, () => tasks);
+      const config = buildConfig(saved, () => schedulingTasks);
       const result = await ActiveMsgClient.scheduleCharacterTask({
         char, config,
         task: {
-          mode, firstSendTime: firstSendAt, recurrenceType,
-          promptHint: promptHint.trim() || undefined,
+          mode: taskMode, firstSendTime: firstSendAt, recurrenceType: taskRecurrence,
+          promptHint: taskPromptHint,
           userMessage: userMessage.trim() || undefined,
-          expirePolicy,
+          expirePolicy: taskExpirePolicy,
         },
-        replaceTaskUuid: editingTaskUuid ?? undefined,
+        replaceTaskUuid,
         userProfile, groups, realtimeConfig, apiConfig,
       });
 
       const record: ActiveMsg2TaskRecord = {
         taskUuid: result.uuid,
         clientTaskId: result.clientTaskId,
-        mode, firstSendTime: result.firstSendAt, recurrenceType,
-        promptHint: promptHint.trim() || undefined,
+        mode: taskMode, firstSendTime: result.firstSendAt, recurrenceType: taskRecurrence,
+        promptHint: taskPromptHint,
         userMessage: userMessage.trim() || undefined,
-        expirePolicy: resolveExpirePolicy(mode, expirePolicy),
+        expirePolicy: resolveExpirePolicy(taskMode, taskExpirePolicy),
         anchorLastUserMsgAt: result.anchorMs,
         source: 'user',
         status: 'scheduled',
@@ -356,7 +428,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
         prev,
         // 并清单的规则（含替换失败时保留旧记录）与角色工具路径共用 applyScheduledTask。
         (list) => applyScheduledTask(list, record, {
-          replaceTaskUuid: editingTaskUuid ?? undefined,
+          replaceTaskUuid,
           replacedCancelFailed: result.replacedCancelFailed,
         }, Date.now()),
         { lastSyncedAt: Date.now() },
@@ -365,15 +437,15 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       // 编辑时旧任务已被取消才出账；取消失败的话远端新旧并存，旧 uuid 要留着。
       setKnownRemoteUuids((prev) => applyRemoteTaskDelta(prev, {
         present: [result.uuid],
-        gone: editingTaskUuid && !result.replacedCancelFailed ? [editingTaskUuid] : [],
+        gone: replaceTaskUuid && !result.replacedCancelFailed ? [replaceTaskUuid] : [],
       }));
       // 只报枚举构成，内容、时间、编号一概不带。mode/recurrence 虽有 TS 类型，但编辑路径
       // 是从持久化任务记录读回来的（导入的备份可携带任意字符串），上报前运行时收敛一遍。
       trackEvent('排程定时消息', {
-        mode: mode === 'fixed' || mode === 'prompted' ? mode : 'auto',
-        recurrence: recurrenceType === 'daily' || recurrenceType === 'weekly' ? recurrenceType : 'none',
+        mode: taskMode,
+        recurrence: taskRecurrence,
         source: 'user',
-        isEdit: editingTaskUuid ? 'yes' : 'no',
+        isEdit: replaceTaskUuid ? 'yes' : 'no',
       });
       setEditingTaskUuid(null);
       // 编辑走的是「先建新的再取消旧的」，编号必然换一个——只说「已更新」的话，
@@ -407,7 +479,12 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       }
     } catch (error: any) {
       const message = error?.message || '主动消息 2.0 保存失败。';
-      onSave((prev) => buildConfig(prev, (list) => list, { lastError: message }));
+      onSave((prev) => buildConfig(prev, (list) => list, {
+        // 模式切换可能已在前一步成功落盘，也可能因旧任务取消失败被明确挡回。
+        // 错误回写只记原因，不能拿表单里的期望值覆盖那份真实结果。
+        experienceMode: prev?.experienceMode ?? saved?.experienceMode ?? 'classic',
+        lastError: message,
+      }));
       addToast(message, 'error');
     } finally {
       setIsSubmitting(false);
@@ -425,7 +502,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
             取消
           </button>
           <button onClick={handleSubmit} disabled={isSubmitting} className="flex-1 py-3 bg-fuchsia-500 text-white font-bold rounded-2xl active:scale-95 transition-transform disabled:opacity-50">
-            {isSubmitting ? '保存中...' : !enabled ? '关闭 2.0' : (editingTaskUuid ? '保存修改' : '新建任务')}
+            {isSubmitting ? '保存中...' : !enabled ? '关闭 2.0' : (editingTaskUuid ? '保存修改' : (experienceMode === 'switch' ? '启用主动唤醒' : '新建任务'))}
           </button>
         </>
       )}
@@ -447,6 +524,37 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
             <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-all duration-200 ${enabled ? 'translate-x-5' : 'translate-x-0'}`} />
           </button>
         </div>
+
+        {enabled ? (
+          <div>
+            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">运行模式（二选一）</label>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { id: 'classic', label: 'AMSG 原版', desc: '按你设置的内容、方向和时间发送' },
+                { id: 'switch', label: '主动唤醒', desc: '角色醒来后自行决定下一次时间' },
+              ] as const).map((option) => (
+                <button
+                  key={option.id}
+                  onClick={() => {
+                    setExperienceMode(option.id);
+                    setEditingTaskUuid(null);
+                    setMode('auto');
+                    setPromptHint('');
+                    setRecurrenceType('none');
+                    setExpirePolicy('expire');
+                  }}
+                  className={`min-h-[76px] text-left rounded-lg border px-3 py-3 transition-colors ${experienceMode === option.id ? 'bg-fuchsia-500 text-white border-fuchsia-500' : 'bg-white border-slate-200 text-slate-600'}`}
+                >
+                  <div className="font-bold">{option.label}</div>
+                  <div className={`text-xs mt-1 leading-relaxed ${experienceMode === option.id ? 'text-fuchsia-50' : 'text-slate-400'}`}>{option.desc}</div>
+                </button>
+              ))}
+            </div>
+            <div className="text-[11px] text-slate-400 mt-2 pl-1">
+              两种模式共用当前 Worker、Push 订阅、VAPID、D1 和 API 配置。
+            </div>
+          </div>
+        ) : null}
 
         {/* 闸拦下一次触发时不发任何推送，远端那行任务却照样被消费掉——不说一声的话，
             「让路了」在用户看来跟「没发出去 / 功能坏了」完全一样。 */}
@@ -483,6 +591,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                         <div className="text-slate-400 mt-0.5 truncate">
                           {describeTaskProgress(t, knownRemoteUuids, now, remoteInfo?.status)} · {describeTaskMode(t)}
                           · {describeExpirePolicy(t.expirePolicy)}
+                          {t.switchFallback ? ' · 旧版主动唤醒兜底（已停用）' : ''}
                           · {t.source === 'character' ? '角色创建' : '手动创建'}
                         </div>
                         {missingRemote ? (
@@ -514,30 +623,38 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
 
         {enabled ? (
           <>
-            <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">
-                {editingTaskUuid ? '编辑任务' : '新建任务'}
-              </label>
-              <div className="space-y-2">
-                {MODE_OPTIONS.map((option) => (
-                  <button
-                    key={option.id}
-                    onClick={() => {
-                      setMode(option.id);
-                      // fixed 进不了 worker 闸（taskNeedsLlm=false），策略统一钉成 force。
-                      if (option.id === 'fixed') setExpirePolicy('force');
-                    }}
-                    className={`w-full text-left rounded-2xl border px-4 py-3 transition-all ${mode === option.id ? 'bg-fuchsia-500 text-white border-fuchsia-500' : 'bg-white border-slate-200 text-slate-600'}`}
-                  >
-                    <div className="font-bold">{option.label}</div>
-                    <div className={`text-xs mt-1 ${mode === option.id ? 'text-fuchsia-50' : 'text-slate-400'}`}>{option.desc}</div>
-                  </button>
-                ))}
+            {experienceMode === 'classic' ? (
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">
+                  {editingTaskUuid ? '编辑原版任务' : '新建原版任务'}
+                </label>
+                <div className="space-y-2">
+                  {MODE_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      onClick={() => {
+                        setMode(option.id);
+                        if (option.id === 'fixed') setExpirePolicy('force');
+                        else if (mode === 'fixed') setExpirePolicy('expire');
+                      }}
+                      className={`w-full text-left rounded-xl border px-4 py-3 transition-colors ${mode === option.id ? 'bg-fuchsia-500 text-white border-fuchsia-500' : 'bg-white border-slate-200 text-slate-600'}`}
+                    >
+                      <div className="font-bold">{option.label}</div>
+                      <div className={`text-xs mt-1 ${mode === option.id ? 'text-fuchsia-50' : 'text-slate-400'}`}>{option.desc}</div>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="bg-fuchsia-50 border border-fuchsia-100 rounded-xl px-4 py-3 text-xs leading-relaxed text-fuchsia-700">
+                  首次时间用于启动主动唤醒。之后角色每次醒来都可以自己决定是否安排下一次；没有下一次安排时会进入休眠，等你再次触发角色。
+              </div>
+            )}
 
             <div>
-              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">首次发送时间</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">
+                {experienceMode === 'switch' ? '首次唤醒时间' : '首次发送时间'}
+              </label>
               <input
                 type="datetime-local"
                 value={firstSendTime}
@@ -546,6 +663,43 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
               />
             </div>
 
+            {experienceMode === 'switch' ? (
+              <div className="space-y-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">
+                    每日静默时间
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block">
+                      <span className="block text-[11px] text-slate-400 mb-1 pl-1">开始</span>
+                      <input
+                        type="time"
+                        step={60}
+                        value={switchQuietStart}
+                        onChange={(event) => setSwitchQuietStart(event.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-3 text-sm"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="block text-[11px] text-slate-400 mb-1 pl-1">结束</span>
+                      <input
+                        type="time"
+                        step={60}
+                        value={switchQuietEnd}
+                        onChange={(event) => setSwitchQuietEnd(event.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-3 text-sm"
+                      />
+                    </label>
+                  </div>
+                  <div className={`mt-2 pl-1 text-[11px] ${switchQuietStart === switchQuietEnd ? 'text-red-500' : 'text-fuchsia-600'}`}>
+                    {describeQuietHoursRange(switchQuietStart, switchQuietEnd)}（按你的所在地时间）
+                  </div>
+                </div>
+                <div className="bg-fuchsia-50 border border-fuchsia-100 rounded-2xl px-4 py-3 text-xs leading-relaxed text-fuchsia-700">
+                  每次唤醒只执行一次。角色可以不续排，也不需要用满额度；任意一小时最多三次。
+                </div>
+              </div>
+            ) : (
             <div>
               <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">重复方式</label>
               <div className="grid grid-cols-3 gap-2">
@@ -563,8 +717,9 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                 2.0 标准版目前只支持：一次 / 每天 / 每周。30 分钟、1 小时、2 小时这类间隔暂时不支持。
               </div>
             </div>
+            )}
 
-            {mode !== 'fixed' ? (
+            {experienceMode === 'classic' && mode !== 'fixed' ? (
               <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block pl-1">到点时用户正在聊天</label>
                 <div className="grid grid-cols-2 gap-2">
@@ -585,7 +740,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
               </div>
             ) : null}
 
-            {mode === 'fixed' ? (
+            {experienceMode === 'classic' && mode === 'fixed' ? (
               <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">固定消息内容</label>
                 <textarea
@@ -595,11 +750,11 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                   className="w-full h-28 bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm resize-none"
                 />
               </div>
-            ) : (
+            ) : experienceMode === 'classic' && mode !== 'fixed' ? (
               <>
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">
-                    {mode === 'prompted' ? '额外提示词' : '补充灵感 (可选)'}
+                    {mode === 'prompted' ? '额外提示词' : '补充灵感（可选）'}
                   </label>
                   <textarea
                     value={promptHint}
@@ -609,19 +764,22 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
                   />
                 </div>
 
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">maxTokens (可选)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    value={maxTokens}
-                    onChange={(event) => setMaxTokens(event.target.value)}
-                    placeholder="例如 120"
-                    className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm"
-                  />
-                </div>
               </>
-            )}
+            ) : null}
+
+            {mode !== 'fixed' ? (
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">maxTokens (可选)</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={maxTokens}
+                  onChange={(event) => setMaxTokens(event.target.value)}
+                  placeholder="例如 120"
+                  className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm"
+                />
+              </div>
+            ) : null}
 
             <div className="pt-1 border-t border-slate-100">
               <div className="flex items-center justify-between mb-2">

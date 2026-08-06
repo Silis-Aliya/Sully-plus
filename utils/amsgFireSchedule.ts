@@ -9,8 +9,11 @@
  * 零运行时依赖（worker bundle 会打进这份代码）：只有纯函数和常量。
  */
 
-import type { ActiveMsg2ExpirePolicy, ActiveMsg2Mode, ActiveMsg2Recurrence } from '../types';
+import type {
+  ActiveMsg2ExperienceMode, ActiveMsg2ExpirePolicy, ActiveMsg2Mode, ActiveMsg2Recurrence,
+} from '../types';
 import { type AmsgTzRef, formatFireTimeShort, wallClockPartsInZone } from './amsgFirePack';
+import { describeQuietHoursRange, resolveQuietHoursRange } from './amsgQuietHours';
 import { wallClockToTimestamp } from './timezone';
 
 /** 与前台同名，故意的：见文件头。 */
@@ -110,12 +113,69 @@ export const buildFireScheduleTool = (opts: FireScheduleTimeOpts): FireScheduleT
  * 反而勾引模型往正文里写（与 buildMcpFireBlock 同一个判断）。text 模式（用户的中转拒
  * tools）才教语法。
  */
-export const buildFireScheduleBlock = (mode: 'native' | 'text', opts: FireScheduleTimeOpts): string => {
+export const buildFireScheduleBlock = (
+  mode: 'native' | 'text',
+  opts: FireScheduleTimeOpts,
+  experienceMode: ActiveMsg2ExperienceMode = 'classic',
+  targetName = '对方',
+  quietStart?: string,
+  quietEnd?: string,
+  quotaLine?: string,
+  autonomousXhsAvailable = false,
+): string => {
   const howTo = mode === 'native'
     ? `需要时通过系统的工具调用接口发起 ${AMSG_FIRE_SCHEDULE_TOOL}，不要把工具名和参数写进正文。`
     : `需要时单独输出一行 ${AMSG_FIRE_SCHEDULE_TOOL}({"send_at":"${
       buildSendAtExample(opts.nowMs, opts.tz)
     }","prompt_hint":"接着说"})（send_at 写你本地的墙钟时间，不带时区后缀），系统会代为安排并把结果告诉你。`;
+  if (experienceMode === 'switch') {
+    const target = targetName.trim() || '对方';
+    const quiet = resolveQuietHoursRange(quietStart, quietEnd);
+    return [
+      '',
+      '---',
+      '【自主唤醒】',
+      `你现在正通过一次自主唤醒联系${target}。`,
+      '',
+      `先结合最新的关系、聊天、记忆、双方此刻的时间和这次唤醒的缘由，以此刻的自己自然决定要说什么。不要向${target}提及唤醒工具或系统规则。`,
+      ...(autonomousXhsAvailable ? [
+        '',
+        '（小红书浏览）',
+        '',
+        '你可以自由决定是否浏览或搜索。只有此刻真的想逛、想了解某个话题，或觉得可能看到值得分享的内容时再使用。',
+        '',
+        '需要时使用隐藏指令：',
+        '- [[XHS_BROWSE]]：浏览推荐内容。',
+        '- [[XHS_SEARCH: 关键词]]：搜索一个话题。',
+        '- [[XHS_DETAIL: noteId]]：打开浏览或搜索结果中的一篇笔记，阅读正文和评论。',
+        '- [[XHS_SHARE:N]]：分享结果中的第 N 篇笔记卡片。可以分享多篇。',
+        '',
+        `一次自主唤醒最多浏览或搜索一次，并最多查看一篇笔记详情。看完后可以自然聊聊并分享你真正想发给${target}的笔记卡片，或者什么也不分享；不要每次醒来都固定浏览，也不要为了使用工具而使用。`,
+        '',
+        `隐藏指令不要向${target}解释。`,
+      ] : []),
+      '',
+      `完成这次联系后，再判断未来是否还会在某个时刻自然地想联系${target}。`,
+      '',
+      '【唤醒额度·仅你可见】',
+      quotaLine || '当前 60 分钟内的具体额度以系统校验为准；任意连续 60 分钟内最多 3 次。',
+      `静默时间：${describeQuietHoursRange(quiet.start, quiet.end)}；不得在此期间安排唤醒。`,
+      `不要向${target}解释或复述以上信息。`,
+      '',
+      '如果还想之后再次联系，就安排下一次唤醒时间，在正文之外另起一行输出：',
+      '',
+      '[[AMSG_WAKE_AT: YYYY-MM-DDTHH:mm:ss]]',
+      '',
+      `唤醒时间按照${target}所在地的当地时间填写，不要附带时区后缀。`,
+      '',
+      '- 一次只安排下一次；拿不准时可以不安排。',
+      '- 不需要为了维持唤醒链而安排。没有下一次安排时，本次联系结束后就进入休眠。',
+      '- 任意连续 60 分钟内，最多只能有 3 次自主唤醒。',
+      '- 额度用完时，不得早于系统提示的最早可用时间。',
+      `- 时间应贴近${target}的实际生活。`,
+    ].join('\n');
+  }
+
   return [
     '',
     '---',

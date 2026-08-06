@@ -53,7 +53,7 @@ import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { ActiveMsgStore } from '../utils/activeMsgStore';
 import { charMayHaveCloudState, purgeCharCloudState } from '../utils/amsg2CharCleanup';
-import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, syncAmsgToolConfigAndPrompts } from '../utils/amsgStateSync';
+import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, startAmsgMusicWakePresence, stopAmsgMusicWakePresence, syncAmsgToolConfigAndPrompts } from '../utils/amsgStateSync';
 import { setCharNameRegistry } from '../utils/charNameRegistry';
 import { setMinimaxRegion } from '../utils/minimaxEndpoint';
 import { setTtsProvider, setVoicePromptOverrides } from '../utils/ttsProvider';
@@ -2268,6 +2268,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           }
 
           proactiveRunningRef.current = true;
+          if (reason?.kind === 'music-wake') await startAmsgMusicWakePresence(charId);
           setProactiveComposingChars(prev => prev[charId] ? prev : { ...prev, [charId]: true });
           console.log(`🔔 [Proactive/Global] Trigger fired for ${char.name}${useSecondary ? ' (副API)' : ''}`);
 
@@ -2735,6 +2736,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           } catch (err) {
               console.error(`[Proactive/Global] Error for ${char.name}:`, err);
           } finally {
+              if (reason?.kind === 'music-wake') stopAmsgMusicWakePresence(charId);
               proactiveRunningRef.current = false;
               setProactiveComposingChars(prev => {
                   if (!prev[charId]) return prev;

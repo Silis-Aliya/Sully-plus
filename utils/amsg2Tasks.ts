@@ -24,6 +24,56 @@ import { FIRE_GRACE_MS, recurrencePeriodMs } from './amsg2ExpireGuard';
 import { type AmsgTzRef, formatFireTimeShort } from './amsgFirePack';
 
 export const MAX_ACTIVE_TASKS_PER_CHAR = 5;
+export const MAX_AUTONOMOUS_WAKES_PER_HOUR = 3;
+export const AUTONOMOUS_WAKE_WINDOW_MS = 60 * 60_000;
+export const MAX_SWITCH_WAKE_AHEAD_MS = 7 * 24 * 60 * 60_000;
+
+export const validateSwitchWakeTime = (
+  candidateMs: number,
+  nowMs = Date.now(),
+): 'invalid' | 'past' | 'too_far' | null => {
+  if (!Number.isFinite(candidateMs)) return 'invalid';
+  if (candidateMs <= nowMs) return 'past';
+  if (candidateMs - nowMs > MAX_SWITCH_WAKE_AHEAD_MS) return 'too_far';
+  return null;
+};
+
+/** 新增候选后，任意滚动一小时窗口是否会超过三次 AI 唤醒。fixed 不计入。 */
+export const wouldExceedAutonomousWakeRate = (
+  tasks: ActiveMsg2TaskRecord[],
+  candidateMs: number,
+  nowMs = Date.now(),
+  excludeTaskUuid?: string,
+  observedWakeMs: number[] = [],
+): boolean => {
+  if (!Number.isFinite(candidateMs)) return false;
+  const existing = tasks
+    .filter((task) => task.taskUuid !== excludeTaskUuid
+      && task.status === 'scheduled'
+      && task.mode !== 'fixed'
+      && !task.switchFallback)
+    .map((task) => currentOccurrenceMs(task, nowMs))
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  const entries = [
+    ...existing.map((time) => ({ time, candidate: false })),
+    ...observedWakeMs
+      .filter((time) => Number.isFinite(time))
+      .map((time) => ({ time, candidate: false })),
+    { time: candidateMs, candidate: true },
+  ].sort((a, b) => a.time - b.time || Number(a.candidate) - Number(b.candidate));
+  const times = entries.map((entry) => entry.time);
+  const candidateIndex = entries.findIndex((entry) => entry.candidate);
+
+  for (let start = 0; start <= candidateIndex; start += 1) {
+    if (candidateMs - times[start] >= AUTONOMOUS_WAKE_WINDOW_MS) continue;
+    let end = start;
+    while (end < times.length && times[end] - times[start] < AUTONOMOUS_WAKE_WINDOW_MS) end += 1;
+    if (candidateIndex >= start && candidateIndex < end && end - start > MAX_AUTONOMOUS_WAKES_PER_HOUR) {
+      return true;
+    }
+  }
+  return false;
+};
 
 /**
  * 这个角色是否开着主动消息 2.0。
@@ -74,7 +124,7 @@ export const describeTaskMode = (
 ): string => {
   if (task.mode === 'fixed') return '固定消息';
   if (task.mode === 'prompted') return `提示方向「${task.promptHint || ''}」`;
-  return task.promptHint ? `自动（灵感：${task.promptHint}）` : '自动';
+  return task.promptHint ? `自主唤醒（旧灵感：${task.promptHint}）` : '自主唤醒';
 };
 
 /**
@@ -168,6 +218,48 @@ export const currentOccurrenceMs = (
   // 循环任务可能已经跑了几个月。
   const k = Math.max(0, Math.floor((nowMs - FIRE_GRACE_MS - first) / periodMs) + 1);
   return first + k * periodMs;
+};
+
+export interface AutonomousWakeQuotaStatus {
+  used: number;
+  remaining: number;
+  earliestMs: number;
+}
+
+/** Switch 提示与硬校验共用的滚动一小时额度快照。 */
+export const getAutonomousWakeQuotaStatus = (
+  tasks: ActiveMsg2TaskRecord[],
+  nowMs: number,
+  observedWakeMs: number[] = [],
+): AutonomousWakeQuotaStatus => {
+  const occurrenceTimes = tasks
+    .filter((task) => task.status === 'scheduled' && task.mode !== 'fixed' && !task.switchFallback)
+    .map((task) => currentOccurrenceMs(task, nowMs))
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  const recentObserved = observedWakeMs.filter(
+    (time) => Number.isFinite(time) && time <= nowMs && nowMs - time < AUTONOMOUS_WAKE_WINDOW_MS,
+  );
+  const recentTaskOccurrences = occurrenceTimes.filter(
+    (time) => time <= nowMs && nowMs - time < AUTONOMOUS_WAKE_WINDOW_MS,
+  );
+  const used = recentTaskOccurrences.length + recentObserved.length;
+  const remaining = Math.max(0, MAX_AUTONOMOUS_WAKES_PER_HOUR - used);
+  const firstCandidate = nowMs + 60_000;
+  const candidates = [
+    firstCandidate,
+    ...occurrenceTimes.map((time) => time + AUTONOMOUS_WAKE_WINDOW_MS),
+    ...recentObserved.map((time) => time + AUTONOMOUS_WAKE_WINDOW_MS),
+  ]
+    .filter((time) => time >= firstCandidate)
+    .sort((a, b) => a - b);
+  const earliestMs = candidates.find((candidate) => !wouldExceedAutonomousWakeRate(
+    tasks,
+    candidate,
+    nowMs,
+    undefined,
+    recentObserved,
+  )) ?? firstCandidate;
+  return { used, remaining, earliestMs };
 };
 
 /**

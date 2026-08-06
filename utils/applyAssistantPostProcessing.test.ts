@@ -47,6 +47,45 @@ const quotedUserMsg = {
 };
 
 describe('renderAndPersist 引用解析', () => {
+    it('Switch 隐藏唤醒标记并交给排程钩子', async () => {
+        const charId = `c-switch-wake-${Date.now()}`;
+        const ctx = makeCtx(charId, []);
+        ctx.char.activeMsg2Config = { enabled: true, experienceMode: 'switch' } as any;
+        ctx.instantRender = true;
+        ctx.hooks.scheduleAmsgWakeAt = vi.fn().mockResolvedValue(undefined);
+
+        await applyAssistantPostProcessing(
+            '[[AMSG_WAKE_AT: 2026-08-06T16:00:00]]',
+            ctx,
+        );
+
+        expect(ctx.hooks.scheduleAmsgWakeAt).toHaveBeenCalledTimes(1);
+        const msgs = (await DB.getRecentMessagesByCharId(charId, 20))
+            .filter((message) => message.role === 'assistant');
+        expect(msgs).toHaveLength(0);
+    });
+
+    it('正在一起听时隐藏标记但不创建普通 Switch 唤醒', async () => {
+        const charId = `c-switch-music-${Date.now()}`;
+        const ctx = makeCtx(charId, []);
+        ctx.char.activeMsg2Config = { enabled: true, experienceMode: 'switch' } as any;
+        ctx.instantRender = true;
+        ctx.hooks.scheduleAmsgWakeAt = vi.fn().mockResolvedValue(undefined);
+        ctx.hooks.musicHooks = {
+            getListeningSnapshot: () => null,
+            isListeningTogether: () => true,
+            joinListeningTogether: vi.fn(),
+            addSongToCharPlaylist: vi.fn(),
+        };
+
+        await applyAssistantPostProcessing(
+            '[[AMSG_WAKE_AT: 2026-08-06T16:00:00]]',
+            ctx,
+        );
+
+        expect(ctx.hooks.scheduleAmsgWakeAt).not.toHaveBeenCalled();
+    });
+
     it('[[QUOTE:]] 单独成行 (后跟 SEND_EMOJI + 正文) 时引用顺延到第一条文字气泡', async () => {
         const charId = `c-quote-${Date.now()}`;
         const raw = '[[QUOTE: 引用我说的话]]\n[[SEND_EMOJI: 有点生气]]\n消失了整整三十六个小时';

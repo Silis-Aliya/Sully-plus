@@ -1612,6 +1612,8 @@ async function saveContentToInbox(payload) {
   traceSw("inbox-content-saved", payload, { bodyChars: body.length });
   await notifyClients({
     type: "active-msg-received",
+    messageId,
+    deliveryMailbox: payload?.deliveryMailbox === true,
     charId,
     charName,
     body: previewBody,

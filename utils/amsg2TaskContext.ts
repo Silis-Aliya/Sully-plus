@@ -11,15 +11,24 @@
  * 发送成功后调 ActiveMsgStore.markExpiredNoticesNotified 标记，失败下轮重注（回执不丢）。
  */
 
-import { ActiveMsg2TaskRecord, Amsg2ExpiredNoticeRecord, CharacterProfile } from '../types';
+import {
+  ActiveMsg2ExperienceMode, ActiveMsg2TaskRecord, Amsg2ExpiredNoticeRecord, CharacterProfile,
+} from '../types';
 import { ActiveMsgStore } from './activeMsgStore';
 import { DB } from './db';
 import { resolveCharTimeZone } from './timezone';
+import {
+  DEFAULT_AMSG_QUIET_END,
+  DEFAULT_AMSG_QUIET_START,
+  describeQuietHoursRange,
+  resolveQuietHoursRange,
+} from './amsgQuietHours';
 import { detectExpiredOccurrences, hasDeliveredProactiveNear } from './amsg2ExpireGuard';
 import {
-  AMSG2_SCHEDULE_SECRECY_NOTE, canExpire, currentOccurrenceMs, describeExpirePolicy,
-  describeRecurrence, describeTaskMode, formatTaskTime, getPendingTasks, isPendingTask,
-  shortTaskId,
+  AMSG2_SCHEDULE_SECRECY_NOTE, MAX_AUTONOMOUS_WAKES_PER_HOUR,
+  canExpire, currentOccurrenceMs, describeExpirePolicy,
+  describeRecurrence, describeTaskMode, formatTaskTime, getAutonomousWakeQuotaStatus,
+  getPendingTasks, isPendingTask, shortTaskId,
 } from './amsg2Tasks';
 
 /**
@@ -110,6 +119,59 @@ const buildAmsg2ChatScheduleBrief = (targetName?: string): string => {
   ].join('\n');
 };
 
+const formatQuotaTime = (valueMs: number, timeZone?: string): string => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    ...(timeZone ? { timeZone } : {}),
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false, hourCycle: 'h23',
+  }).formatToParts(new Date(valueMs));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')} ${part('hour')}:${part('minute')}:${part('second')}`;
+};
+
+const buildSwitchWakeQuotaLine = (
+  tasks: ActiveMsg2TaskRecord[],
+  nowMs: number,
+  userTzId?: string,
+): string => {
+  const status = getAutonomousWakeQuotaStatus(tasks, nowMs);
+  return `当前 60 分钟内已用 ${status.used} 次，剩余 ${status.remaining} 次；下次最早可安排在 ${formatQuotaTime(status.earliestMs, userTzId)}。`;
+};
+
+/** Switch 使用文本按钮式指令；浏览器会隐藏并转换成真实 AMSG 任务。 */
+const buildSwitchChatScheduleBrief = (
+  targetName: string | undefined,
+  tasks: ActiveMsg2TaskRecord[],
+  nowMs: number,
+  userTzId?: string,
+  quietStart?: string,
+  quietEnd?: string,
+): string => {
+  const target = targetName?.trim() || '对方';
+  const quiet = resolveQuietHoursRange(quietStart, quietEnd);
+  return [
+    `你有自己的生活、节奏和正在发生的事。你可能因为想起${target}、遇到想分享的事、事情有了后续，或只是突然想联系，而决定之后主动去找${target}。`,
+    '',
+    '【唤醒额度·仅你可见】',
+    buildSwitchWakeQuotaLine(tasks, nowMs, userTzId),
+    `静默时间：${describeQuietHoursRange(quiet.start, quiet.end)}；不得在此期间安排唤醒。`,
+    `不要向${target}解释或复述以上信息。`,
+    '',
+    '如果想主动联系，就自己安排下一次唤醒时间，在正文之外另起一行输出：',
+    '',
+    '[[AMSG_WAKE_AT: YYYY-MM-DDTHH:mm:ss]]',
+    '',
+    `时间按照${target}所在地的当地时间填写，不要附带时区后缀。`,
+    '',
+    '- 一次只安排下一次；拿不准时可以不安排。',
+    `- 任意连续 60 分钟内，最多只能有 ${MAX_AUTONOMOUS_WAKES_PER_HOUR} 次自主唤醒。`,
+    '- 额度用完时，不得早于系统提示的最早可用时间。',
+    `- 时间应贴近${target}的实际生活。`,
+  ].join('\n');
+};
+
 /** 回执条目那一行（自动作废和手动取消长一个样，只是所在的段落不同）。 */
 const describeNoticeLine = (r: Amsg2ExpiredNoticeRecord, charTz: string | undefined): string => {
   const recurrence = r.recurrenceType === 'daily' ? '（每日循环的当次）'
@@ -137,19 +199,39 @@ export function buildAmsg2TaskContextText(
   createdThisTurn?: ReadonlySet<string>,
   /** ChatApp 当前用户名；空值回退为「对方」。 */
   targetName?: string,
+  /** Classic 保留原提示；Switch 使用更克制的“只排最近一次”提示。 */
+  experienceMode: ActiveMsg2ExperienceMode = 'classic',
+  /** Switch 额度要同时看刚触发过和仍待触发的任务；默认兼容旧调用。 */
+  quotaTasks: ActiveMsg2TaskRecord[] = pending,
+  /** Switch 指令按用户设备所在地的墙钟填写。 */
+  userTzId?: string,
+  quietStart = DEFAULT_AMSG_QUIET_START,
+  quietEnd = DEFAULT_AMSG_QUIET_END,
 ): string {
   const target = targetName?.trim() || '对方';
+  const visiblePending = experienceMode === 'switch'
+    ? pending.filter((task) => !task.switchFallback)
+    : pending;
+  const effectiveQuotaTasks = experienceMode === 'switch'
+    ? quotaTasks.filter((task) => !task.switchFallback)
+    : quotaTasks;
   const isNewThisTurn = (taskUuid: string) => !!createdThisTurn?.has(taskUuid);
-  const hasNewThisTurn = pending.some((t) => isNewThisTurn(t.taskUuid));
-  const parts: string[] = ['【你的主动消息排程·仅你可见】', buildAmsg2ChatScheduleBrief(target)];
+  const hasNewThisTurn = visiblePending.some((t) => isNewThisTurn(t.taskUuid));
+  const scheduleBrief = experienceMode === 'switch'
+    ? buildSwitchChatScheduleBrief(target, effectiveQuotaTasks, nowMs, userTzId, quietStart, quietEnd)
+    : buildAmsg2ChatScheduleBrief(target);
+  const parts: string[] = [
+    experienceMode === 'switch' ? '【自主联系】' : '【你的主动消息排程·仅你可见】',
+    scheduleBrief,
+  ];
   // 闸自动作废 / 用户手动取消，两种回执给角色的交代完全不同（前者可以续期补上，
   // 后者是用户不要了），分成两段说。没有 kind 的老记录按自动作废处理。
   const autoExpired = expired.filter((r) => r.kind !== 'user-cancelled');
   const userCancelled = expired.filter((r) => r.kind === 'user-cancelled');
 
-  if (pending.length) {
+  if (visiblePending.length) {
     parts.push('进行中：');
-    for (const t of pending) {
+    for (const t of visiblePending) {
       // 循环任务写「下一次」的时间。写 firstSendTime 的话，一条每天的任务在角色眼里
       // 是个好几天前的时刻，它会当成已经过去的排程，然后在对话里说漏嘴或重复排一条。
       const occurrenceMs = currentOccurrenceMs(t, nowMs);
@@ -157,9 +239,11 @@ export function buildAmsg2TaskContextText(
         + ` · ${describeTaskMode(t)} · ${describeExpirePolicy(t.expirePolicy)}`
         + (isNewThisTurn(t.taskUuid) ? ' · 本轮刚排的' : ''));
     }
-    parts.push('（想调整就用 schedule/cancel/renew 工具；内容方向变了用 cancel + schedule 重建。'
-      + (hasNewThisTurn ? '标着「本轮刚排的」是你这次回复里已经排好的，别再排一条一样的。' : '')
-      + '）');
+    parts.push(experienceMode === 'switch'
+      ? '（已有相近安排时不要重复安排。' + (hasNewThisTurn ? '标着「本轮刚排的」是你这次回复里已经排好的。' : '') + '）'
+      : '（想调整就用 schedule/cancel/renew 工具；内容方向变了用 cancel + schedule 重建。'
+        + (hasNewThisTurn ? '标着「本轮刚排的」是你这次回复里已经排好的，别再排一条一样的。' : '')
+        + '）');
   }
 
   if (autoExpired.length) {
@@ -176,11 +260,11 @@ export function buildAmsg2TaskContextText(
   }
 
   if (userCancelled.length) {
-    parts.push('已被手动取消：');
+    parts.push(`已被${target}手动取消：`);
     for (const r of userCancelled) {
       parts.push(describeNoticeLine(r, charTz));
     }
-    parts.push('这几条是用户直接取消的，相关约定不再生效，自然接受即可、不必向用户求证，也别再拿它们许诺。还想在别的时间说的话，用 schedule_active_message 重新排一条。');
+    parts.push(`${target}取消了这次原定的唤醒。你可以结合当前关系与语境，自由、自然地决定是否提起、是否询问，或直接略过；不要反复求证，也不要擅自恢复或按原计划重新安排这次唤醒。`);
   }
 
   // 约束放在块尾，管住上面每一种形态。挂在某一段里的话，只有进行中任务的那次就是裸奔的：
@@ -244,6 +328,11 @@ export async function collectAmsg2TaskContext(
     // 两边对不上的话，纽约角色会在同一轮里读到差一个时差的两个「同一条任务」。
     text: buildAmsg2TaskContextText(
       pending, unnotified, now, resolveCharTimeZone(char), undefined, targetName,
+      config?.experienceMode ?? 'classic',
+      tasks,
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+      config?.switchQuietStart,
+      config?.switchQuietEnd,
     ),
     expiredIds: unnotified.map((r) => r.id),
     notices: unnotified,

@@ -114,7 +114,7 @@ describe('formatFireTimeFull / formatFireTimeShort（角色参照系的自然中
 
 describe('renderFirePack', () => {
   const basePack: AmsgFirePack = {
-    v: 6, builtAt: 1_700_000_000_000, pendingTasks: [], scene: null,
+    v: FIRE_PACK_VERSION, builtAt: 1_700_000_000_000, pendingTasks: [], scene: null,
     template: [
       `当前本地时间：${AMSG_SLOT_CURRENT_TIME}`,
       AMSG_SLOT_TIME_SINCE_USER,
@@ -125,6 +125,8 @@ describe('renderFirePack', () => {
     lastUserMessageAt: null,
     tzId: 'UTC',
     userTzId: 'UTC',
+    switchQuietStart: '04:00',
+    switchQuietEnd: '10:00',
     targetName: '小明同学',
   };
 
@@ -170,7 +172,7 @@ describe('对方那边现在几点（AMSG_SLOT_USER_CLOCK）', () => {
   // 纽约角色 / 上海用户：2026-08-02T13:00Z = 纽约 09:00、上海 21:00。
   const AT = Date.UTC(2026, 7, 2, 13, 0);
   const nyChar: AmsgFirePack = {
-    v: 6, builtAt: 1, pendingTasks: [], scene: null, lastUserMessageAt: null,
+    v: FIRE_PACK_VERSION, builtAt: 1, pendingTasks: [], scene: null, lastUserMessageAt: null,
     template: `当前本地时间（你所在地）：${AMSG_SLOT_CURRENT_TIME}${AMSG_SLOT_USER_CLOCK}`,
     tzId: 'America/New_York',
     userTzId: 'Asia/Shanghai',
@@ -204,7 +206,8 @@ describe('对方那边现在几点（AMSG_SLOT_USER_CLOCK）', () => {
 
 describe('parseFirePack', () => {
   const valid: AmsgFirePack = {
-    v: 6, template: 'x', lastUserMessageAt: null, tzId: 'Asia/Shanghai', userTzId: 'Asia/Shanghai', targetName: 'A',
+    v: FIRE_PACK_VERSION, template: 'x', lastUserMessageAt: null, tzId: 'Asia/Shanghai', userTzId: 'Asia/Shanghai',
+    switchQuietStart: '04:00', switchQuietEnd: '10:00', targetName: 'A',
     builtAt: 1_700_000_000_000, pendingTasks: [], scene: null,
   };
 
@@ -254,7 +257,8 @@ describe('parseFirePack', () => {
 describe('self_log', () => {
   const packAt = 1_700_000_000_000;
   const pack: AmsgFirePack = {
-    v: 6, template: 'x', lastUserMessageAt: null, tzId: 'UTC', userTzId: 'UTC', targetName: '小明同学',
+    v: FIRE_PACK_VERSION, template: 'x', lastUserMessageAt: null, tzId: 'UTC', userTzId: 'UTC',
+    switchQuietStart: '04:00', switchQuietEnd: '10:00', targetName: '小明同学',
     builtAt: packAt, pendingTasks: [], scene: null,
   };
   const entry = (id: string, text: string, at = packAt) => ({ id, at, text });
@@ -395,7 +399,8 @@ describe('self_log', () => {
 describe('连排提醒', () => {
   const packAt = 1_700_000_000_000;
   const slotted: AmsgFirePack = {
-    v: 6, lastUserMessageAt: null, tzId: 'UTC', userTzId: 'UTC', targetName: '小明同学',
+    v: FIRE_PACK_VERSION, lastUserMessageAt: null, tzId: 'UTC', userTzId: 'UTC',
+    switchQuietStart: '04:00', switchQuietEnd: '10:00', targetName: '小明同学',
     builtAt: packAt, pendingTasks: [], scene: null,
     template: `【最近对话上下文】\n用户：在吗${AMSG_SLOT_SELF_LOG}\n\n【本次任务】\n${AMSG_SLOT_TASK_INSTRUCTION}`,
   };
@@ -440,14 +445,16 @@ describe('last_skip 新原因', () => {
     expect(describeLastSkip({ ...base, reason: 'stale' }, fmt)).toContain('过去太久');
     expect(describeLastSkip({ ...base, reason: 'active-chat-presence' }, fmt)).toContain('让路');
     expect(describeLastSkip({ ...base, reason: 'conversation-moved-on' }, fmt)).toContain('过时');
+    expect(describeLastSkip({ ...base, reason: 'quiet-hours' }, fmt)).toContain('睡眠时间');
   });
 });
 
 describe('fire_pack 任务指令槽', () => {
   const pack: AmsgFirePack = {
-    v: 6,
+    v: FIRE_PACK_VERSION,
     template: `头部\n${AMSG_SLOT_TASK_INSTRUCTION}\n尾部 ${AMSG_SLOT_CURRENT_TIME}`,
-    lastUserMessageAt: null, tzId: 'Asia/Shanghai', userTzId: 'Asia/Shanghai', targetName: '小明同学',
+    lastUserMessageAt: null, tzId: 'Asia/Shanghai', userTzId: 'Asia/Shanghai',
+    switchQuietStart: '04:00', switchQuietEnd: '10:00', targetName: '小明同学',
     builtAt: 1_700_000_000_000, pendingTasks: [], scene: null,
   };
 
@@ -467,11 +474,13 @@ describe('fire_pack 任务指令槽', () => {
 describe('client_state 值压缩', () => {
   // fire_pack 有几万字，随手编一小段压不出效果也测不出真问题，拿重复的中文段落凑量。
   const bigJson = JSON.stringify({
-    v: 6,
+    v: FIRE_PACK_VERSION,
     template: '【角色系统设定】你是一个会在深夜突然想起对方的人。\n'.repeat(400),
     lastUserMessageAt: 1_700_000_000_000,
     tzId: 'Asia/Shanghai',
     userTzId: 'Asia/Shanghai',
+    switchQuietStart: '04:00',
+    switchQuietEnd: '10:00',
     targetName: '小明',
     builtAt: 1_700_000_000_000,
     pendingTasks: [],
@@ -538,7 +547,8 @@ describe('client_state 值压缩', () => {
 // 注意这里钉的是「说明白」，不是「兼容」：版本对不上照样整包打回。
 describe('fire_pack 版本对不上时说清该做什么', () => {
   const pack = (v: unknown) => JSON.stringify({
-    v, template: 'x', lastUserMessageAt: null, tzId: 'UTC', userTzId: 'UTC', targetName: 'A',
+    v, template: 'x', lastUserMessageAt: null, tzId: 'UTC', userTzId: 'UTC',
+    switchQuietStart: '04:00', switchQuietEnd: '10:00', targetName: 'A',
     builtAt: 1, pendingTasks: [], scene: null,
   });
 

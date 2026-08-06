@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   MAX_ACTIVE_TASKS_PER_CHAR,
+  MAX_SWITCH_WAKE_AHEAD_MS,
   REPLACE_CANCEL_FAILED_NOTE,
   applyRemoteTaskDelta,
   applyScheduledTask,
@@ -11,6 +12,7 @@ import {
   describeRemoteLastError,
   describeTaskProgress,
   findTaskByShortId,
+  getAutonomousWakeQuotaStatus,
   getPendingTasks,
   hasActiveAiTask,
   isPendingTask,
@@ -22,10 +24,20 @@ import {
   reconcileTasksWithRemote,
   shortTaskId,
   toDatetimeLocalValue,
+  wouldExceedAutonomousWakeRate,
+  validateSwitchWakeTime,
 } from './amsg2Tasks';
 import type { ActiveMsg2TaskRecord } from '../types';
 
 const H = 3600_000;
+
+describe('Switch 唤醒最远时间', () => {
+  it('未来 7 天内允许，超过 7 天拒绝', () => {
+    const now = Date.now();
+    expect(validateSwitchWakeTime(now + MAX_SWITCH_WAKE_AHEAD_MS, now)).toBeNull();
+    expect(validateSwitchWakeTime(now + MAX_SWITCH_WAKE_AHEAD_MS + 1, now)).toBe('too_far');
+  });
+});
 const task = (extra: Partial<ActiveMsg2TaskRecord> = {}): ActiveMsg2TaskRecord => ({
   taskUuid: 'aabbccdd-0000-0000-0000-000000000000',
   clientTaskId: 'cid-aabb',
@@ -75,6 +87,76 @@ describe('amsg2Tasks helpers', () => {
     expect(hasActiveAiTask(config, now)).toBe(true);
     expect(hasActiveAiTask({ enabled: true, tasks: [fixed, past] }, now)).toBe(false);
     expect(hasActiveAiTask(undefined, now)).toBe(false);
+  });
+});
+
+describe('autonomous wake hourly limit', () => {
+  const NOW = Date.parse('2026-08-05T10:00:00.000Z');
+  const at = (minutes: number, extra: Partial<ActiveMsg2TaskRecord> = {}) => task({
+    taskUuid: `wake-${minutes}-0000-0000-000000000000`,
+    firstSendTime: new Date(NOW + minutes * 60_000).toISOString(),
+    ...extra,
+  });
+
+  it('allows the third autonomous wake inside a rolling hour', () => {
+    expect(wouldExceedAutonomousWakeRate([at(10), at(20)], NOW + 30 * 60_000, NOW)).toBe(false);
+  });
+
+  it('rejects the fourth autonomous wake inside a rolling hour', () => {
+    expect(wouldExceedAutonomousWakeRate(
+      [at(10), at(20), at(30)],
+      NOW + 40 * 60_000,
+      NOW,
+    )).toBe(true);
+  });
+
+  it('does not count fixed reminders and permits a wake at the 60-minute boundary', () => {
+    expect(wouldExceedAutonomousWakeRate(
+      [at(0), at(10), at(20), at(30, { mode: 'fixed' })],
+      NOW + 60 * 60_000,
+      NOW,
+    )).toBe(false);
+  });
+
+  it('excludes the task being replaced', () => {
+    const replacing = at(20, { taskUuid: 'replace-me' });
+    expect(wouldExceedAutonomousWakeRate(
+      [at(10), replacing, at(30)],
+      NOW + 40 * 60_000,
+      NOW,
+      replacing.taskUuid,
+    )).toBe(false);
+  });
+
+  it('counts already delivered wakes so a self-scheduling chain cannot evade the limit', () => {
+    expect(wouldExceedAutonomousWakeRate(
+      [],
+      NOW + 40 * 60_000,
+      NOW,
+      undefined,
+      [NOW + 10 * 60_000, NOW + 20 * 60_000, NOW + 30 * 60_000],
+    )).toBe(true);
+  });
+
+  it('quota snapshot reports delivered wakes and the earliest available next slot', () => {
+    const status = getAutonomousWakeQuotaStatus(
+      [],
+      NOW,
+      [NOW - 50 * 60_000, NOW - 30 * 60_000, NOW - 10 * 60_000],
+    );
+    expect(status.used).toBe(3);
+    expect(status.remaining).toBe(0);
+    expect(status.earliestMs).toBe(NOW + 10 * 60_000);
+  });
+
+  it('legacy Switch fallback does not consume quota or block a real wake', () => {
+    const fallback = at(10, { switchFallback: true, recurrenceType: 'daily' });
+    const status = getAutonomousWakeQuotaStatus([fallback], NOW);
+    expect(status.used).toBe(0);
+    expect(status.remaining).toBe(3);
+    expect(wouldExceedAutonomousWakeRate(
+      [fallback, at(20), at(30)], NOW + 40 * 60_000, NOW,
+    )).toBe(false);
   });
 });
 

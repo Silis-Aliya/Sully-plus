@@ -2,6 +2,37 @@
 
 本分支主要围绕 ChatApp 的 Instant Push 链路做稳定性补齐。目标是让 instant 模式和本地模式在上下文构建、输出质量、副作用执行上保持一致，同时解决后台推送、情绪 buff、Notion 写入和工具调用状态提示的问题。
 
+## 0. Instant Push 与主动消息 2.0 协同
+
+过去两个功能同时开启时，聊天会提前交给 Instant Worker，主动消息 2.0 的任务上下文和 `schedule / cancel / renew / list` 工具留在浏览器本地，因此角色无法在 Instant 回复里操作任务。
+
+现在的链路是：
+
+1. 前端发 Instant 请求前，先把最新角色上下文、工具配置和当前推送订阅同步给用户自己的 AMSG Worker。
+2. Instant 请求携带四个 AMSG 工具定义和只供 Worker 使用的桥接配置；配置不进入角色正文或 push metadata。
+3. Instant Worker 只给本轮匹配的 LLM 请求补入这四个工具。角色调用后，Instant Worker 直接连接用户自己的 AMSG Worker，完成创建、取消、续期或查询，再把结果交回同一轮模型继续回复。
+4. 新建和取消的任务 UUID 随最终回复 metadata 回到手机，本地任务清单按 UUID 幂等对账。
+5. 如果前端无法准备云端桥，本轮自动回退到原有前台工具循环，不会静默让角色拿到一个实际不可执行的工具。
+
+因此两个功能不再互斥：Instant Push 负责“发完就关 App 仍能收到本轮回复”，主动消息 2.0 负责“任务到点后主动找你”。角色在本轮 Instant 回复里排下的未来任务，之后仍由 AMSG Worker 触发。
+
+### AMSG 原版 / 主动唤醒（二选一）
+
+角色设置里的主动消息 2.0 共用同一套 AMSG Worker、PushSubscription、VAPID、D1 和 API 配置，但运行方式二选一：
+
+- `AMSG 原版`：保留固定内容、自动生成、指定方向、一次/每天/每周与 expire/force 等标准排程。
+- `主动唤醒`（内部值仍为 `switch`）：用户只设置一次性的首次唤醒；角色每次醒来发完消息后，自行决定是否安排最近的一次性后续唤醒。没有安排下一次时链路自然结束，不会创建每日兜底，也不会为了维持频率额外调用模型。之后用户正常触发角色回复时，日常上下文仍会携带自主联系提示，角色可在那一轮重新决定是否启动下一次唤醒。
+
+切换模式会先取消当前角色旧模式的远端任务；全部取消成功后才创建新模式任务。任一取消失败都会停止切换，并把失败任务留在本地清单供重试。主动唤醒继续遵守设置页自定义的静默时段、滚动一小时最多 3 次、活跃聊天与一起听让路等护栏。Worker 的静默与频率护栏也继续覆盖 AMSG 原版的 AI 生成型任务；固定文本任务仍按原定时间直接发送。旧版主动唤醒留下的每日兜底任务不再启动模型，可在任务面板中取消。旧备份没有模式字段时按 `AMSG 原版` 处理。
+
+### 部署要求
+
+- SullyOS 站点和 Instant Worker 必须同时更新；本站内置 Worker 版本为 `2026-08-05`。
+- AMSG Worker 地址、用户 ID 和可选 Server Token 必须已在“主动消息 2.0”设置中配置并通过连接检查。
+- Instant Worker 仍使用原来的 VAPID / Client Token 配置，不需要新增 Cloudflare 环境变量。
+- Cloudflare 从 Git 自动部署时，`worker/instant-push/package.json` 会安装 AMSG 客户端依赖；手工粘贴部署则直接使用重新构建的 `worker.bundle.js`。
+- 旧 Instant Worker 不具备桥接能力。站点的 Worker 版本检查会提示重新部署，不能只更新 Vercel 而不更新 Worker。
+
 ## 1. 情绪 buff 走 Instant Push 链路
 
 之前的问题：
@@ -173,4 +204,4 @@ ChatApp 的 instant prompt 构建已经和本地本体对齐：
 - 情绪 buff instant 回传已验证。
 - 小红书 / Notion 工具调用与续跑状态提示已验证。
 - 大包场景默认走 multipart；启用 D1 BlobStore 后可用 envelope 路径承接更稳的大 payload。
-- 本地构建已通过：`npm run build`。
+- 本地构建已通过：`pnpm build`。

@@ -766,6 +766,34 @@ describe('认领角色自排任务后广播 amsg2-tasks-adopted', () => {
 
     expect(events.filter((e) => e.type === AMSG2_TASKS_ADOPTED_EVENT)).toHaveLength(0);
   }, 20000);
+
+  it('Instant 云端取消任务 → 从本地清单移除并广播一次', async () => {
+    const charId = 'char-adopt-cancel';
+    const now = Date.now();
+    const kept = selfScheduledTask('amsgself-kept', now);
+    const cancelled = selfScheduledTask('amsgself-cancelled', now);
+    await DB.saveCharacter({
+      id: charId,
+      name: '自排角色',
+      activeMsg2Config: { enabled: true, tasks: [kept, cancelled] },
+    } as any);
+    await ActiveMsgStore.saveInboxMessage({
+      messageId: 'msg-adopt-cancel-1',
+      charId,
+      charName: '自排角色',
+      body: '已经取消了',
+      messageType: 'forum',
+      receivedAt: Date.now(),
+      metadata: { charId, amsgCancelledTaskIds: [cancelled.taskUuid] },
+    } as any);
+
+    const events = captureEvents();
+    await flushInboxToChat();
+
+    const char = (await DB.getAllCharacters()).find((entry) => entry.id === charId);
+    expect(char?.activeMsg2Config?.tasks?.map((task) => task.taskUuid)).toEqual([kept.taskUuid]);
+    expect(events.filter((e) => e.type === AMSG2_TASKS_ADOPTED_EVENT)).toHaveLength(1);
+  }, 20000);
 });
 
 // ─── ④ 被吞掉的消息，云端「我说过什么」也要跟着撤 ───

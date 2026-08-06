@@ -48,6 +48,7 @@ import {
     runXhsDetail,
 } from './agenticTools';
 import { getLocalDateKey } from './localDate';
+import { parseAmsgWakeDirective } from './amsgWakeDirective';
 import {
     runXhsPhoneBrowse,
     runXhsPhoneSearch,
@@ -172,6 +173,7 @@ export type PostProcessDirective =
     | { type: 'transfer_return' }
     | { type: 'add_event'; title: string; date: string }
     | { type: 'schedule_message'; time: string; text: string }
+    | { type: 'amsg_wake_at'; localDateTime: string }
     // song 是主动消息 2.0 的定时路径后补的「角色说的是哪首歌」（见 chatParser 的
     // FrozenMusicSong）；标签里只有歌单名带不动它，所以单独走 directive 字段。
     | { type: 'music_action'; verb: string; args: string[]; song?: FrozenMusicSong }
@@ -224,6 +226,9 @@ function reconstructDirectiveTags(directives: PostProcessDirective[] | undefined
                 break;
             case 'schedule_message':
                 parts.push(`[schedule_message | ${d.time} | fixed | ${d.text}]`);
+                break;
+            case 'amsg_wake_at':
+                parts.push(`[[AMSG_WAKE_AT: ${d.localDateTime}]]`);
                 break;
             case 'music_action': {
                 const tail = d.args && d.args.length > 0 ? `|${d.args.join('|')}` : '';
@@ -334,6 +339,8 @@ export interface PostProcessHooks {
     updateTokenUsage?: (data: any, msgCount: number, pass: string) => void;
     /** 给 ChatParser.parseAndExecuteActions 用的音乐钩子 */
     musicHooks?: PostProcessMusicHooks;
+    /** Switch 文本指令落成真实 AMSG 任务；参数已经按用户设备时区转换为 UTC ISO。 */
+    scheduleAmsgWakeAt?: (wakeAtIso: string) => Promise<void>;
 }
 
 export interface PostProcessCtx {
@@ -543,6 +550,19 @@ export async function applyAssistantPostProcessing(
 
     // ─── Step 1: 初次粗洗 ───
     let aiContent = replayedTagPrefix ? `${replayedTagPrefix}${rawAiContent}` : rawAiContent;
+    if (char.activeMsg2Config?.experienceMode === 'switch') {
+        const userTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const wakeDirective = parseAmsgWakeDirective(aiContent, userTimeZone);
+        aiContent = wakeDirective.cleanedText;
+        if (wakeDirective.invalidValue) {
+            hooks.addToast('角色给出的自主唤醒时间格式无效，本次没有安排。', 'error');
+        } else if (char.activeMsg2Config?.enabled !== false
+            && wakeDirective.wakeAtIso
+            && !hooks.musicHooks?.isListeningTogether?.(char.id)
+            && hooks.scheduleAmsgWakeAt) {
+            await hooks.scheduleAmsgWakeAt(wakeDirective.wakeAtIso);
+        }
+    }
     aiContent = normalizeAiContent(aiContent);
     // 在任何 lead-in/二轮渲染之前先剥掉仿卡片文本，防止它被 chunkText 拆成灰色普通气泡。
     const mimickedXhsShares = extractMimickedXhsShares(aiContent);
