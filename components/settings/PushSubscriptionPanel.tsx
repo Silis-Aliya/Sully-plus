@@ -60,21 +60,30 @@ const PushSubscriptionPanel: React.FC<PushSubscriptionPanelProps> = ({ addToast 
   const [workerConfigured, setWorkerConfigured] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [autoClaimResult, setAutoClaimResult] = useState<
+    'matched' | 'preserved' | 'registered' | 'skipped' | 'failed' | null
+  >(null);
   // 连续几次僵尸失败。不落盘：刷新页面就归零，用户不会莫名其妙看到一个红按钮。
   const [zombieStreak, setZombieStreak] = useState(0);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
-      const browserState = await readBrowserPushState();
-      setBrowser(browserState);
+      let browserState = await readBrowserPushState();
       // 没填 Worker 地址就别去问了——问也是白问，还会在控制台留一串没用的报错。
       const config = await ActiveMsgClient.getGlobalConfig().catch(() => null);
       const configured = Boolean(config?.workerUrl?.trim());
       setWorkerConfigured(configured);
       if (configured && isIOSStandaloneWebApp()) {
-        await ActiveMsgClient.reconcilePushSubscription({ claimCurrentOnMismatch: true });
+        const result = await ActiveMsgClient.reconcilePushSubscription({ claimCurrentOnMismatch: true });
+        setAutoClaimResult(result);
+        // ensurePushSubscription 可能因 VAPID 变化重建订阅。认领后必须重读本机 endpoint，
+        // 否则会拿认领前的旧快照和云端新 endpoint 比较，误报“登记的是别的设备”。
+        browserState = await readBrowserPushState();
+      } else {
+        setAutoClaimResult(null);
       }
+      setBrowser(browserState);
       setRemote(configured ? await ActiveMsgClient.getRemotePushSubscription() : null);
     } finally {
       setRefreshing(false);
@@ -172,6 +181,17 @@ const PushSubscriptionPanel: React.FC<PushSubscriptionPanelProps> = ({ addToast 
             <Row label="推送通道" value={browser.channel} />
             <Row label="云端登记" value={registrationText.value} bad={registrationText.bad} />
 
+            {registration === 'other-endpoint' && autoClaimResult === 'failed' && (
+              <div className="mt-2 p-2 bg-rose-50 border border-rose-200 rounded-lg text-[10px] text-rose-700 leading-relaxed">
+                当前 iPhone 的订阅已建立，但自动登记到主动消息 2.0 Worker 时请求失败。请检查网络后重试；仍失败再点“重置订阅”。
+              </div>
+            )}
+            {registration === 'other-endpoint' && autoClaimResult === 'skipped' && (
+              <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-[10px] text-amber-700 leading-relaxed">
+                当前环境没有完成自动登记。请确认从 iPhone 主屏图标打开 Sully Plus，并保持通知权限开启。
+              </div>
+            )}
+
             {browser.endpoint && (
               <div className="pt-2 mt-2 border-t border-slate-200">
                 <p className="text-[10px] text-slate-400 mb-1">订阅端点（前 60 字符）</p>
@@ -211,7 +231,10 @@ const PushSubscriptionPanel: React.FC<PushSubscriptionPanelProps> = ({ addToast 
                 这个域名全球都不会解析，推送发过去必然失败。点下面的「重置订阅」重建一条就行。
               </div>
             )}
-            {registration === 'other-endpoint' && (
+            {registration === 'other-endpoint'
+              && autoClaimResult !== 'failed'
+              && autoClaimResult !== 'skipped'
+              && (
               <div className="mt-2 p-2 bg-rose-50 border border-rose-200 rounded-lg text-[10px] text-rose-700 leading-relaxed">
                 Worker 上登记的订阅不是这台设备——主动消息到点会推到<b>别处</b>，这台收不到。
                 换过设备、换过浏览器、或者换过 Worker 之后会这样（一个账号只存一份订阅，后登记的顶掉先前的）。
