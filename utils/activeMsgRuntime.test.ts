@@ -14,6 +14,7 @@ import {
   flushInboxToChat,
   isFreshInboxDelivery,
   purgeInboxArtifacts,
+  reconcileVisiblePushSubscription,
   refreshPushSubscriptionIfMarked,
   resolveBackfillTimestamp,
   resolveFireExpireDecision,
@@ -690,6 +691,34 @@ describe('refreshPushSubscriptionIfMarked', () => {
 
     await expect(refreshPushSubscriptionIfMarked()).resolves.toBe('kept');
     await expect(markerExists()).resolves.toBe(true);
+  });
+});
+
+describe('reconcileVisiblePushSubscription', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('并发的前台恢复事件共用同一次订阅对账', async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const reconcile = vi.spyOn(ActiveMsgClient, 'reconcilePushSubscription')
+      .mockReturnValue(pending.then(() => 'matched'));
+
+    const first = reconcileVisiblePushSubscription();
+    const second = reconcileVisiblePushSubscription();
+    expect(reconcile).toHaveBeenCalledTimes(1);
+
+    finish();
+    await Promise.all([first, second]);
+  });
+
+  it('上一次对账结束后，下次回前台可以重新检查', async () => {
+    const reconcile = vi.spyOn(ActiveMsgClient, 'reconcilePushSubscription')
+      .mockResolvedValue('matched');
+
+    await reconcileVisiblePushSubscription();
+    await reconcileVisiblePushSubscription();
+
+    expect(reconcile).toHaveBeenCalledTimes(2);
   });
 });
 

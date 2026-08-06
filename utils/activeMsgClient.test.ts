@@ -1009,9 +1009,40 @@ describe('ActiveMsgClient.connect（连接后补登记推送订阅）', () => {
 
   it('浏览器已有订阅 → 连接后把它覆盖写到这台 worker 上', async () => {
     stubConnectEnv('granted', makeSub('https://fcm.googleapis.com/send/x', [1, 2, 3]));
+    reiClient.getPushSubscription.mockResolvedValue({
+      success: true,
+      data: { exists: true, endpoint: 'https://fcm.googleapis.com/send/other', updatedAt: 1 },
+    });
     const register = vi.spyOn(ActiveMsgClient, 'registerPushSubscription').mockResolvedValue(undefined);
 
     await expect(ActiveMsgClient.connect()).resolves.toMatchObject({ ok: true });
+
+    expect(register).toHaveBeenCalledTimes(1);
+  });
+
+  it('浏览器订阅与 worker 已一致 → 只对账，不重复覆盖登记', async () => {
+    const endpoint = 'https://fcm.googleapis.com/send/x';
+    stubConnectEnv('granted', makeSub(endpoint, [1, 2, 3]));
+    reiClient.getPushSubscription.mockResolvedValue({
+      success: true,
+      data: { exists: true, endpoint, updatedAt: 1 },
+    });
+    const register = vi.spyOn(ActiveMsgClient, 'registerPushSubscription').mockResolvedValue(undefined);
+
+    await expect(ActiveMsgClient.reconcilePushSubscription()).resolves.toBe('matched');
+
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('worker 登记的是别的设备 → 自动覆盖成当前设备', async () => {
+    stubConnectEnv('granted', makeSub('https://fcm.googleapis.com/send/current', [1, 2, 3]));
+    reiClient.getPushSubscription.mockResolvedValue({
+      success: true,
+      data: { exists: true, endpoint: 'https://fcm.googleapis.com/send/other', updatedAt: 1 },
+    });
+    const register = vi.spyOn(ActiveMsgClient, 'registerPushSubscription').mockResolvedValue(undefined);
+
+    await expect(ActiveMsgClient.reconcilePushSubscription()).resolves.toBe('registered');
 
     expect(register).toHaveBeenCalledTimes(1);
   });

@@ -1244,21 +1244,30 @@ export const ActiveMsgClient = {
    * 只在**权限已授予且浏览器已有订阅**时补。没订阅说明用户还没走「开启通知与推送
    * 订阅」那步，那是引导流程该做的事——连接不替用户开推送，也不在这儿弹权限框。
    *
-   * 返回值只为单测断言：'registered' 补了 / 'skipped' 条件不满足 / 'failed' 补失败了。
+   * 返回值只为单测断言：'matched' 已经一致 / 'registered' 补了 / 'skipped' 条件不满足 /
+   * 'failed' 问不到或补失败了。
    */
-  async reconcilePushSubscription(): Promise<'registered' | 'skipped' | 'failed'> {
+  async reconcilePushSubscription(): Promise<'matched' | 'registered' | 'skipped' | 'failed'> {
+    let localEndpoint = '';
     try {
       if (describePushCapabilityGap()) return 'skipped';
       if (Notification.permission !== 'granted') return 'skipped';
       await KeepAlive.init();
       const registration = await navigator.serviceWorker.ready;
-      if (!await registration.pushManager.getSubscription()) return 'skipped';
+      const subscription = await registration.pushManager.getSubscription();
+      if (!subscription) return 'skipped';
+      localEndpoint = subscription.endpoint;
     } catch {
       // 探测本身炸了（SW 没就绪 / 环境不支持）就算了，别为一句自检拦住连接。
       return 'skipped';
     }
 
     try {
+      // iOS 的本机订阅没有变化时不会触发 pushsubscriptionchange，但 worker 上那一行仍
+      // 可能被另一台浏览器覆盖。启动/回前台对账必须主动比较，不能只等 SW 标记。
+      const remote = await this.getRemotePushSubscription();
+      if (!remote) return 'failed';
+      if (compareRemotePushSubscription(localEndpoint, remote) === 'matched') return 'matched';
       await this.registerPushSubscription();
       return 'registered';
     } catch (error) {
