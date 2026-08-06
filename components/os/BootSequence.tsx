@@ -123,10 +123,6 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
       className="fixed inset-0 z-[9999] overflow-hidden select-none cursor-pointer"
       style={{
         background: '#05060f',
-        // iOS standalone keeps fixed inset-0 above the Home Indicator area.
-        // Extend only the boot scene into that area so the wallpaper does not
-        // end in a white strip; the global viewport/safe-area layout stays intact.
-        bottom: 'calc(0px - var(--safe-bottom, 0px))',
         opacity: exiting ? 0 : 1,
         transition: `opacity ${EXIT}ms ease-in`,
       }}
@@ -245,9 +241,8 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
 
       {/* 轻触跳过提示（仅完整版、过 1.8s 后；极淡，不打扰） */}
       {cinematic && !exiting && (
-        <div className="absolute left-0 right-0 text-center text-[10px] tracking-[0.3em] text-white/40"
-             style={{ bottom: 'calc(2.5rem + var(--safe-bottom, 0px))', animation: 'bootHintIn 800ms ease-out 1800ms both' }}
-        >
+        <div className="absolute bottom-10 left-0 right-0 text-center text-[10px] tracking-[0.3em] text-white/40"
+             style={{ animation: 'bootHintIn 800ms ease-out 1800ms both' }}>
           轻触进入
         </div>
       )}
