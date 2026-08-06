@@ -16,6 +16,12 @@ export const selectStandaloneHeightBaseline = (
     return current;
 };
 
+export const resolveStandaloneAppHeight = (
+    stableHeight: number,
+    viewportHeight: number,
+    keyboardOpen: boolean,
+): number => keyboardOpen ? viewportHeight : stableHeight;
+
 // 用一个隐藏探针同时读取上下安全区：单次插入 + 单次 getComputedStyle（一次 reflow）。
 // env() 在本项目 iOS 全屏 PWA 下偶发返回 0，故需 JS 探测兜底。
 export const readSafeAreaInsets = (): { top: number; bottom: number } => {
@@ -124,8 +130,9 @@ const setViewportVars = () => {
         // innerHeight 跟着变矮，obscuredHeight 算出来是 0 而失效。viewportHeight > 150 是对 iOS 偶发脏值的护栏——
         // 键盘动画期 visualViewport 偶尔报错值，此时退化成「无键盘态」，宁可不避让也不要把布局撑崩成满屏白。
         const keyboardOpen = viewportHeight > 150 && viewportHeight < stableStandaloneHeight - 100;
-        // 键盘态：app 高度收到当前可视区（home 条已被键盘盖，不再叠加 safe）；无键盘态：基线 + safe（底部给 home 条留位）。
-        fullAppHeight = keyboardOpen ? viewportHeight : stableStandaloneHeight + bottomSafeInset;
+        // App 背景始终只占真实可视高度。安全区只用于具体顶栏/底栏挪开控件，
+        // 不能再加到根节点高度，否则普通页面会在底部多出一条常驻空白区域。
+        fullAppHeight = resolveStandaloneAppHeight(stableStandaloneHeight, viewportHeight, keyboardOpen);
         // standalone 下键盘避让改由「app 高度跟随可视区」统一处理，keyboard-inset 置 0，避免 CallApp 等再叠一层 padding。
         keyboardInset = 0;
         // iOS 26 键盘弹出会把整页顶上去（visualViewport.offsetTop > 0），拉回顶部对齐可视区；
