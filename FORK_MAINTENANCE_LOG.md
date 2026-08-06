@@ -42,6 +42,16 @@ Current effective state after the 2026-08-03 upstream refresh:
 - Private Plus / Vercel publishing should use `origin/master` for `Silis-Aliya/Sully-plus.git`; verify the Vercel dashboard before treating production as updated.
 - Local Memory Hub / Ombre bridge and VPS notes are WIP-only and must stay uncommitted unless the user explicitly approves publishing them.
 
+## 2026-08-06 iOS AMSG Notification Independence
+
+- Fixed the fork contract between Active Message 2.0 / autonomous wake and Instant Push. Disabling Instant Push no longer means autonomous wake notifications should stop; the two features may share browser Web Push primitives, but their enablement and task lifecycles remain independent.
+- Added an iOS-standalone scheduling guard in `utils/activeMsgClient.ts`. When the current iPhone explicitly schedules an AMSG task, it refreshes the user-level APNs subscription even if the Worker still has an older endpoint. Desktop scheduling keeps the existing phone endpoint and does not steal delivery from iOS.
+- AMSG content payloads now set `notification.show = when-hidden`. A visible Sully Plus client receives the inbox/chat update without an iOS banner; background, locked, or closed PWA delivery still shows the system notification.
+- This does not route ordinary foreground chat through AMSG and does not require Instant Push to be enabled. Instant Push continues to cover only the user's just-sent reply flow when its own switch is enabled.
+- Frontend and Worker deployment remain separate. Commit `91e02bd1` was pushed to both `origin/codex/merge-upstream-plus-maintenance` and private `origin/master`, so Vercel can deploy the subscription fix. Production `sullyos-amsg` must also receive the regenerated `worker/amsg/worker.bundle.js` through the separate `Silis-Aliya/sullyos-workers` deployment or a manual Worker deploy; the Instant Push Worker is unchanged.
+- Verification passed: `worker/amsg/src/agentic.test.ts` and `utils/activeMsgClient.test.ts` (157 tests), followed by the complete production `pnpm build` including regenerated Worker bundles.
+- Memory Hub / Ombre bridge, Memory Palace WIP, and `VPS_README.md` remained unstaged and were not included in the release commit.
+
 ## 2026-08-03 Code Records Forwarded To Character Chat
 
 - Extended the existing Code long-press selection mode from delete-only to batch operations with a `转发` action and the normal character-group target picker.

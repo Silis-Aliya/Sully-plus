@@ -243,6 +243,17 @@ pnpm build
 
 当前前端已经吸收上游的 AMSG2 订阅自愈、推送诊断、后台工具续跑和 Deno 代理支持。要让 Cloudflare 后端同时获得对应能力，仍需单独同步 `Silis-Aliya/sullyos-workers` 并等待 `sullyos-amsg` 生产部署完成；只看到 Vercel 构建成功不能代表 Worker 已更新。
 
+### iOS 主动唤醒与 Instant Push 的边界
+
+主动消息 2.0 / 主动唤醒和 Instant Push 共用浏览器的 Web Push 能力，但不是同一个开关，也不是同一类任务：
+
+- Instant Push 负责“用户刚发出的这轮普通聊天回复”；关闭 Instant Push 不应关闭主动消息 2.0 的定时唤醒通知。
+- iOS 主屏 PWA 在启用或安排主动唤醒时，会把当前 APNs `PushSubscription` 独立登记到 AMSG Worker。APNs endpoint 轮换后，新排程会重新认领当前 iPhone；电脑端排程仍保留已登记的手机，不会把接收端抢到电脑。
+- AMSG 内容推送使用 `notification.show = when-hidden`。Sully Plus 页面可见时只写入网页收件箱并显示聊天气泡；PWA 在后台、锁屏或关闭时才显示 iOS 系统通知。
+- 关闭 Instant Push 后无需修改 Instant Push Worker 地址，也不需要卸载推送订阅。AMSG Worker 地址、VAPID、D1 和角色任务仍按主动消息 2.0 的配置独立工作。
+
+这项行为同时依赖前端和 AMSG Worker：Vercel 前端负责 iPhone 排程时刷新登记；`worker/amsg/worker.bundle.js` 负责 `when-hidden` 通知策略。生产更新时必须把相同 Worker 改动同步到 `Silis-Aliya/sullyos-workers` 并等待 Cloudflare 自动部署，或手动部署本仓库生成的 AMSG bundle。Instant Push Worker 不需要因此更新。
+
 ## Android / Capacitor
 
 ```bash
