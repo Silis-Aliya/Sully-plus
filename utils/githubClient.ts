@@ -21,6 +21,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
 import { CloudBackupConfig, CloudBackupFile } from '../types';
+import { isIOSDevice } from './iosStandalone';
 import { getProxyWorkerUrl } from './proxyWorker';
 
 const API_HOST = 'https://api.github.com';
@@ -33,7 +34,14 @@ const RELEASE_NAME_PREFIX = 'Sully Backup ';
 // 余量给 multipart / 元数据。备份超过这个体积时会自动切成多个 asset
 // 上传到同一个 release，恢复时再拼回来。
 const MAX_PART_SIZE = 80 * 1024 * 1024;
+// iOS WebKit 会在上传 Blob 时额外复制请求体。完整 ZIP 已经占着一份内存，若再把
+// 80MB asset 交给 XHR/fetch，standalone PWA 很容易被 jetsam 整页重载。缩成 8MB
+// 顺序上传只改变 GitHub Release 的 asset 数量；恢复本来就支持按 partNNofMM 拼回。
+const IOS_PART_SIZE = 8 * 1024 * 1024;
 const PART_FILENAME_RE = /^(.+)\.part(\d+)of(\d+)\.zip$/i;
+
+export const getGitHubUploadPartSize = (ios = isIOSDevice()): number =>
+    ios ? IOS_PART_SIZE : MAX_PART_SIZE;
 
 const isNative = (): boolean => {
     try { return Capacitor.isNativePlatform(); } catch { return false; }
@@ -415,8 +423,10 @@ export const uploadBackup = async (
 
         onProgress?.(5);
 
+        const partSize = getGitHubUploadPartSize();
+
         // Single-asset path
-        if (blob.size <= MAX_PART_SIZE) {
+        if (blob.size <= partSize) {
             const result = await uploadOneAsset(config, releaseId, blob, filename, (frac) => {
                 onProgress?.(5 + Math.floor(frac * 94));
             });
@@ -425,14 +435,14 @@ export const uploadBackup = async (
         }
 
         // Multi-part path
-        const totalParts = Math.ceil(blob.size / MAX_PART_SIZE);
+        const totalParts = Math.ceil(blob.size / partSize);
         const baseName = filename.replace(/\.zip$/i, '');
         const padWidth = String(totalParts).length;
         const span = 95 / totalParts;
 
         for (let i = 0; i < totalParts; i++) {
-            const start = i * MAX_PART_SIZE;
-            const end = Math.min(start + MAX_PART_SIZE, blob.size);
+            const start = i * partSize;
+            const end = Math.min(start + partSize, blob.size);
             const partBlob = blob.slice(start, end, 'application/zip');
             const partNum = String(i + 1).padStart(padWidth, '0');
             const totalNum = String(totalParts).padStart(padWidth, '0');
