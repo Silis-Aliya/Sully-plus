@@ -1080,6 +1080,20 @@ describe('ActiveMsgClient.connect（连接后补登记推送订阅）', () => {
     expect(register).not.toHaveBeenCalled();
   });
 
+  it('iOS PWA can reclaim a rotated Apple push endpoint', async () => {
+    stubConnectEnv('granted', makeSub('https://web.push.apple.com/current', [1, 2, 3]));
+    reiClient.getPushSubscription.mockResolvedValue({
+      success: true,
+      data: { exists: true, endpoint: 'https://web.push.apple.com/stale', updatedAt: 1 },
+    });
+    const register = vi.spyOn(ActiveMsgClient, 'registerPushSubscription').mockResolvedValue(undefined);
+
+    await expect(ActiveMsgClient.reconcilePushSubscription({ claimCurrentOnMismatch: true }))
+      .resolves.toBe('registered');
+
+    expect(register).toHaveBeenCalledTimes(1);
+  });
+
   it('通知权限还没授予 → 不补登记，连接时也不弹权限框', async () => {
     stubConnectEnv('default', null);
     const register = vi.spyOn(ActiveMsgClient, 'registerPushSubscription').mockResolvedValue(undefined);

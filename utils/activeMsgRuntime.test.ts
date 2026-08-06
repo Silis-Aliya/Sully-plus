@@ -724,6 +724,7 @@ describe('reconcileIOSPushRegistration', () => {
 
     await expect(reconcileIOSPushRegistration()).resolves.toBe('registered');
     expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(reconcile).toHaveBeenCalledWith({ claimCurrentOnMismatch: true });
   });
 });
 

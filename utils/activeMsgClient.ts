@@ -1251,10 +1251,14 @@ export const ActiveMsgClient = {
    * 只在**权限已授予且浏览器已有订阅**时补。没订阅说明用户还没走「开启通知与推送
    * 订阅」那步，那是引导流程该做的事——连接不替用户开推送，也不在这儿弹权限框。
    *
+   * claimCurrentOnMismatch 只给确认的接收设备使用（目前是 iOS 主屏 PWA），用于 APNs
+   * 轮换 endpoint 后重新认领云端登记。普通网页仍保留已选设备，避免电脑端抢走通知。
    * 返回值只为单测断言：'matched' 已经是本机 / 'preserved' 已登记其他设备且保持不动 /
-   * 'registered' 云端为空时补了 / 'skipped' 当前设备没有现成订阅 / 'failed' 问不到或补失败。
+   * 'registered' 已补登记或重新认领 / 'skipped' 当前设备没有现成订阅 / 'failed' 问不到或补失败。
    */
-  async reconcilePushSubscription(): Promise<'matched' | 'preserved' | 'registered' | 'skipped' | 'failed'> {
+  async reconcilePushSubscription(options?: {
+    claimCurrentOnMismatch?: boolean;
+  }): Promise<'matched' | 'preserved' | 'registered' | 'skipped' | 'failed'> {
     let localEndpoint = '';
     try {
       if (describePushCapabilityGap()) return 'skipped';
@@ -1274,9 +1278,9 @@ export const ActiveMsgClient = {
       if (!remote) return 'failed';
       const state = compareRemotePushSubscription(localEndpoint, remote);
       if (state === 'matched') return 'matched';
-      // 连接 Worker、打开网页、同步上下文都不是“把通知改发到这台设备”的明确授权。
-      // 已登记另一台设备时保留它；用户要切换，去设置页点重置订阅。
-      if (state === 'other-endpoint') return 'preserved';
+      // 连接 Worker、打开普通网页、同步上下文都不是“把通知改发到这台设备”的明确授权。
+      // 默认保留已登记设备；确认的 iOS 接收端可在 APNs endpoint 轮换后重新认领。
+      if (state === 'other-endpoint' && !options?.claimCurrentOnMismatch) return 'preserved';
       await this.registerPushSubscription();
       return 'registered';
     } catch (error) {

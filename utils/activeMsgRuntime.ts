@@ -1606,15 +1606,15 @@ export const refreshPushSubscriptionIfMarked = async (): Promise<'no-marker' | '
 /**
  * iOS PWA 的云端登记自愈。
  *
- * reconcilePushSubscription 会保留已经登记的其他设备，只在 D1 没有任何登记时才把
- * 当前现成订阅补上。因此这里可以在冷启动、回前台和备份导入后安全执行，不会再让
- * 打开电脑网页这一动作抢走 iPhone 的接收权。
+ * 普通网页会保留已经选中的接收设备；这里仅在确认是 iOS 主屏 PWA 后允许当前设备
+ * 重新认领登记，用于修复 APNs 轮换 endpoint 后“同一台手机被识别成别的设备”。
+ * 电脑端仍不会因为打开网页、连接 Worker 或安排任务而抢走 iPhone 的接收权。
  */
 export const reconcileIOSPushRegistration = async (): Promise<
   'not-ios-pwa' | 'matched' | 'preserved' | 'registered' | 'skipped' | 'failed'
 > => {
   if (!isIOSStandaloneWebApp()) return 'not-ios-pwa';
-  return ActiveMsgClient.reconcilePushSubscription();
+  return ActiveMsgClient.reconcilePushSubscription({ claimCurrentOnMismatch: true });
 };
 
 const handleDeepLink = () => {

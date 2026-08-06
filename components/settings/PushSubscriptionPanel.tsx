@@ -29,6 +29,7 @@ import {
   liveFailureKind,
 } from '../../utils/pushDiagnosticsView';
 import { bucketRetryCount, trackEvent } from '../../utils/analytics';
+import { isIOSStandaloneWebApp } from '../../utils/iosStandalone';
 
 interface PushSubscriptionPanelProps {
   addToast: (message: string, type?: 'success' | 'error' | 'info') => void;
@@ -71,6 +72,9 @@ const PushSubscriptionPanel: React.FC<PushSubscriptionPanelProps> = ({ addToast 
       const config = await ActiveMsgClient.getGlobalConfig().catch(() => null);
       const configured = Boolean(config?.workerUrl?.trim());
       setWorkerConfigured(configured);
+      if (configured && isIOSStandaloneWebApp()) {
+        await ActiveMsgClient.reconcilePushSubscription({ claimCurrentOnMismatch: true });
+      }
       setRemote(configured ? await ActiveMsgClient.getRemotePushSubscription() : null);
     } finally {
       setRefreshing(false);
