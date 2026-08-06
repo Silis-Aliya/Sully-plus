@@ -6,6 +6,16 @@ let stableStandaloneHeight = 0;
 let cachedTopInset: number | null = null;
 let cachedBottomInset: number | null = null;
 
+export const selectStandaloneHeightBaseline = (
+    current: number,
+    viewportHeight: number,
+    reset: boolean = false,
+): number => {
+    if (!Number.isFinite(viewportHeight) || viewportHeight <= 150) return current;
+    if (reset || current <= 0) return viewportHeight;
+    return current;
+};
+
 // 用一个隐藏探针同时读取上下安全区：单次插入 + 单次 getComputedStyle（一次 reflow）。
 // env() 在本项目 iOS 全屏 PWA 下偶发返回 0，故需 JS 探测兜底。
 export const readSafeAreaInsets = (): { top: number; bottom: number } => {
@@ -105,10 +115,11 @@ const setViewportVars = () => {
     let keyboardInset: number;
 
     if (shouldStabilizeHeight) {
-        // 全屏 PWA 没有地址栏，可视高度只在软键盘弹出时变矮。基线取「见过的最大可视高度」。
-        if (!stableStandaloneHeight || viewportHeight > stableStandaloneHeight) {
-            stableStandaloneHeight = viewportHeight;
-        }
+        // 全屏 PWA 没有地址栏：正常态锁定一份高度基线，只在旋转、回前台或键盘收起后重校准。
+        // A standalone screen does not grow during normal use. Keeping the first
+        // healthy baseline prevents one transient iOS visualViewport spike from
+        // making every app taller than the physical screen until a full reload.
+        stableStandaloneHeight = selectStandaloneHeightBaseline(stableStandaloneHeight, viewportHeight);
         // 键盘态判据用「可视高度变矮」而非 obscuredHeight：iOS 26 起 standalone 会把 layout viewport 也一起缩，
         // innerHeight 跟着变矮，obscuredHeight 算出来是 0 而失效。viewportHeight > 150 是对 iOS 偶发脏值的护栏——
         // 键盘动画期 visualViewport 偶尔报错值，此时退化成「无键盘态」，宁可不避让也不要把布局撑崩成满屏白。
@@ -167,11 +178,32 @@ export const installIOSStandaloneWorkaround = () => {
         setViewportVars();
     };
 
+    const resetStandaloneHeight = () => {
+        if (!useStandaloneFixes || isTextEntryElement(document.activeElement)) return;
+        const viewportHeight = Math.round(window.visualViewport?.height || window.innerHeight);
+        stableStandaloneHeight = selectStandaloneHeightBaseline(stableStandaloneHeight, viewportHeight, true);
+        document.body.classList.remove('ios-keyboard-open');
+        setViewportVars();
+        window.scrollTo(0, 0);
+    };
+
+    const scheduleViewportRecovery = () => {
+        // iOS may finish its keyboard/foreground viewport animation after focusout
+        // and may omit the final visualViewport resize. Two late checks repair both
+        // the clipped shell height and a stale touch lock without polling.
+        window.setTimeout(resetStandaloneHeight, 360);
+        window.setTimeout(resetStandaloneHeight, 900);
+    };
+
     // 只有旋转 / 窗口尺寸变化才真的改变安全区：让缓存失效后重新探测（滚动、聚焦走缓存，不再重排）。
     const handleSafeAreaChange = () => {
         cachedTopInset = null;
         cachedBottomInset = null;
+        if (useStandaloneFixes && !isTextEntryElement(document.activeElement)) {
+            stableStandaloneHeight = 0;
+        }
         setViewportVars();
+        scheduleViewportRecovery();
     };
 
     const handleFocusIn = (event: FocusEvent) => {
@@ -199,21 +231,37 @@ export const installIOSStandaloneWorkaround = () => {
             }
             setViewportVars();
         }, 180);
+        scheduleViewportRecovery();
     };
 
     // 键盘弹出时锁死外层滚动：只放行可滚区（消息列表等 .overflow-y-auto）内部滚动，其余 touchmove 一律拦掉。
     // 不锁的话 iOS 会在输入框聚焦时随手势把整页顶飞（visualViewport.offsetTop 漂移、露出底层色块、闪烁）。
     const handleTouchMove = (event: TouchEvent) => {
         if (!document.body.classList.contains('ios-keyboard-open')) return;
+        if (!isTextEntryElement(document.activeElement)) {
+            // A detached/closed input can miss focusout on iOS. Never let that
+            // stale class disable launcher paging or gestures in another app.
+            document.body.classList.remove('ios-keyboard-open');
+            scheduleViewportRecovery();
+            return;
+        }
         const target = event.target as Element | null;
         if (target?.closest('.overflow-y-auto')) return;
         event.preventDefault();
+    };
+
+    const handleForeground = () => {
+        if (document.visibilityState === 'hidden') return;
+        scheduleViewportRecovery();
     };
 
     window.addEventListener('resize', handleSafeAreaChange);
     window.addEventListener('orientationchange', handleSafeAreaChange);
     window.visualViewport?.addEventListener('resize', handleViewportChange);
     window.visualViewport?.addEventListener('scroll', handleViewportChange);
+    window.addEventListener('pageshow', handleForeground);
+    window.addEventListener('focus', handleForeground);
+    document.addEventListener('visibilitychange', handleForeground);
     if (useKeyboardFixes) {
         document.addEventListener('focusin', handleFocusIn);
         document.addEventListener('focusout', handleFocusOut);
