@@ -1194,14 +1194,8 @@ export const ActiveMsgClient = {
     const config = await requirePushReady();
     const client = await initializeClient(config);
 
-    // 先让 worker 忘掉旧的那行。失败不拦：下面重新登记本来就是覆盖写，删不掉也不
-    // 影响结果，只是万一后面挂了，D1 里会多留一条已经没用的旧记录。
-    try {
-      await client.deletePushSubscription();
-    } catch (error) {
-      console.warn('[ActiveMsg] 重置订阅：删除 worker 上的旧订阅失败，继续重建', error);
-    }
-
+    // D1 的订阅按 user_id 单行覆盖，不需要先删。保留旧行直到新订阅 PUT 成功，避免
+    // iOS 在退订与重订之间切后台/断网时把云端永久留成「没有登记」。
     await unsubscribeCurrentPush();
     await resubscribeAndRegister(client);
   },
@@ -1222,12 +1216,7 @@ export const ActiveMsgClient = {
     const config = await requirePushReady();
     const client = await initializeClient(config);
 
-    try {
-      await client.deletePushSubscription();
-    } catch (error) {
-      console.warn('[ActiveMsg] 深度重置：删除 worker 上的旧订阅失败，继续重建', error);
-    }
-
+    // 同普通重置：旧云端行一直保留到最后的新订阅覆盖成功。
     await unsubscribeCurrentPush();
 
     try {

@@ -14,6 +14,7 @@ import {
   flushInboxToChat,
   isFreshInboxDelivery,
   purgeInboxArtifacts,
+  reconcileIOSPushRegistration,
   refreshPushSubscriptionIfMarked,
   resolveBackfillTimestamp,
   resolveFireExpireDecision,
@@ -690,6 +691,39 @@ describe('refreshPushSubscriptionIfMarked', () => {
 
     await expect(refreshPushSubscriptionIfMarked()).resolves.toBe('kept');
     await expect(markerExists()).resolves.toBe(true);
+  });
+});
+
+describe('reconcileIOSPushRegistration', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('非 iOS 主屏 PWA 不碰云端登记', async () => {
+    const reconcile = vi.spyOn(ActiveMsgClient, 'reconcilePushSubscription')
+      .mockResolvedValue('registered');
+
+    await expect(reconcileIOSPushRegistration()).resolves.toBe('not-ios-pwa');
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it('iOS 主屏 PWA 启动时执行安全核对', async () => {
+    const navigatorStub = {
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
+      platform: 'iPhone',
+      maxTouchPoints: 5,
+    };
+    vi.stubGlobal('navigator', navigatorStub);
+    vi.stubGlobal('window', {
+      navigator: { ...navigatorStub, standalone: true },
+      matchMedia: vi.fn().mockReturnValue({ matches: true }),
+    });
+    const reconcile = vi.spyOn(ActiveMsgClient, 'reconcilePushSubscription')
+      .mockResolvedValue('registered');
+
+    await expect(reconcileIOSPushRegistration()).resolves.toBe('registered');
+    expect(reconcile).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -22,6 +22,8 @@ import { applyScheduledTask, getPendingTasks, pruneStaleTasks, wouldExceedAutono
 import { appendInstantTraceEntry } from './instantTraceLog';
 import { trackEvent } from './analytics';
 import { postSsePayloadToServiceWorker } from './instantPushClient';
+import { isIOSStandaloneWebApp } from './iosStandalone';
+import { LOCAL_SETTINGS_IMPORTED_EVENT } from './localSettingsBackup';
 
 // 同一个 category，两个 tag——保持 console 里现有的 [ActiveMsg] / [amsg] 标签，
 // 方便用户 / 文档里 grep 历史报错信息。两条 tag 都归 instant-push 一类。
@@ -1601,6 +1603,20 @@ export const refreshPushSubscriptionIfMarked = async (): Promise<'no-marker' | '
   }
 };
 
+/**
+ * iOS PWA 的云端登记自愈。
+ *
+ * reconcilePushSubscription 会保留已经登记的其他设备，只在 D1 没有任何登记时才把
+ * 当前现成订阅补上。因此这里可以在冷启动、回前台和备份导入后安全执行，不会再让
+ * 打开电脑网页这一动作抢走 iPhone 的接收权。
+ */
+export const reconcileIOSPushRegistration = async (): Promise<
+  'not-ios-pwa' | 'matched' | 'preserved' | 'registered' | 'skipped' | 'failed'
+> => {
+  if (!isIOSStandaloneWebApp()) return 'not-ios-pwa';
+  return ActiveMsgClient.reconcilePushSubscription();
+};
+
 const handleDeepLink = () => {
   const currentUrl = new URL(window.location.href);
   const charId = currentUrl.searchParams.get('activeMsgCharId');
@@ -1712,6 +1728,7 @@ export const ActiveMsgRuntime = {
         // 先秒收本地 Push，再补拉云端缺口，最后处理补回内容；正常到达不被网络请求拖慢。
         void (async () => {
           await flushInboxToChat();
+          void reconcileIOSPushRegistration();
           await reconcileCloudDeliveryMailbox();
           await flushInboxToChat();
           void drainPendingDiaries(loadRealtimeConfigFromLocalStorage(), (charId) => {
@@ -1722,10 +1739,20 @@ export const ActiveMsgRuntime = {
       });
     }
 
+    // 完整备份/增量同步可能恢复另一份 AMSG userId 或 Worker 配置。导入完成后立即按
+    // 新身份核对一次；若云端为空就补当前 iPhone，已有其他接收端则原样保留。
+    if (typeof window !== 'undefined') {
+      window.addEventListener(LOCAL_SETTINGS_IMPORTED_EVENT, () => {
+        void reconcileIOSPushRegistration();
+      });
+    }
+
     // 订阅自检兜底：后台期间 SW 收到 pushsubscriptionchange 写了标记、而通知丢失
     // （页面没开着）时，启动这里把它消费掉。fire-and-forget——它要打网络请求，
     // 不能拦着下面的 inbox flush。
-    void refreshPushSubscriptionIfMarked();
+    void refreshPushSubscriptionIfMarked().then((result) => {
+      if (result === 'no-marker') void reconcileIOSPushRegistration();
+    });
 
     // 冷启动点通知时也先跳进对应聊天，别让收件箱里的拟人打字节奏堵住页面导航。
     // KeepAlive.init 已等待 SW ready，通常此时 React/OSContext 已挂载；随后 flush 每落一段

@@ -1418,23 +1418,22 @@ describe('ActiveMsgClient.resetPushSubscription（⑥a 重置后必须重新登�
     expect(reiClient.putPushSubscription.mock.calls[0][0].endpoint).toBe(FRESH);
   });
 
-  it('先让 worker 忘掉旧的那行，再登记新的', async () => {
+  it('不先删除 worker 旧行，直接用新订阅原子覆盖', async () => {
     stubResetEnv(makeSub('https://fcm.googleapis.com/send/old', [1, 2, 3]), [FRESH]);
 
     await runWithTimers(ActiveMsgClient.resetPushSubscription());
 
-    expect(reiClient.deletePushSubscription).toHaveBeenCalledTimes(1);
-    expect(reiClient.deletePushSubscription.mock.invocationCallOrder[0])
-      .toBeLessThan(reiClient.putPushSubscription.mock.invocationCallOrder[0]);
+    expect(reiClient.deletePushSubscription).not.toHaveBeenCalled();
+    expect(reiClient.putPushSubscription).toHaveBeenCalledTimes(1);
   });
 
-  it('删旧行失败不拦路——重新登记本来就是覆盖写', async () => {
-    stubResetEnv(makeSub('https://fcm.googleapis.com/send/old', [1, 2, 3]), [FRESH]);
-    reiClient.deletePushSubscription.mockRejectedValue(new Error('worker 说没有这一行'));
+  it('重订失败时也不删除云端旧行，避免留下没有登记', async () => {
+    stubResetEnv(null, ['https://permanently-removed.invalid/x']);
 
-    await runWithTimers(ActiveMsgClient.resetPushSubscription());
+    await runWithTimers(ActiveMsgClient.resetPushSubscription().catch(() => undefined));
 
-    expect(reiClient.putPushSubscription.mock.calls[0][0].endpoint).toBe(FRESH);
+    expect(reiClient.deletePushSubscription).not.toHaveBeenCalled();
+    expect(reiClient.putPushSubscription).not.toHaveBeenCalled();
   });
 
   it('重订第一次拿到僵尸哨兵、重试拿到活端点 → 登记的是活的那个', async () => {
@@ -1486,6 +1485,7 @@ describe('ActiveMsgClient.resetPushSubscription（⑥a 重置后必须重新登�
 
     expect(navigator.serviceWorker.getRegistrations).toHaveBeenCalledTimes(1);
     expect(KeepAlive.reregister).toHaveBeenCalledTimes(1);
+    expect(reiClient.deletePushSubscription).not.toHaveBeenCalled();
     expect(reiClient.putPushSubscription.mock.calls[0][0].endpoint).toBe(FRESH);
   });
 });
