@@ -38,7 +38,7 @@ describe('processLLMRound — 纯文本 finish', () => {
     expect(decision.decision).toBe('finish');
     if (decision.decision !== 'finish') return;
     expect(decision.pushPayloads).toHaveLength(2);
-    expect(decision.pushPayloads[0]).toEqual({
+    expect(decision.pushPayloads[0]).toMatchObject({
       messageKind: 'content',
       messageType: 'auto',
       source: 'scheduled',
@@ -53,6 +53,7 @@ describe('processLLMRound — 纯文本 finish', () => {
       notification: { title: '来自 小鹿', body: '想你了。' },
     });
     // 无副作用时 metadata 原样透传，不额外挂 directives 键。
+    expect(decision.pushPayloads[0].notification).toMatchObject({ show: 'when-hidden' });
     expect((decision.pushPayloads[1].metadata as any).directives).toBeUndefined();
   });
 

@@ -944,7 +944,10 @@ describe('ActiveMsgClient.registerPushSubscription（② 订阅按用户登记�
     reiClient.updateMessage.mockReset().mockResolvedValue({ success: true });
     reiClient.putPushSubscription.mockReset().mockResolvedValue({ success: true, data: { updatedAt: 1 } });
   });
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
 
   it('把当前订阅覆盖写到 worker 上那一份', async () => {
     const ensure = vi.spyOn(ActiveMsgClient, 'ensurePushSubscription').mockResolvedValue(SUB_JSON as any);
@@ -1000,6 +1003,39 @@ describe('ActiveMsgClient.registerPushSubscription（② 订阅按用户登记�
     await expect(ActiveMsgClient.ensurePushDeliveryTarget()).resolves.toBe('registered');
 
     expect(register).toHaveBeenCalledTimes(1);
+  });
+
+  it('iOS standalone scheduling reclaims the current APNs subscription', async () => {
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
+      standalone: true,
+    });
+    vi.stubGlobal('window', {
+      navigator: globalThis.navigator,
+      matchMedia: vi.fn().mockReturnValue({ matches: true }),
+    });
+    const register = vi.spyOn(ActiveMsgClient, 'registerPushSubscription').mockResolvedValue(undefined);
+    const preserve = vi.spyOn(ActiveMsgClient, 'ensurePushDeliveryTarget').mockResolvedValue('existing');
+
+    await expect(ActiveMsgClient.ensurePushDeliveryTargetForScheduling()).resolves.toBe('registered');
+
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(preserve).not.toHaveBeenCalled();
+  });
+
+  it('desktop scheduling preserves the phone already registered in the worker', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' });
+    vi.stubGlobal('window', {
+      navigator: globalThis.navigator,
+      matchMedia: vi.fn().mockReturnValue({ matches: false }),
+    });
+    const register = vi.spyOn(ActiveMsgClient, 'registerPushSubscription').mockResolvedValue(undefined);
+    const preserve = vi.spyOn(ActiveMsgClient, 'ensurePushDeliveryTarget').mockResolvedValue('existing');
+
+    await expect(ActiveMsgClient.ensurePushDeliveryTargetForScheduling()).resolves.toBe('existing');
+
+    expect(preserve).toHaveBeenCalledTimes(1);
+    expect(register).not.toHaveBeenCalled();
   });
 });
 

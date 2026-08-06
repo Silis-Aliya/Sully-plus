@@ -29,6 +29,7 @@ import {
 } from './amsg2Tasks';
 import { AMSG_CHAT_PRESENCE_KEY, AmsgChatPresence } from './amsgChatPresence';
 import { AMSG_MUSIC_WAKE_PRESENCE_KEY, AmsgMusicWakePresence } from './amsgMusicWakePresence';
+import { isIOSStandaloneWebApp } from './iosStandalone';
 import {
   AMSG_FIRE_PACK_KEY,
   AMSG_SWITCH_CONTROL_KEY,
@@ -1141,6 +1142,18 @@ export const ActiveMsgClient = {
   },
 
   /**
+   * iOS PWA scheduling explicitly chooses the receiving phone. APNs may rotate its
+   * endpoint, so refresh that registration; desktop scheduling preserves the phone.
+   */
+  async ensurePushDeliveryTargetForScheduling(): Promise<'existing' | 'registered'> {
+    if (isIOSStandaloneWebApp()) {
+      await this.registerPushSubscription();
+      return 'registered';
+    }
+    return this.ensurePushDeliveryTarget();
+  },
+
+  /**
    * worker 上登记的那份订阅现状（不含密钥，只有 endpoint 和登记时间）。
    *
    * 问不到一律返回 null、不抛：设置页的状态面板会反复调它，断网或者对面是台没有
@@ -1468,7 +1481,7 @@ export const ActiveMsgClient = {
     const client = await initializeClient(globalConfig);
     // 任务体不带订阅，worker 到点读用户级那一份。这里只确认已有接收端，不能让
     // 当前排程设备覆盖它（电脑排任务、iPhone 收通知是正常用法）。
-    await this.ensurePushDeliveryTarget();
+    await this.ensurePushDeliveryTargetForScheduling();
 
     // 数量封顶：待触发任务（不含被替换的那个）满 5 个就拒绝，让角色/用户先清。
     const pendingOthers = getPendingTasks(config, Date.now())

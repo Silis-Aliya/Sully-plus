@@ -375,8 +375,8 @@ export function processLLMRound(
  *
  * bannerBody = segment 的 sanitized 文本，塞进 notification.body 给 OS banner
  * 显示（[[SEND_EMOJI: x]] → [表情：x] 这类可读形态）；message 保留 raw 让客户端
- * applyAssistantPostProcessing 渲染卡片/表情。不带 notification.show —— SW 对
- * content push 的默认弹窗行为不变。
+ * applyAssistantPostProcessing 渲染卡片/表情。notification.show 使用 when-hidden：
+ * 前台只落网页气泡，PWA 隐藏、锁屏或关闭时才显示系统通知。
  */
 function buildScheduledPush(
   message: string,
@@ -400,6 +400,8 @@ function buildScheduledPush(
       amsgOccurrenceMs: build.occurrenceMs,
       ...(extraMeta ?? {}),
     },
-    ...(bannerBody !== undefined ? { notification: { title, body: bannerBody } } : {}),
+    ...(bannerBody !== undefined ? {
+      notification: { title, body: bannerBody, show: 'when-hidden' as const },
+    } : {}),
   };
 }

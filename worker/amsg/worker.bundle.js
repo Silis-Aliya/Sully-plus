@@ -8626,7 +8626,9 @@ function buildScheduledPush(message, build, extraMeta, bannerBody) {
       amsgOccurrenceMs: build.occurrenceMs,
       ...extraMeta ?? {}
     },
-    ...bannerBody !== void 0 ? { notification: { title, body: bannerBody } } : {}
+    ...bannerBody !== void 0 ? {
+      notification: { title, body: bannerBody, show: "when-hidden" }
+    } : {}
   };
 }
 
