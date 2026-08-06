@@ -157,6 +157,23 @@ const createClient = (config: Pick<ActiveMsg2GlobalConfig, 'userId' | 'workerUrl
     serverToken: config.serverToken || undefined,
   });
 
+type InitializedReiClient = ReturnType<typeof createClient>;
+
+let initializedClientCache: { key: string; client: InitializedReiClient } | null = null;
+
+const getClientCacheKey = (
+  config: Pick<ActiveMsg2GlobalConfig, 'userId' | 'workerUrl' | 'serverToken'>,
+) => JSON.stringify([
+  normalizeWorkerBase(config.workerUrl),
+  config.userId,
+  config.serverToken || '',
+]);
+
+/** Keep tests isolated from the module-level encryption client cache. */
+export const resetActiveMsgClientSessionCache = () => {
+  initializedClientCache = null;
+};
+
 /** 面板新建任务的默认时间：半小时后，折成 datetime-local 认的本地墙钟。 */
 export const getDefaultActiveMsgFirstSendTime = () =>
   toDatetimeLocalValue(new Date(Date.now() + 30 * 60_000).toISOString());
@@ -301,12 +318,16 @@ const ensureWorkerReady = async () => {
 };
 
 const initializeClient = async (config: ActiveMsg2GlobalConfig) => {
+  const key = getClientCacheKey(config);
+  if (initializedClientCache?.key === key) return initializedClientCache.client;
+
   const client = createClient(config);
   try {
     await client.init();
   } catch (error) {
     throw normalizeActiveMsgApiError(error, '获取用户密钥');
   }
+  initializedClientCache = { key, client };
   return client;
 };
 

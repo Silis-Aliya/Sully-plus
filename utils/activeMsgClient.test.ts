@@ -37,7 +37,8 @@ vi.mock('./keepAlive', () => ({
 
 import {
   ActiveMsgClient, buildFirePack, clearNamespaceValuesOrThrow, compareRemotePushSubscription,
-  dropStaleSubscription, putClientStateOrThrow, readAmsgFailKind, toRemoteAvatarUrl,
+  dropStaleSubscription, putClientStateOrThrow, readAmsgFailKind,
+  resetActiveMsgClientSessionCache, toRemoteAvatarUrl,
 } from './activeMsgClient';
 import {
   AMSG_SLOT_CURRENT_TIME, AMSG_SLOT_REALTIME_WORLD, AMSG_SLOT_SCENE,
@@ -71,7 +72,10 @@ const clientWith = (impl: any) => ({ putClientState: impl } as any);
 
 // 假时钟：重试退避是真的 setTimeout（400ms + 1200ms），实测跑满 4s。
 // 用 advanceTimersByTimeAsync 把等待推掉，测的还是同一段逻辑。
-beforeEach(() => { vi.useFakeTimers(); });
+beforeEach(() => {
+  vi.useFakeTimers();
+  resetActiveMsgClientSessionCache();
+});
 afterEach(() => { vi.useRealTimers(); });
 
 /** 起 promise + 把退避时钟推完，返回 promise 供断言。 */

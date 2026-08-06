@@ -1617,6 +1617,16 @@ export const reconcileIOSPushRegistration = async (): Promise<
   return ActiveMsgClient.reconcilePushSubscription({ claimCurrentOnMismatch: true });
 };
 
+let iosPushReconcileTimer: ReturnType<typeof setTimeout> | null = null;
+
+const scheduleIOSPushRegistrationReconcile = (delayMs = 900) => {
+  if (iosPushReconcileTimer !== null) clearTimeout(iosPushReconcileTimer);
+  iosPushReconcileTimer = setTimeout(() => {
+    iosPushReconcileTimer = null;
+    void reconcileIOSPushRegistration();
+  }, delayMs);
+};
+
 const handleDeepLink = () => {
   const currentUrl = new URL(window.location.href);
   const charId = currentUrl.searchParams.get('activeMsgCharId');
@@ -1728,7 +1738,7 @@ export const ActiveMsgRuntime = {
         // 先秒收本地 Push，再补拉云端缺口，最后处理补回内容；正常到达不被网络请求拖慢。
         void (async () => {
           await flushInboxToChat();
-          void reconcileIOSPushRegistration();
+          scheduleIOSPushRegistrationReconcile();
           await reconcileCloudDeliveryMailbox();
           await flushInboxToChat();
           void drainPendingDiaries(loadRealtimeConfigFromLocalStorage(), (charId) => {
@@ -1751,7 +1761,7 @@ export const ActiveMsgRuntime = {
     // （页面没开着）时，启动这里把它消费掉。fire-and-forget——它要打网络请求，
     // 不能拦着下面的 inbox flush。
     void refreshPushSubscriptionIfMarked().then((result) => {
-      if (result === 'no-marker') void reconcileIOSPushRegistration();
+      if (result === 'no-marker') scheduleIOSPushRegistrationReconcile();
     });
 
     // 冷启动点通知时也先跳进对应聊天，别让收件箱里的拟人打字节奏堵住页面导航。
