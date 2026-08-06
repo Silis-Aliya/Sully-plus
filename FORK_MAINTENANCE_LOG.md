@@ -52,6 +52,18 @@ Current effective state after the 2026-08-03 upstream refresh:
 - Verification passed: `worker/amsg/src/agentic.test.ts` and `utils/activeMsgClient.test.ts` (157 tests), followed by the complete production `pnpm build` including regenerated Worker bundles.
 - Memory Hub / Ombre bridge, Memory Palace WIP, and `VPS_README.md` remained unstaged and were not included in the release commit.
 
+## 2026-08-06 Autonomous Wake Prompt Decision
+
+- Refined the Switch / “主动唤醒” prompts so the character remains responsible for whether to schedule another wake and for choosing its time. The prompt does not impose a fixed one-to-two-hour interval and still permits the character to stop after the current contact.
+- Normal chat now carries the compact `【自主联系】` block. It exposes the current rolling quota, earliest valid time, and quiet hours, then allows only the next `[[AMSG_WAKE_AT: ...]]` decision.
+- A cloud-fired wake now uses the confirmed `【自主唤醒】` wording: decide the current message from the latest relationship, chat, memory, time, and wake context; afterward optionally schedule only the next wake. If none is scheduled, the character sleeps until a later normal chat can schedule again.
+- Removed repeated conservative wording such as “拿不准时可以不安排”, “不要为了维持唤醒链”, and the duplicated prose rule “任意连续 60 分钟内最多 3 次”. The dynamic quota line and “额度用完时不得早于最早可用时间” remain visible to the model.
+- The rolling maximum of three autonomous wakes per 60 minutes and quiet-hour rejection remain hard program-side guards. Removing the duplicated prose did not weaken those checks.
+- The conditional autonomous XHS block remains intact and is still exposed only when the Worker enables it for that wake.
+- Commit `088c28a0` was pushed to both `origin/codex/merge-upstream-plus-maintenance` and private `origin/master`; Vercel can deploy the foreground prompt. The regenerated `worker/amsg/worker.bundle.js` still needs to reach the production AMSG Worker before cloud-fired wakes use the new wording.
+- Verification passed: `utils/amsg2TaskContext.test.ts` and `utils/amsgFireSchedule.test.ts` (47 tests), followed by the complete production `pnpm build` including Worker bundle generation.
+- Memory Hub / Ombre bridge, Memory Palace WIP, and `VPS_README.md` remained unstaged and excluded.
+
 ## 2026-08-03 Code Records Forwarded To Character Chat
 
 - Extended the existing Code long-press selection mode from delete-only to batch operations with a `转发` action and the normal character-group target picker.
