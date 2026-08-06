@@ -1,8 +1,8 @@
 name: Deploy to GitHub Pages
 
+# Sully Plus uses Vercel for automatic production deployment.
+# Keep GitHub Pages available only for an explicit manual run.
 on:
-  push:
-    branches: [main, master]
   workflow_dispatch:
 
 permissions:
