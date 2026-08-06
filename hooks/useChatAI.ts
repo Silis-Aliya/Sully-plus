@@ -680,7 +680,7 @@ export const useChatAI = ({
         currentMsgs: Message[],
         overrideApiConfig?: { baseUrl: string; apiKey: string; model: string },
         onInstantPosted?: () => void,
-        opts?: { skipEmotionInjection?: boolean },
+        opts?: { skipEmotionInjection?: boolean; forceLocal?: boolean },
     ) => {
         // 早退路径也要熄「发送准备中」灯: caller (Chat.tsx) 是先 setInstantSendingActive(true)
         // 再调 triggerAI 的, 这里 return 掉而不通知的话指示灯会永远亮着。
@@ -1052,7 +1052,8 @@ export const useChatAI = ({
             // 瑞幸聊天点单 / 麦当劳 / 瑞幸小程序 这些"客户端工具循环"模式必须走本地 fetch:
             // instant push 会把请求交给 worker 并在这里提前 return, 工具循环(callLuckinTool 等)根本跑不到,
             // 表现就是"选了城市也没用 / 角色不下单"。这些模式下跳过 instant push, 用本地 fetch 跑工具循环。
-            const instantEligible = isInstantConfigReady()
+            const instantEligible = !opts?.forceLocal
+                && isInstantConfigReady()
                 && !payload.flags.luckinChatActive
                 && !payload.flags.mcdActive
                 && !payload.flags.luckinActive

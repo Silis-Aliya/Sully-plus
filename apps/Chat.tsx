@@ -1430,17 +1430,13 @@ const Chat: React.FC = () => {
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages, addToast, characters, userProfile, groups, realtimeConfig]);
 
-    // 顶栏 ⚡ 手动触发。instant 模式下给"上一条 assistant 之后的所有 user 消息"打上"准备中"
-    // 三个点（从写入 DB 到 SSE POST 入队之间），由 onInstantPosted 清除 ——
-    // 与 autoTriggerOnSend 自动路径的指示器行为一致。本地模式无此指示器，直接 triggerAI。
+    // 顶栏 ⚡ 是用户正在前台等待的普通回复，固定走本地聊天 API。Instant Push 只负责
+    // 用户显式开启的「发送后自动触发回复」；不能因为配好了 Instant 就把手动闪电也绕到
+    // Worker → Push → SW，否则推送端点异常时模型虽已完成，当前聊天却迟迟没有气泡。
     const handleManualTrigger = () => {
-        // 同上：上一轮还在跑时 triggerAI 会静默 reject，提前挡掉避免指示灯卡死。
+        // 上一轮还在跑时 triggerAI 会静默 reject，提前挡掉即可。
         if (isTyping) return;
-        if (!isInstantConfigReady()) { triggerAI(messages); return; }
-        // instantSendingActive 驱动 header "发送中…" 徽章 (拼接+发送窗口). 消息上的三个小圆点
-        // 另走纯前端判定 (isTyping && 最后一条消息), 见渲染处.
-        setInstantSendingActive(true);
-        triggerAI(messages, undefined, () => setInstantSendingActive(false));
+        triggerAI(messages, undefined, undefined, { forceLocal: true });
     };
 
     const handleReroll = async () => {
