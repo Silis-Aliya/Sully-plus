@@ -42,6 +42,16 @@ Current effective state after the 2026-08-03 upstream refresh:
 - Private Plus / Vercel publishing should use `origin/master` for `Silis-Aliya/Sully-plus.git`; verify the Vercel dashboard before treating production as updated.
 - Local Memory Hub / Ombre bridge and VPS notes are WIP-only and must stay uncommitted unless the user explicitly approves publishing them.
 
+## 2026-08-06 iOS Startup And AMSG Resume Stabilization
+
+- Matched the pre-React document background and Web App manifest theme/background to Sully Plus's dark startup surface. This removes the fork-introduced white startup strip before the animated splash without changing the later home/chat safe-area layout.
+- Added a page-session ReiClient initialization cache keyed by normalized AMSG Worker URL, user ID, and server token. Repeated foreground reconciliation now reuses a successful `/get-user-key` initialization instead of starting duplicate requests.
+- Debounced iOS standalone push-registration reconciliation and delayed it by 900ms after startup, `pageshow`, or visibility restoration. This gives the resumed PWA network stack time to become usable and suppresses transient `Load failed` errors when the Worker itself is healthy.
+- The cache clears naturally when the Worker URL, user ID, or server token changes. Test setup also resets it explicitly so connection tests remain isolated.
+- This is frontend-only release commit `a5e096b4`, pushed to both `origin/codex/merge-upstream-plus-maintenance` and private `origin/master`. Vercel should deploy it automatically; the Cloudflare AMSG Worker and Instant Push Worker do not need redeployment for this change.
+- Verification passed: `pnpm vitest run utils/activeMsgClient.test.ts utils/activeMsgRuntime.test.ts` (180 tests) and `pnpm build`.
+- Memory Hub / Ombre bridge, Memory Palace WIP, fixtures, and `VPS_README.md` remained outside the commit and production push.
+
 ## 2026-08-06 iOS AMSG Notification Independence
 
 - Fixed the fork contract between Active Message 2.0 / autonomous wake and Instant Push. Disabling Instant Push no longer means autonomous wake notifications should stop; the two features may share browser Web Push primitives, but their enablement and task lifecycles remain independent.

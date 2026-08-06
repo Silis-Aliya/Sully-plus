@@ -254,6 +254,14 @@ pnpm build
 
 这项行为同时依赖前端和 AMSG Worker：Vercel 前端负责 iPhone 排程时刷新登记；`worker/amsg/worker.bundle.js` 负责 `when-hidden` 通知策略。生产更新时必须把相同 Worker 改动同步到 `Silis-Aliya/sullyos-workers` 并等待 Cloudflare 自动部署，或手动部署本仓库生成的 AMSG bundle。Instant Push Worker 不需要因此更新。
 
+### iOS 启动与 AMSG 回前台稳定性
+
+- iOS 主屏 PWA 在 React 接管页面前使用与 Sully Plus 启动画面一致的深色底色；Web App manifest 的 `theme_color` 和 `background_color` 同步为同一颜色，减少冷启动时短暂露出白底或白色底栏。
+- AMSG 客户端会按 Worker 地址、用户 ID 和服务 token 复用当前页面会话中已经完成的 ReiClient 初始化，不再在同一次启动或回前台过程中反复请求 `/get-user-key`。
+- iOS 从后台恢复时，推送登记核对会延迟约 900ms 并做防抖，让 Safari/PWA 的网络状态先恢复，再访问 AMSG Worker。这样可减少“Worker 实际正常，但回前台瞬间弹出 `Load failed: /get-user-key`”的误报。
+- 这项修复不改变角色任务、消息内容、D1、VAPID、APNs endpoint 或 Instant Push 开关，也不增加模型调用。它只属于 Vercel 前端更新，不需要重新部署 Cloudflare AMSG Worker。
+- 若 `/get-user-key` 长时间持续失败，而不是仅在回前台瞬间出现一次，应继续检查自定义域名、网络、`AMSG_SERVER_TOKEN` 和 Worker `/config-check`，不要把真实连接故障当成恢复竞态。
+
 ### 主动唤醒的自主决策边界
 
 - “主动唤醒”不是预写内容的传统提醒。角色在普通聊天中可以决定是否安排下一次唤醒；到点后再读取最新关系、聊天、记忆和时间，自然决定本次要说什么。
