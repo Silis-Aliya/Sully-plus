@@ -16,6 +16,7 @@ import LuckinCheckoutCard from './LuckinCheckoutCard';
 import WebpageShareCard from './WebpageShareCard';
 import { loadMusicHooks } from '../../context/MusicContext';
 import { DB } from '../../utils/db';
+import { getXhsNoteOpenUrl } from '../../utils/xhsOpenUrl';
 
 // 思考链卡片支持的 12 种风格预设 — 同时被 MessageItem 与 ThinkingChainSettingsModal 复用
 export type ThinkingChainStyleId = 'echo' | 'whisper' | 'minimal' | 'ink' | 'neon' | 'terminal' | 'stellar' | 'tama' | 'pixel' | 'muji' | 'ins' | 'custom';
@@ -2554,22 +2555,15 @@ const MessageItem = React.memo(({
     // --- XHS Card Rendering (小红书笔记卡片) ---
     if (m.type === 'xhs_card' && m.metadata?.xhsNote) {
         const note = m.metadata.xhsNote;
-        const openXhsNote = () => {
-            const nid = note.noteId || note.note_id || note.id;
-            if (!nid && note.sourceUrl) {
-                const url = /^https?:\/\//i.test(note.sourceUrl) ? note.sourceUrl : `https://${note.sourceUrl}`;
-                window.open(url, '_blank', 'noopener,noreferrer');
-                return;
-            }
-            if (!nid) return;
-            const token = note.xsecToken || note.xsec_token;
-            const url = `https://www.xiaohongshu.com/explore/${nid}${token ? `?xsec_token=${encodeURIComponent(token)}&xsec_source=pc_feed` : ''}`;
-            window.open(url, '_blank', 'noopener,noreferrer');
-        };
+        const noteUrl = getXhsNoteOpenUrl(note);
         return commonLayout(
-            <div
-                onClick={openXhsNote}
-                className="w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 cursor-pointer active:opacity-90 transition-opacity">
+            <a
+                href={noteUrl || undefined}
+                target={noteUrl ? '_blank' : undefined}
+                rel={noteUrl ? 'noopener noreferrer' : undefined}
+                aria-disabled={!noteUrl}
+                aria-label={noteUrl ? `打开小红书笔记：${note.title || '无标题笔记'}` : undefined}
+                className={`block no-underline w-64 bg-white rounded-xl overflow-hidden shadow-sm border border-slate-100 active:opacity-90 transition-opacity ${noteUrl ? 'cursor-pointer' : 'cursor-default'}`}>
                 {/* Cover image */}
                 {note.coverUrl ? (
                     <div className="relative w-full h-36 bg-slate-100 overflow-hidden">
@@ -2627,7 +2621,7 @@ const MessageItem = React.memo(({
                         <span className="text-red-400 font-bold">小红书</span> <span>·</span> <span>{note.type === 'video' ? '视频' : '笔记'}{isUser ? '分享' : '推荐'}</span>
                     </div>
                 </div>
-            </div>
+            </a>
         );
     }
 
