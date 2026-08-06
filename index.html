@@ -14,7 +14,7 @@
     
     <!-- PWA Settings -->
     <link rel="manifest" href="./manifest.webmanifest" />
-    <meta name="theme-color" content="#05060f" />
+    <meta name="theme-color" content="#161231" />
     <meta name="color-scheme" content="dark" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -25,14 +25,57 @@
     <link rel="icon" type="image/png" href="./icons/icon-192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png" />
 
-    <!-- Paint the native/PWA launch surface before external scripts or React load. -->
+    <!-- Paint a lightweight Sully Plus scene before external scripts or React load. -->
     <style>
       html, body, #root {
         margin: 0;
         width: 100%;
         height: 100%;
         min-height: 100%;
-        background: #05060f;
+        background: #161231;
+      }
+      .sully-preboot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        color: #fff;
+        background:
+          radial-gradient(70% 55% at 72% 22%, rgba(139,108,232,.30), transparent 60%),
+          radial-gradient(64% 48% at 22% 32%, rgba(64,150,210,.20), transparent 62%),
+          radial-gradient(130% 120% at 50% 118%, #3a2766 0%, #1d1740 34%, #0c0b22 66%, #161231 100%);
+      }
+      .sully-preboot::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 44%;
+        width: min(120vw, 900px);
+        aspect-ratio: 1;
+        transform: translate(-50%, -50%);
+        background: radial-gradient(circle, rgba(168,150,255,.42), rgba(120,110,220,.14) 34%, transparent 62%);
+        animation: sullyPrebootGlow 2.8s ease-in-out infinite alternate;
+      }
+      .sully-preboot-logo {
+        position: relative;
+        font: 300 clamp(38px, 12vw, 64px)/1.1 system-ui, -apple-system, sans-serif;
+        letter-spacing: .04em;
+        text-shadow: 0 0 36px rgba(170,150,255,.55), 0 2px 14px rgba(0,0,0,.35);
+        animation: sullyPrebootIn .7s cubic-bezier(.22,1,.36,1) both;
+      }
+      .sully-preboot-logo strong { font-weight: 500; }
+      @keyframes sullyPrebootIn {
+        from { opacity: 0; transform: translateY(8px) scale(1.06); filter: blur(7px); }
+        to { opacity: 1; transform: none; filter: none; }
+      }
+      @keyframes sullyPrebootGlow {
+        from { opacity: .58; transform: translate(-50%, -50%) scale(.96); }
+        to { opacity: .86; transform: translate(-50%, -50%) scale(1.04); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .sully-preboot, .sully-preboot-logo { animation: none; }
       }
     </style>
 
@@ -155,10 +198,10 @@
         width: 100%;
         min-height: var(--app-height, 100lvh);
         height: var(--app-height, 100lvh);
-        background-color: #05060f;
+        background-color: #161231;
       }
       body {
-        background-color: #05060f;
+        background-color: #161231;
         margin: 0;
         overflow: hidden;
         /* Critical: Prevent browser back/forward swipe navigation AND vertical rubber-banding */
@@ -300,7 +343,11 @@
 </script>
 </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="sully-preboot" aria-label="Sully Plus 正在启动">
+        <div class="sully-preboot-logo">Sully <strong>Plus</strong></div>
+      </div>
+    </div>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>

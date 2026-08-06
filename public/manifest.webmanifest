@@ -2,8 +2,8 @@
   "short_name": "Sully Plus",
   "name": "Sully Plus",
   "display": "standalone",
-  "theme_color": "#05060f",
-  "background_color": "#05060f",
+  "theme_color": "#161231",
+  "background_color": "#161231",
   "start_url": "./",
   "scope": "./",
   "icons": [
