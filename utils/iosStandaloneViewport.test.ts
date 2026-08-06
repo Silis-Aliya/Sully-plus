@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { selectStandaloneHeightBaseline } from './iosStandalone';
 
 describe('iOS standalone viewport baseline', () => {
@@ -17,5 +18,15 @@ describe('iOS standalone viewport baseline', () => {
   it('ignores transient invalid viewport values', () => {
     expect(selectStandaloneHeightBaseline(844, 0, true)).toBe(844);
     expect(selectStandaloneHeightBaseline(844, Number.NaN, true)).toBe(844);
+  });
+
+  it('repairs a stale keyboard viewport immediately on foreground resume', () => {
+    const source = readFileSync(new URL('./iosStandalone.ts', import.meta.url), 'utf8');
+    const handler = source.slice(
+      source.indexOf('const handleForeground'),
+      source.indexOf("window.addEventListener('resize'"),
+    );
+    expect(handler.indexOf('resetStandaloneHeight();')).toBeGreaterThanOrEqual(0);
+    expect(handler.indexOf('resetStandaloneHeight();')).toBeLessThan(handler.indexOf('scheduleViewportRecovery();'));
   });
 });

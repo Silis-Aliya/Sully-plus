@@ -252,6 +252,11 @@ export const installIOSStandaloneWorkaround = () => {
 
     const handleForeground = () => {
         if (document.visibilityState === 'hidden') return;
+        // Returning from another iOS app can preserve the last focused input and
+        // keyboard class for one paint even though the keyboard is already gone.
+        // Repair the visible frame immediately; the delayed checks below only
+        // catch the later visualViewport animation and must not be the first fix.
+        resetStandaloneHeight();
         scheduleViewportRecovery();
     };
 
