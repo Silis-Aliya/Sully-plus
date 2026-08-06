@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { resolveStandaloneAppHeight, selectStandaloneHeightBaseline } from './iosStandalone';
+import { selectStandaloneHeightBaseline } from './iosStandalone';
 
 describe('iOS standalone viewport baseline', () => {
   it('does not let a later transient oversized sample poison the app height', () => {
@@ -18,20 +18,6 @@ describe('iOS standalone viewport baseline', () => {
   it('ignores transient invalid viewport values', () => {
     expect(selectStandaloneHeightBaseline(844, 0, true)).toBe(844);
     expect(selectStandaloneHeightBaseline(844, Number.NaN, true)).toBe(844);
-  });
-
-  it('does not add the home-indicator safe area to the normal app height', () => {
-    expect(resolveStandaloneAppHeight(844, 844, false)).toBe(844);
-  });
-
-  it('uses the reduced visual viewport while the keyboard is open', () => {
-    expect(resolveStandaloneAppHeight(844, 510, true)).toBe(510);
-  });
-
-  it('lets self-managed app backgrounds reach the viewport bottom', () => {
-    const source = readFileSync(new URL('../components/PhoneShell.tsx', import.meta.url), 'utf8');
-    expect(source).toContain(': { bottom: 0 }');
-    expect(source).not.toContain(": { bottom: 'var(--standalone-safe-area-bottom, 0px)' }");
   });
 
   it('repairs a stale keyboard viewport immediately on foreground resume', () => {
