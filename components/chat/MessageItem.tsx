@@ -16,6 +16,7 @@ import LuckinCheckoutCard from './LuckinCheckoutCard';
 import WebpageShareCard from './WebpageShareCard';
 import { loadMusicHooks } from '../../context/MusicContext';
 import { DB } from '../../utils/db';
+import { getXhsNoteOpenUrl } from '../../utils/xhsOpenUrl';
 
 // 思考链卡片支持的 12 种风格预设 — 同时被 MessageItem 与 ThinkingChainSettingsModal 复用
 export type ThinkingChainStyleId = 'echo' | 'whisper' | 'minimal' | 'ink' | 'neon' | 'terminal' | 'stellar' | 'tama' | 'pixel' | 'muji' | 'ins' | 'custom';
@@ -2554,14 +2555,7 @@ const MessageItem = React.memo(({
     // --- XHS Card Rendering (小红书笔记卡片) ---
     if (m.type === 'xhs_card' && m.metadata?.xhsNote) {
         const note = m.metadata.xhsNote;
-        const nid = note.noteId || note.note_id || note.id;
-        const sourceUrl = String(note.sourceUrl || '').trim();
-        const token = note.xsecToken || note.xsec_token;
-        const noteUrl = sourceUrl
-            ? (/^https?:\/\//i.test(sourceUrl) ? sourceUrl : `https://${sourceUrl}`)
-            : (nid
-                ? `https://www.xiaohongshu.com/explore/${nid}${token ? `?xsec_token=${encodeURIComponent(token)}&xsec_source=pc_feed` : ''}`
-                : '');
+        const noteUrl = getXhsNoteOpenUrl(note);
         return commonLayout(
             <a
                 href={noteUrl || undefined}
