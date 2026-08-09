@@ -86,6 +86,8 @@ export interface BuildChatPayloadInput {
     translationConfig?: TranslationConfig | { enabled: boolean; sourceLang: string; targetLang: string };
     htmlMode?: { enabled: boolean; customPrompt?: string };
     thinkingChain?: { enabled: boolean; customPrompt?: string };
+    /** 可选识图 API：开启后先把图片持久化转写为 [图片：描述]，主模型只接收文字。 */
+    visionApiConfig?: VisionApiConfig;
     mcdMiniSnap?: McdMiniAppSnapshot;
     luckinMiniSnap?: LuckinMiniAppSnapshot;
     /** 瑞幸聊天点单模式 (点"瑞一杯"激活, 角色直接调真实工具) */
@@ -227,6 +229,8 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     let recentMsgsHint = rawRecentMsgsHint;
 
     if (useVisionDescriptions) {
+        // historyMsgs 通常来自 DB、recentMsgsHint 通常来自 React state；按 id 合并后只识别一次，
+        // 再把写回 metadata 的新快照映射回两套窗口，避免同一轮的 system/history 各跑一次识图。
         const uniqueMessages = new Map<number, Message>();
         for (const message of rawRecentMsgsHint) uniqueMessages.set(message.id, message);
         for (const message of historyMsgs) uniqueMessages.set(message.id, message);

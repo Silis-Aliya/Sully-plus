@@ -90,12 +90,18 @@ export function buildGroupHistoryBlock(
     emojis: EmojiItem[],
     userName: string = '用户',
     maxAttachedImages: number = 3,
+    options?: { useVisionDescriptions?: boolean },
 ): GroupHistoryBlock {
     const nameOf = (id: string) => (id === 'user' ? userName : characters.find(c => c.id === id)?.name || '成员');
     const now = Date.now();
     const validImageWindowIdx: number[] = [];
     msgs.forEach((m, i) => {
         if (m.type === 'image') {
+            const visionDescription = options?.useVisionDescriptions
+                && typeof m.metadata?.visionDescription === 'string'
+                ? m.metadata.visionDescription.trim()
+                : '';
+            if (visionDescription) return;
             const url = typeof m.content === 'string' ? m.content.trim() : '';
             // 认不出令牌 = 这张图永远进不了附带名单，模型看不到图却又毫无报错
             if (/^(data:|https?:\/\/)/i.test(url) || isBlobRef(url)) validImageWindowIdx.push(i);
@@ -121,7 +127,13 @@ export function buildGroupHistoryBlock(
         const rawText = typeof m.content === 'string' ? m.content : '';
         let content: string;
         if (m.type === 'image') {
-            if (attachedSet.has(i)) {
+            const visionDescription = options?.useVisionDescriptions
+                && typeof m.metadata?.visionDescription === 'string'
+                ? m.metadata.visionDescription.trim()
+                : '';
+            if (visionDescription) {
+                content = `[图片：${visionDescription}]`;
+            } else if (attachedSet.has(i)) {
                 const tag = attachedImages.length + 1;
                 attachedImages.push({ tag, url: rawText.trim() });
                 content = `[图片#${tag}]`;
