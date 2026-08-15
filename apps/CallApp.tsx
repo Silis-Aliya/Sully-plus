@@ -2661,6 +2661,95 @@ ${sentencePlan}`;
       setRerollingBubbleId(null);
     }
   };
+
+  // 一段已经开始的通话安静太久时，角色可以自然接话两次。它是独立的显式偏好，
+  // 默认关闭；“谁先开口”只决定刚接通时的第一句话。
+  const idleNudgeBusyRef = useRef(false);
+  const fireIdleNudge = async () => {
+    if (!callPreferences.idleNudgeEnabled || idleNudgeBusyRef.current || !selectedChar?.id) return;
+    if (document.visibilityState === 'hidden') return;
+    idleNudgeBusyRef.current = true;
+    try {
+      setCallState('thinking');
+      const reply = prepareCallAssistantReply(
+        await requestAssistantReply(
+          '（电话里安静了好一会儿，对方一直没说话。你不是客服，不用干等——像真实通话里那样自然地开口：可以随口说说你这边正在做的事、把刚才的话题往下接一点，或者问问ta是不是在忙。一两句就好，别重复上一句。）',
+        ),
+        callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
+      );
+      const nudgeTs = Date.now();
+      const nudgeBubble: CallBubble = {
+        id: `${nudgeTs}-nudge`,
+        role: 'assistant',
+        text: reply.text,
+        time: formatTime(),
+        timestamp: nudgeTs,
+        thinkingChain: reply.thinkingChain,
+        performance: reply.performance,
+        performanceTimeline: reply.performanceCues,
+      };
+      setAvatarEmotion(reply.performance.emotion);
+      setAvatarPerformance(reply.performance);
+      setBubbles(previous => [...previous, nudgeBubble]);
+      idleNudgeCountRef.current += 1;
+      const dbId = await DB.saveMessage({
+        charId: selectedChar.id,
+        role: 'assistant',
+        type: 'text',
+        content: reply.text,
+        metadata: {
+          source: 'call',
+          callSessionId: currentSessionId,
+          ...(reply.thinkingChain ? { thinkingChain: reply.thinkingChain } : {}),
+          avatarPerformance: reply.performance,
+          avatarPerformanceCues: reply.performanceCues,
+        },
+      });
+      setBubbles(previous => previous.map(bubble => bubble.id === nudgeBubble.id ? { ...bubble, dbId } : bubble));
+      markCallTurnDirty();
+      runCallMemoryPalaceHook(selectedChar);
+
+      let playbackStarted = false;
+      if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
+        try {
+          const { url } = await takeOrSynthesizeCallAudio(reply.text, reply.speechEmotion);
+          if (url) {
+            trackBlobUrl(url);
+            setAudioUrl(url);
+            setBubbles(previous => previous.map(bubble => bubble.id === nudgeBubble.id ? { ...bubble, audioUrl: url } : bubble));
+            window.setTimeout(() => playAudio(url, reply.performanceCues, estimateSpeechMs(reply.text)), 0);
+            playbackStarted = true;
+          }
+        } catch {
+          // 主动开口拿不到语音时保留文字，并按当前播放偏好降级。
+        }
+      }
+      if (!playbackStarted) {
+        if (callMode === 'video' && callPreferences.voiceAutoPlay) {
+          playSilentAvatarSpeech(reply.text, reply.performanceCues);
+        } else if (callPreferences.voiceAutoPlay) {
+          setCallState('speaking');
+          const speakingMs = Math.max(1200, Math.min(4200, reply.text.length * 90));
+          window.setTimeout(() => setCallState(previous => previous === 'speaking' ? 'listening' : previous), speakingMs);
+        } else {
+          setCallState('listening');
+        }
+      }
+    } catch {
+      setCallState(previous => previous === 'thinking' ? 'listening' : previous);
+    } finally {
+      idleNudgeBusyRef.current = false;
+    }
+  };
+  useEffect(() => {
+    if (!callPreferences.idleNudgeEnabled) return;
+    if (viewMode !== 'in-call' || callState !== 'listening' || isAudioPlaying) return;
+    if (!bubbles.length || idleNudgeCountRef.current >= 2 || idleNudgeBusyRef.current) return;
+    const silenceMs = 50_000 + Math.random() * 30_000 + idleNudgeCountRef.current * 40_000;
+    const timer = window.setTimeout(() => { void fireIdleNudge(); }, silenceMs);
+    return () => window.clearTimeout(timer);
+  }, [viewMode, callState, isAudioPlaying, bubbles, draftInput, callPreferences.idleNudgeEnabled]);
+
   // 用户在舞台上拖拽/缩放后的构图，写回角色的 videoAvatar 持久化。
   const handleStageFramingChange = (framing: AvatarStageFraming) => {
     if (!selectedChar?.videoAvatar) return;
@@ -2898,6 +2987,41 @@ ${sentencePlan}`;
             }}
           />
         )}
+        {showCallPreferences && (
+          <CallPreferencesSheet
+            preferences={callPreferences}
+            accentColor={accentColor}
+            lightTheme={lightTheme}
+            onChange={next => {
+              setCallPreferences(next);
+              trackEvent('设置通话偏好', {
+                谁先开口: next.characterInitiative ? '角色' : '用户',
+                自动生成并播放语音: next.voiceAutoPlay ? '开启' : '关闭',
+                沉默后主动接话: next.idleNudgeEnabled ? '开启' : '关闭',
+              });
+            }}
+            onOpenSystemSettings={() => {
+              setShowCallPreferences(false);
+              openApp(AppID.Settings);
+            }}
+            onClose={() => setShowCallPreferences(false)}
+          />
+        )}
+        {/* floating sparkles */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          {CALL_SPARKLES.map((p, i) => (
+            <span key={i} className="absolute rounded-full bg-white animate-pulse"
+              style={{ top: p.top, left: p.left, width: p.s, height: p.s, opacity: 0.5, animationDelay: `${i * 0.4}s`, boxShadow: `0 0 6px ${accentColor}` }} />
+          ))}
+        </div>
+        {/* top-right character art bleed */}
+        {selectedChar?.avatar && (
+          <div className="absolute top-0 right-0 w-48 h-60 pointer-events-none"
+            style={{ WebkitMaskImage: 'radial-gradient(135% 105% at 100% 0%, #000 32%, transparent 72%)', maskImage: 'radial-gradient(135% 105% at 100% 0%, #000 32%, transparent 72%)' }}>
+            <img src={selectedChar.avatar} alt="" className="w-full h-full object-cover object-top opacity-60" />
+          </div>
+        )}
+
         <div
           className="relative z-10 flex h-full min-h-0 flex-col overflow-hidden px-5"
           style={{

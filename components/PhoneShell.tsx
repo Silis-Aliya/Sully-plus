@@ -395,18 +395,18 @@ const ImportRecoveryPopup: React.FC<{
 // 刻意「零动画开销」：之前那套呼吸/涟漪/上升微尘的持续动画在 iOS 上会引起卡顿，且预热命中后
 // 这屏几乎不出现 —— 收益小、代价大。现在只一次性淡入一个静态柔光点（无 infinite 动画），
 // 透明底让外壳虚化壁纸透出来。真卡住（>7s）才换成可点的刷新/返回兜底。
-const AppLoadingFallback: React.FC<{ onReturn?: () => void }> = ({ onReturn }) => {
+const AppLoadingFallback: React.FC<{ onReturn?: () => void; animationEnabled?: boolean }> = ({ onReturn, animationEnabled = true }) => {
   const [show, setShow] = useState(false);
   const [stalled, setStalled] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setShow(true), 220);
+    const t = animationEnabled ? setTimeout(() => setShow(true), 220) : null;
     // 卡死逃生口：iOS standalone PWA 从后台恢复 / 弱网时，动态 import 可能既不 resolve 也不 reject，
     // Suspense 会永远停在这一屏（不报错 → 错误边界不触发 → 不会自动刷新），用户狂点中心光点却毫无反应。
     // 超过 STALL_MS 仍未加载完 → 把「看着像按钮其实不是」的光点换成真正可点的「刷新/返回」按钮，
     // 既明确告诉用户该点哪里，又把静默卡死变成一键可恢复。只动占位 UI，不碰 import 逻辑。
     const stall = setTimeout(() => { setStalled(true); trackEvent('App 加载卡死超时'); }, 7000);
-    return () => { clearTimeout(t); clearTimeout(stall); };
-  }, []);
+    return () => { if (t) clearTimeout(t); clearTimeout(stall); };
+  }, [animationEnabled]);
   if (stalled) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900/95 text-white p-6 text-center space-y-4" style={{ animation: 'appLoadIn 320ms ease-out both' }}>
@@ -533,6 +533,11 @@ const PhoneShell: React.FC = () => {
 
   // 冷启动「世界入场」是否已结束。结束前由 BootSequence 接管整屏（同时取代旧的黑屏 spinner）。
   const [bootDone, setBootDone] = useState(false);
+  const bootAnimationEnabled = theme.bootAnimationEnabled !== false;
+  useEffect(() => {
+    // 本次启动一旦选择跳过，就记为已经完成；用户稍后重新打开开关时不在桌面中途补播。
+    if (!bootAnimationEnabled) setBootDone(true);
+  }, [bootAnimationEnabled]);
 
   useEffect(() => {
     if (!bootDone || !isDataLoaded || activeApp !== AppID.Launcher) return;
@@ -809,7 +814,7 @@ const PhoneShell: React.FC = () => {
 
   // 冷启动：先放「世界入场」cinematic（数据没就绪时它持续呼吸等待，绝不出现 spinner）。
   // BootSequence 在「数据就绪 + 停留够时长」后推进退场，再交还控制权给下方的锁屏/桌面。
-  if (!bootDone) {
+  if (!bootDone && bootAnimationEnabled) {
     return <BootSequence dataReady={isDataLoaded} wallpaper={theme.wallpaper} onDone={() => setBootDone(true)} />;
   }
 
