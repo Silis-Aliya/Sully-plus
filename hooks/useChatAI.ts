@@ -576,6 +576,7 @@ export const useChatAI = ({
                     categories: deps.categories,
                     historyMsgs: contextMsgs,
                     contextLimit: Math.max(1, contextMsgs.length),
+                    recallEntryPoint: 'emotion_eval',
                     realtimeConfig: deps.realtimeConfig,
                     innerState: deps.evolvedNarrative || undefined,
                     musicSnapshot: loadMusicPlaybackSnapshot(),
@@ -800,6 +801,7 @@ export const useChatAI = ({
                 mcdMiniSnap: mcdMiniOpen ? mcdMiniSnap : undefined,
                 luckinMiniSnap: luckinMiniOpen ? luckinMiniSnap : undefined,
                 luckinChat: luckinChatRef?.current?.active ? luckinChatRef.current : undefined,
+                recallEntryPoint: 'chat_app',
             }));
             const systemPrompt = payload.systemPrompt;
             const cleanedApiMessages = payload.cleanedApiMessages;
