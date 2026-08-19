@@ -4,6 +4,7 @@ import { normalizeUserImpression } from './impression';
 import { isScheduleFeatureOn } from './scheduleFeature';
 import { TIME_FRAMING_CONVERSATIONAL } from './timeFramingNote';
 import { buildScheduleInjection as buildScheduleInjectionText } from './scheduleInjection';
+import { TIME_FRAMING_CONVERSATIONAL } from './timeFramingNote';
 import { resolveCharTimeZone, nowInTimeZone, tzAwarenessNote, interactionGapNote } from './timezone';
 import {
     formatWorldbookSection,
@@ -121,6 +122,8 @@ export const ContextBuilder = {
             lastInteractionTs?: number;
             /** 抑制整段时间感知（当前时间/时差/距上次联系）。见面纯架空（dateTimeAwarenessEnabled=false）时用。 */
             skipTimeAwareness?: boolean;
+            /** 正有人在跟角色实时对话（私聊 / 见面）。见 buildTimeAwarenessBlock 同名字段。 */
+            conversational?: boolean;
             /** Recent messages used to activate keyword-based worldbook entries. */
             worldbookMessages?: WorldbookScanMessage[];
         },

@@ -456,7 +456,9 @@ export const ChatPrompts = {
         volatileState += ContextBuilder.buildVolatileCoreState(char, {
             includeDetailedMemories: true,
             includeEmotionBuff: !isCodeSurface,
-            timeOptions: { skipTimeAwareness: forFirePack, conversational: true },
+            // conversational：私聊是真的有人在这个点跟角色说话，时间块才补那句语境框定
+            // （见 ContextBuilder.buildTimeAwarenessBlock）。生成器类调用不给，默认就没有。
+            timeOptions: { skipTimeAwareness: forFirePack || timelyByWorker, conversational: true },
         });
 
         // ── 并发发起所有独立的异步取数（网络 + IndexedDB），下面按原顺序拼接 ──
