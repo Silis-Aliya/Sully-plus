@@ -288,6 +288,10 @@
 </head>
   <body>
     <div id="root"></div>
+    <!-- Cubism Core must exist before the lazily loaded Pixi Live2D adapter evaluates.
+         Loading it here removes the iOS/Vercel race where the adapter could initialize
+         one task before the runtime script injected by live2dCore had executed. -->
+    <script src="https://cubism.live2d.com/sdk-web/core/06/live2dcubismcore.min.js"></script>
     <script type="module" src="/index.tsx"></script>
   </body>
 </html>
