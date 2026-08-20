@@ -122,6 +122,10 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
       aria-label="Sully Plus"
       className="fixed inset-0 z-[9999] overflow-hidden select-none cursor-pointer"
       style={{
+        // iOS standalone 的 fixed 视口不含 Home 指示条安全区。开屏层若停在
+        // 可视区底部，动画开始前就会露出浏览器默认的白底；向下延一段安全区，
+        // 让当前星空/壁纸场景连续铺到底。非 iOS 的 --safe-bottom 为 0，不受影响。
+        bottom: 'calc(-1 * var(--safe-bottom, 0px))',
         background: '#05060f',
         opacity: exiting ? 0 : 1,
         transition: `opacity ${EXIT}ms ease-in`,
