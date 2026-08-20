@@ -43,6 +43,18 @@ binding = "DB"
 database_name = "sullyos-amsg"
 database_id = "REPLACE_WITH_YOUR_D1_ID"
 
+# 完整聊天上下文加密写进 D1；Queue 只携带几十字节的任务身份。
+[[queues.producers]]
+binding = "INSTANT_QUEUE"
+queue = "sullyos-amsg-instant"
+
+[[queues.consumers]]
+queue = "sullyos-amsg-instant"
+max_batch_size = 1
+max_batch_timeout = 1
+max_retries = 5
+retry_delay = 60
+
 # 每分钟查一次到点任务（UTC）。这是主动消息唯一的投递触发方式——
 # 没有 send-notifications 这类 HTTP 端点，关掉 cron 等于整个功能停摆。
 [triggers]

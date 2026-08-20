@@ -31,6 +31,9 @@ Cloudflare 面板 → 左侧 **Storage & databases** → **D1 SQLite Database** 
 
 > 表结构不用管：SullyOS 里点「连接」时会自动建表。
 
+同一页左侧进入 **Queues** → **Create Queue**，名字必须填 `sullyos-amsg-instant`。
+这条队列只负责在你点聊天顶部闪电后唤醒后台消费者；聊天正文不会写进队列，仍是加密存进上面的 D1。
+
 ### 3. 在 Cloudflare 连上仓库
 
 Cloudflare 面板 → **Compute** → **Workers & Pages** → 右上角 **Create application** → 选 **Continue with GitHub**（第一次会跳去 GitHub 授权），在仓库列表里选中你 fork 的仓库，点 **Next**。
@@ -142,11 +145,15 @@ SullyOS 里点「连接并验证」时也会先读一次这个自检，缺什么
 **主动消息到点了没反应？**
 `amsg/` 靠定时触发器每分钟检查一次，配置里已经写好了（`crons = ["* * * * *"]`）。去 Worker 的 **Settings → Trigger events** 确认 Cron 那条在；不在的话通常是 Path 填错、部署的不是 `amsg` 目录。
 
+**部署报 Queue 不存在？**
+去 Cloudflare 左侧 **Storage & databases → Queues** 建一条名为 `sullyos-amsg-instant` 的队列，再重试部署。它是一次性资源，以后 Sync fork 更新不会要求重建。
+
 **想用 wrangler 命令行而不是网页？**
 
 ```bash
 cd amsg
 wrangler d1 create sullyos-amsg     # 拿 database_id 填进 wrangler.toml
+wrangler queues create sullyos-amsg-instant
 wrangler secret put AMSG_MASTER_KEY # 其余密钥同理
 wrangler deploy
 ```

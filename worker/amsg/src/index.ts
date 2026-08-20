@@ -140,11 +140,14 @@ import {
   buildInstantTimelyBlock,
   finalizeInstantPush,
   handleInstantChat,
+  handleInstantChatQueue,
   INSTANT_TOTAL_TIMEOUT_MS,
   isInstantChatTask,
   toOutboxEntries,
   writeChatOutbox,
   type InstantChatExecutionCtx,
+  type InstantChatQueueBatch,
+  type InstantChatQueueMessage,
 } from './instantChat';
 import { createHybridPushTransport, isFcmConfigured, type NativeFcmEnv } from './nativeFcm';
 import {
@@ -165,6 +168,9 @@ interface Env extends NativeFcmEnv {
   AMSG_SERVER_TOKEN?: string;
   /** D1 binding（factory 默认 createD1Adapter(env.DB)，这里只是标注存在）。 */
   DB: DeliveryMailboxDb;
+  INSTANT_QUEUE?: {
+    send(body: InstantChatQueueMessage, options?: { delaySeconds?: number }): Promise<void>;
+  };
 }
 
 // ─── 满血 fire-time hooks（amsg-server 2.6.0-next.4+：含 ctx.scratch / 存储层大值分块） ───
@@ -2030,7 +2036,12 @@ export default {
       // 校验了就查不出来。作为交换，这里只回「配没配」，不回任何值。
       return jsonWithCors(200, {
         success: true,
-        data: { ...inspectWorkerEnv(env), instantChat: true, directInstant: true },
+        data: {
+          ...inspectWorkerEnv(env),
+          instantChat: true,
+          instantQueue: Boolean(env.INSTANT_QUEUE),
+          directInstant: true,
+        },
       });
     }
 
@@ -2085,5 +2096,15 @@ export default {
       return;
     }
     return upstream.scheduled(event, env);
+  },
+
+  async queue(batch: InstantChatQueueBatch, env: Env): Promise<void> {
+    const report = inspectWorkerEnv(env);
+    return handleInstantChatQueue({
+      batch,
+      env,
+      upstream,
+      ...(report.ok ? {} : { configError: report.message }),
+    });
   },
 };

@@ -14,7 +14,8 @@
     
     <!-- PWA Settings -->
     <link rel="manifest" href="./manifest.webmanifest" />
-    <meta name="theme-color" content="#0f1115" />
+    <meta name="theme-color" content="#161231" />
+    <meta name="color-scheme" content="dark" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -23,6 +24,60 @@
     <!-- Updated Icons -->
     <link rel="icon" type="image/png" href="./icons/icon-192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png" />
+
+    <!-- React / 外部脚本加载前先画同语言的 Sully Plus 场景，避免 iOS PWA 露出白色启动画布。 -->
+    <style>
+      html, body, #root {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        min-height: 100%;
+        background: #161231;
+      }
+      .sully-preboot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        color: #fff;
+        background:
+          radial-gradient(70% 55% at 72% 22%, rgba(139,108,232,.30), transparent 60%),
+          radial-gradient(64% 48% at 22% 32%, rgba(64,150,210,.20), transparent 62%),
+          radial-gradient(130% 120% at 50% 118%, #3a2766 0%, #1d1740 34%, #0c0b22 66%, #161231 100%);
+      }
+      .sully-preboot::before {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 44%;
+        width: min(120vw, 900px);
+        aspect-ratio: 1;
+        transform: translate(-50%, -50%);
+        background: radial-gradient(circle, rgba(168,150,255,.42), rgba(120,110,220,.14) 34%, transparent 62%);
+        animation: sullyPrebootGlow 2.8s ease-in-out infinite alternate;
+      }
+      .sully-preboot-logo {
+        position: relative;
+        font: 300 clamp(38px, 12vw, 64px)/1.1 system-ui, -apple-system, sans-serif;
+        letter-spacing: .04em;
+        text-shadow: 0 0 36px rgba(170,150,255,.55), 0 2px 14px rgba(0,0,0,.35);
+        animation: sullyPrebootIn .7s cubic-bezier(.22,1,.36,1) both;
+      }
+      .sully-preboot-logo strong { font-weight: 500; }
+      @keyframes sullyPrebootIn {
+        from { opacity: 0; transform: translateY(8px) scale(1.06); filter: blur(7px); }
+        to { opacity: 1; transform: none; filter: none; }
+      }
+      @keyframes sullyPrebootGlow {
+        from { opacity: .58; transform: translate(-50%, -50%) scale(.96); }
+        to { opacity: .86; transform: translate(-50%, -50%) scale(1.04); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .sully-preboot, .sully-preboot-logo { animation: none; }
+      }
+    </style>
 
     <!-- KaTeX CSS for Math Rendering -->
     <link rel="stylesheet" href="https://unpkg.com/katex@0.16.9/dist/katex.min.css" integrity="sha384-n8MVd4RsNIU0tAv4ct0nTaAbDJwPJzDEaqSD1odI+WdtXRGWt2kTvGFasHpSy3SV" crossorigin="anonymous">
@@ -146,7 +201,7 @@
       }
       /* iOS PWA 冷启动时 Home 指示条区域偶尔先画 html canvas，
          不能只给 body / React 开屏层设底色，否则首帧会闪一条系统白底。 */
-      html { background-color: #05060f; }
+      html { background-color: #161231; }
       body {
         background-color: #0f1115;
         margin: 0;
@@ -290,7 +345,11 @@
 </script>
 </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="sully-preboot" aria-label="Sully Plus 正在启动">
+        <div class="sully-preboot-logo">Sully <strong>Plus</strong></div>
+      </div>
+    </div>
     <!-- Cubism Core must exist before the lazily loaded Pixi Live2D adapter evaluates.
          Loading it here removes the iOS/Vercel race where the adapter could initialize
          one task before the runtime script injected by live2dCore had executed. -->

@@ -31,6 +31,10 @@
 
 > 表结构不用管，后面在 SullyOS 里点「连接」时会自动建好。
 
+再回到左侧 **Storage & databases** → **Queues** → **Create Queue**，名字必须填
+`sullyos-amsg-instant`。它只保存“有一轮即时回复要跑”的小任务编号；完整聊天仍加密存进 D1，
+所以长上下文不会被裁剪。这条队列只需建一次，以后 Sync fork 不用重复操作。
+
 ---
 
 ## 第三步 · 用刚才的仓库创建 Worker
@@ -70,6 +74,7 @@ env.DB (sullyos-amsg)   D1 Database
 ![构建成功](./images/amsg2-setup/build-success.png)
 
 > 数据库绑定和「每分钟检查一次」的定时触发器都写在仓库里，会自动带上，不用手动加。
+> `sullyos-amsg-instant` 队列要先按第二步建好；如果漏了，部署日志会直接报 Queue 不存在。
 
 ---
 

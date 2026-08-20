@@ -1398,3 +1398,17 @@ Last recorded stable deployment was `ecc01ab` on remote `master` from 2026-07-21
   - `pnpm vitest run worker/amsg/src/deliveryMailbox.test.ts worker/amsg/src/index.test.ts utils/instantPushClient.test.ts utils/amsgInstantChat.test.ts` (177 tests)
   - `pnpm build`
 - This integration is local only at the time of writing; both the website and the AMSG Worker bundle must be published before the new switch works on the deployed app.
+
+# 2026-08-20 Queue-Backed Full-Context Instant Reply
+
+- Replaced the unified mode's long-lived browser SSE dependency with the existing encrypted AMSG `/instant-chat` submission plus a Cloudflare Queue consumer.
+- The complete, untrimmed text context remains encrypted in the existing D1 `client_state` / `scheduled_messages` data. Queue messages contain only a task UUID, user ID and timestamp, so a 248 KB conversation is not copied into or limited by the queue payload.
+- The HTTP request now finishes after durable state, task creation and queue admission. Locking an iPhone or freezing the PWA after the `202` response no longer owns the model-generation lifetime.
+- Queue work acknowledges only after the scheduled worker execution completes. Failures retry after 60 seconds; queue admission failures retain the old immediate `waitUntil` attempt, and the existing once-per-minute cron remains the final recovery path.
+- Unified fast reply remains manual: sending text does not start generation; the chat-header lightning button does. Scheduled proactive messages and the fork's local proactive wake scheduler keep independent switches.
+- Enabling the new mode disables only a legacy Instant SSE configuration that points at the same AMSG Worker URL. A separately deployed legacy Instant Worker is left untouched.
+- Deployment now requires one Cloudflare Queue named `sullyos-amsg-instant`; the fork-sync deployment guides document the one-time creation step.
+- Verification passed:
+  - `pnpm vitest run worker/amsg/src/instantChat.queue.test.ts utils/amsgInstantChat.test.ts worker/amsg/src/index.test.ts` (167 tests)
+  - `pnpm build`
+- This batch is local only at the time of writing; it has not been committed, pushed, or deployed.

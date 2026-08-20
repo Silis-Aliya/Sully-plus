@@ -235,7 +235,58 @@ export interface InstantChatExecutionCtx {
 interface InstantChatEnv {
   AMSG_SERVER_TOKEN?: string;
   DB?: unknown;
+  INSTANT_QUEUE?: {
+    send(body: InstantChatQueueMessage, options?: { delaySeconds?: number }): Promise<void>;
+  };
 }
+
+/** Queue 只携带任务身份；完整加密上下文留在 D1。 */
+export interface InstantChatQueueMessage {
+  kind: 'instant-chat-tick';
+  uuid: string;
+  userId: string;
+  queuedAt: number;
+}
+
+export interface InstantChatQueueBatch {
+  messages: Array<{
+    body: InstantChatQueueMessage;
+    ack(): void;
+    retry(options?: { delaySeconds?: number }): void;
+  }>;
+}
+
+/** Queue 消费者的纯编排层；拆出来让重试/ack 语义能独立回归测试。 */
+export const handleInstantChatQueue = async (args: {
+  batch: InstantChatQueueBatch;
+  env: unknown;
+  upstream: InstantChatUpstream;
+  configError?: string;
+}): Promise<void> => {
+  if (args.configError) {
+    console.error(`[amsg] 即时对话 Queue 整批重试：${args.configError}`);
+    for (const message of args.batch.messages) message.retry({ delaySeconds: 60 });
+    return;
+  }
+
+  for (const message of args.batch.messages) {
+    if (message.body?.kind !== 'instant-chat-tick') {
+      console.warn('[amsg:instant-chat] 丢弃未知 Queue 消息', { kind: message.body?.kind });
+      message.ack();
+      continue;
+    }
+    try {
+      await args.upstream.scheduled({ scheduledTime: Date.now(), cron: INSTANT_TICK_CRON }, args.env);
+      message.ack();
+    } catch (error) {
+      console.error('[amsg:instant-chat] Queue 消费失败，60 秒后重试', {
+        uuid: message.body.uuid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      message.retry({ delaySeconds: 60 });
+    }
+  }
+};
 
 /** 只用得上「跑一条带参数的 UPDATE」这一种能力，不为它引 workers-types。 */
 type D1RunLike = {
@@ -456,10 +507,23 @@ export const handleInstantChat = async (args: {
   }
 
   // ④ 立刻起一跳把它捡走。isolate 被回收就退回 cron 兜底，正确性两头都在。
-  if (ctx && typeof ctx.waitUntil === 'function') {
+  const due = await pullTaskDue(env.DB, uuid, userId, now());
+  let queued = false;
+  if (env.INSTANT_QUEUE && typeof env.INSTANT_QUEUE.send === 'function') {
+    try {
+      await env.INSTANT_QUEUE.send(
+        { kind: 'instant-chat-tick', uuid, userId, queuedAt: now() },
+        due ? undefined : { delaySeconds: Math.ceil(INSTANT_TICK_FALLBACK_WAIT_MS / 1000) },
+      );
+      queued = true;
+    } catch (error) {
+      console.warn('[amsg:instant-chat] Queue 入队失败（改走立即跳 / cron 兜底）', error);
+    }
+  }
+
+  if (!queued && ctx && typeof ctx.waitUntil === 'function') {
     ctx.waitUntil((async () => {
       try {
-        const due = await pullTaskDue(env.DB, uuid, userId, now());
         if (!due) await sleep(INSTANT_TICK_FALLBACK_WAIT_MS);
         await upstream.scheduled({ scheduledTime: now(), cron: INSTANT_TICK_CRON }, env);
       } catch (error) {
@@ -467,9 +531,9 @@ export const handleInstantChat = async (args: {
         console.warn('[amsg:instant-chat] 立即触发失败（等 cron 兜底）', error);
       }
     })());
-  } else {
+  } else if (!queued) {
     console.warn('[amsg:instant-chat] 运行时没给 ctx，跳过立即触发，等 cron 兜底');
   }
 
-  return json(202, { status: 'accepted', uuid });
+  return json(202, { status: 'accepted', uuid, transport: queued ? 'queue' : 'fallback' });
 };

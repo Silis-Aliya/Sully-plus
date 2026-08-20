@@ -1806,7 +1806,10 @@ export const ActiveMsgClient = {
     try {
       const config = await ensureWorkerReady();
       const { status, body } = await fetchWithAuthRaw('config-check', config, { method: 'GET' }, '即时对话能力探测');
-      return status === 200 && body?.success === true && body?.data?.instantChat === true;
+      return status === 200
+        && body?.success === true
+        && body?.data?.instantChat === true
+        && body?.data?.instantQueue === true;
     } catch { return false; }
   },
 
