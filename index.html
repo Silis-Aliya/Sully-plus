@@ -144,6 +144,9 @@
         min-height: var(--app-height, 100lvh);
         height: var(--app-height, 100lvh);
       }
+      /* iOS PWA 冷启动时 Home 指示条区域偶尔先画 html canvas，
+         不能只给 body / React 开屏层设底色，否则首帧会闪一条系统白底。 */
+      html { background-color: #05060f; }
       body {
         background-color: #0f1115;
         margin: 0;

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { trackEvent } from '../../utils/analytics';
 
 // SullyOS 冷启动「世界入场」电影化序列 —— 取代传统黑屏 spinner。
@@ -44,6 +44,9 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
   const EXIT = cinematic ? 680 : 300;  // 推进式退场时长
 
   const [phase, setPhase] = useState<'enter' | 'exit'>('enter');
+  // iOS 冷启动的第一帧先把画面略向下铺进 Home 指示条区域；浏览器完成首轮布局后
+  // 恢复正常构图，再开始原有动画。只影响首帧，不会把 logo / 动画永久下移。
+  const [viewportSettled, setViewportSettled] = useState(false);
   const startRef = useRef(0);
   if (startRef.current === 0) {
     startRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -51,6 +54,22 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
 
   useEffect(() => {
     try { sessionStorage.setItem(BOOT_SEEN_KEY, '1'); } catch { /* ignore */ }
+  }, []);
+
+  useLayoutEffect(() => {
+    const html = document.documentElement;
+    const previous = html.style.backgroundColor;
+    html.style.backgroundColor = '#05060f';
+    let firstRaf = 0;
+    let secondRaf = 0;
+    firstRaf = requestAnimationFrame(() => {
+      secondRaf = requestAnimationFrame(() => setViewportSettled(true));
+    });
+    return () => {
+      cancelAnimationFrame(firstRaf);
+      cancelAnimationFrame(secondRaf);
+      html.style.backgroundColor = previous;
+    };
   }, []);
 
   // 「数据就绪 且 停留够 HOLD」→ 退场；否则一直呼吸等待。
@@ -147,8 +166,10 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
       <div
         className="absolute inset-0"
         style={{
-          transform: exiting ? 'scale(1.12)' : undefined,
-          transition: exiting ? `transform ${EXIT}ms cubic-bezier(0.4,0,0.2,1)` : undefined,
+          transform: exiting ? 'scale(1.12)' : viewportSettled ? 'translateY(0) scale(1)' : 'translateY(40px) scale(1.04)',
+          transition: exiting
+            ? `transform ${EXIT}ms cubic-bezier(0.4,0,0.2,1)`
+            : viewportSettled ? 'transform 220ms cubic-bezier(0.22,1,0.36,1)' : 'none',
           willChange: 'transform',
         }}
       >
