@@ -150,7 +150,7 @@ import { App as CapApp } from '@capacitor/app';
 import { StatusBar as CapStatusBar, Style as StatusBarStyle } from '@capacitor/status-bar';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
-import { installIOSStandaloneWorkaround, isIOSStandaloneWebApp, resolveStatusBarMode } from '../utils/iosStandalone';
+import { isIOSStandaloneWebApp, resolveStatusBarMode } from '../utils/iosStandalone';
 import AppErrorBoundary from './os/AppErrorBoundary';
 import GlobalMiniPlayer from './os/GlobalMiniPlayer';
 import PersonaSimIndicator from './os/PersonaSimIndicator';
@@ -563,12 +563,6 @@ const PhoneShell: React.FC = () => {
 
   // 冷启动「世界入场」是否已结束。结束前由 BootSequence 接管整屏（同时取代旧的黑屏 spinner）。
   const [bootDone, setBootDone] = useState(false);
-  const finishBoot = () => {
-    // 开机场景沿用上游原生 viewport，不提前叠加 Plus 的键盘/安全区高度修复。
-    // 退场完成、交给锁屏前再同步安装；install 本身幂等，StrictMode 下也只执行一次。
-    installIOSStandaloneWorkaround();
-    setBootDone(true);
-  };
 
   // 从根本上消除「每次进 App 都要加载」：数据一就绪就在后台按优先级逐个预热各 App 的代码块。
   // 关键：不等开机动画（bootDone）结束就开始 —— 否则用户在开机那 ~2 秒内点开 Chat 时 chunk 还没热，
@@ -813,7 +807,7 @@ const PhoneShell: React.FC = () => {
   // 冷启动：先放「世界入场」cinematic（数据没就绪时它持续呼吸等待，绝不出现 spinner）。
   // BootSequence 在「数据就绪 + 停留够时长」后推进退场，再交还控制权给下方的锁屏/桌面。
   if (!bootDone) {
-    return <BootSequence dataReady={isDataLoaded} wallpaper={theme.wallpaper} onDone={finishBoot} />;
+    return <BootSequence dataReady={isDataLoaded} wallpaper={theme.wallpaper} onDone={() => setBootDone(true)} />;
   }
 
   // 兜底：理论上 bootDone 时数据已就绪；万一未就绪（极端慢）退化为最简静态深色屏，不闪 spinner。
