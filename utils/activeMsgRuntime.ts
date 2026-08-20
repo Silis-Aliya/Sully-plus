@@ -24,6 +24,7 @@ import { trackEvent } from './analytics';
 import { postSsePayloadToServiceWorker } from './instantPushClient';
 import { isIOSStandaloneWebApp } from './iosStandalone';
 import { LOCAL_SETTINGS_IMPORTED_EVENT } from './localSettingsBackup';
+import { clearInstantChatPending, drainChatOutboxForPending } from './amsgInstantChat';
 
 // 同一个 category，两个 tag——保持 console 里现有的 [ActiveMsg] / [amsg] 标签，
 // 方便用户 / 文档里 grep 历史报错信息。两条 tag 都归 instant-push 一类。
@@ -1391,6 +1392,8 @@ const flushInboxToChatImpl = async () => {
       }
     }
 
+    if (message.messageType === 'instant') clearInstantChatPending(message.charId);
+
     // 不管走 post-processing 还是 raw fallback, 单条 inbox message 触发一次 'active-msg-received',
     // 保留原有 toast / 未读 / 通知 / sendInstantPush resolver 语义。body 用原文做预览即可。
     // sessionId 必须带出来: instantPushClient 的 observed listener 用它做 receipt identity 匹配,
@@ -1748,6 +1751,7 @@ export const ActiveMsgRuntime = {
           await flushInboxToChat();
           scheduleIOSPushRegistrationReconcile();
           await reconcileCloudDeliveryMailbox();
+          await drainChatOutboxForPending();
           await flushInboxToChat();
           void drainPendingDiaries(loadRealtimeConfigFromLocalStorage(), (charId) => {
             window.dispatchEvent(new CustomEvent('active-msg-progress', { detail: { charId } }));
@@ -1780,6 +1784,7 @@ export const ActiveMsgRuntime = {
     // 启动兜底：先落本地 Push，再从 D1 补拉未确认消息，最后跑工具续轮。
     await flushInboxToChat();
     await reconcileCloudDeliveryMailbox();
+    await drainChatOutboxForPending();
     await flushInboxToChat();
     await runPendingToolCallsSafely();
     void drainPendingDiaries(loadRealtimeConfigFromLocalStorage(), (charId) => {

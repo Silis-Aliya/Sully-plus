@@ -44,6 +44,7 @@ import {
   AMSG_SLOT_TIME_SINCE_USER,
   AMSG_SLOT_USER_CLOCK,
   AmsgFirePack,
+  AmsgFirePackChatContent,
   FIRE_PACK_VERSION,
   type AmsgLastSkip,
   amsgStateNamespace,
@@ -71,6 +72,7 @@ import { collectMcpFireServers, getMcpUseNativeTools } from './mcpClient';
 import { safeResponseJson } from './safeApi';
 import { ActiveMsgStore } from './activeMsgStore';
 import { KeepAlive } from './keepAlive';
+import { INSTANT_SCHEDULE_LEAD_MS } from '../worker/amsg/src/instantChat';
 import {
   bytesToB64u,
   describePushCapabilityGap,
@@ -646,6 +648,37 @@ const ensureFutureTime = (value: string, tzId: string) => {
 const AMSG2_PLACEHOLDER_PROMPT =
   'AMSG2_PLACEHOLDER_PROMPT（正式 prompt 到点由 worker onBeforeFire 下发；看到这条说明 fire hooks 未生效）';
 
+const CHAT_CONTENT_BUDGET_BYTES = 2 * 1024 * 1024;
+const hasNonTextPart = (content: unknown): boolean => Array.isArray(content) && content.some((part: any) => part?.type !== 'text');
+const flattenToText = (content: unknown[]): string => content
+  .map((part: any) => part?.type === 'text' ? String(part.text ?? '') : '')
+  .filter(Boolean).join('\n') || '[图片]';
+
+export const toFirePackChatMessages = (
+  messages: Array<{ role: string; content: unknown }>,
+): Array<{ role: string; content: AmsgFirePackChatContent }> => {
+  const result = messages.map((message) => ({
+    role: message.role,
+    content: typeof message.content === 'string' || Array.isArray(message.content)
+      ? message.content as AmsgFirePackChatContent
+      : String(message.content ?? ''),
+  }));
+  const sizeOf = () => new TextEncoder().encode(JSON.stringify(result)).length;
+  if (sizeOf() <= CHAT_CONTENT_BUDGET_BYTES) return result;
+  let protectedIdx = -1;
+  for (let i = result.length - 1; i >= 0; i -= 1) if (result[i].role === 'user') { protectedIdx = i; break; }
+  for (let i = 0; i < result.length && sizeOf() > CHAT_CONTENT_BUDGET_BYTES; i += 1) {
+    if (i === protectedIdx || !hasNonTextPart(result[i].content)) continue;
+    result[i] = { role: result[i].role, content: flattenToText(result[i].content as unknown[]) };
+    console.warn(`${ACTIVE_MSG_RUNTIME_HEADER} 即时对话体积超标，第 ${i + 1} 条旧消息只保留文字段`);
+  }
+  const finalBytes = sizeOf();
+  if (finalBytes > CHAT_CONTENT_BUDGET_BYTES) {
+    throw new Error(`即时对话发不出去：这一轮要带的图片太大（约 ${(finalBytes / 1024 / 1024).toFixed(1)} MB，上限 2.0 MB）。请换小图重发。`);
+  }
+  return result;
+};
+
 /** client_state 上传每次尝试前等多久：数组长度即总尝试次数（首次不等）。 */
 const CLIENT_STATE_BACKOFF_MS = [0, 400, 1200];
 
@@ -960,6 +993,16 @@ const fetchWithAuthRaw = async (
 
 const fetchWithAuth = async (path: string, config: ActiveMsg2GlobalConfig, init: RequestInit, phase = '接口') =>
   (await fetchWithAuthRaw(path, config, init, phase)).body;
+
+const describeInstantChatFailure = (status: number, body: any): string => {
+  const code = body?.error?.code;
+  const upstream = body?.error?.upstream?.error?.message || body?.error?.upstream?.message;
+  const detail = [body?.error?.message, upstream].filter(Boolean).join('：');
+  if (status === 401 || status === 403 || code === 'INVALID_CLIENT_TOKEN') return '即时对话没发出去：共享密钥和 Worker 上的对不上，请回主动消息 2.0 设置核对。';
+  if (status === 404 || status === 405) return '即时对话没发出去：Worker 版本过旧，请先更新 Worker。';
+  if (status === 503) return `即时对话没发出去：${detail || 'Worker 配置或推送通道未就绪。'}`;
+  return `即时对话没发出去（HTTP ${status}${code ? ` / ${code}` : ''}）${detail ? `：${detail}` : '。'}`;
+};
 
 const fetchMailboxWithRetry = async (
   path: string,
@@ -1712,6 +1755,59 @@ export const ActiveMsgClient = {
       },
       tasks: [...(config.tasks ?? [])],
     };
+  },
+
+  /** 将用户刚发送的一轮聊天交给 AMSG Worker；这不启用任何定时主动任务。 */
+  async sendInstantChat(params: {
+    char: CharacterProfile;
+    chatMessages: Array<{ role: string; content: unknown }>;
+    api: { baseUrl: string; apiKey: string; model: string };
+    maxTokens?: number;
+    userProfile: UserProfile;
+    groups: GroupProfile[];
+    realtimeConfig: RealtimeConfig;
+    supersedesUuid?: string;
+  }): Promise<{ uuid: string; clientTaskId: string }> {
+    const { char, chatMessages, api, userProfile, groups, realtimeConfig } = params;
+    if (!api.baseUrl || !api.model) throw new Error('即时对话没发出去：聊天 API 地址或模型没配齐。');
+    const globalConfig = await ensureWorkerReady();
+    const client = await initializeClient(globalConfig);
+    await this.ensurePushDeliveryTarget();
+    const now = Date.now();
+    const firePack = await buildFirePack(char, userProfile, groups, realtimeConfig);
+    firePack.chat = { messages: toFirePackChatMessages(chatMessages), builtAt: now };
+    const clientTaskId = crypto.randomUUID();
+    const avatarUrl = toRemoteAvatarUrl(char.avatar);
+    const taskPayload: Record<string, unknown> = {
+      contactName: char.name,
+      ...(avatarUrl ? { avatarUrl } : {}),
+      messageType: 'auto', messageSubtype: 'chat',
+      firstSendTime: new Date(now + INSTANT_SCHEDULE_LEAD_MS).toISOString(),
+      recurrenceType: 'none',
+      tzId: resolveCharTimeZone(char) ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+      messages: [{ role: 'user', content: AMSG2_PLACEHOLDER_PROMPT }],
+      apiUrl: normalizeChatApiUrl(api.baseUrl), apiKey: api.apiKey, primaryModel: api.model,
+      ...(params.maxTokens && params.maxTokens > 0 ? { maxTokens: params.maxTokens } : {}),
+      metadata: { charId: char.id, charName: char.name, source: 'active_msg_2', amsgMode: 'instant', amsgInstantChat: true, amsgClientTaskId: clientTaskId },
+    };
+    const [statePayload, encryptedTask] = await Promise.all([
+      encryptPayload(client, { entries: [...(await buildCharStateEntries(char, firePack, now)), buildToolConfigEntry(realtimeConfig, now)] }),
+      encryptPayload(client, taskPayload),
+    ]);
+    const { status, body } = await fetchWithAuthRaw('instant-chat', globalConfig, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ statePayload, taskPayload: encryptedTask, ...(params.supersedesUuid ? { supersedesUuid: params.supersedesUuid } : {}) }),
+    }, '即时对话');
+    if (status !== 202 || typeof body?.uuid !== 'string' || !body.uuid) throw new Error(describeInstantChatFailure(status, body));
+    return { uuid: body.uuid, clientTaskId };
+  },
+
+  async probeInstantChatSupport(): Promise<boolean> {
+    try {
+      const config = await ensureWorkerReady();
+      const { status, body } = await fetchWithAuthRaw('config-check', config, { method: 'GET' }, '即时对话能力探测');
+      return status === 200 && body?.success === true && body?.data?.instantChat === true;
+    } catch { return false; }
   },
 
   // 同角色活跃会话租约：只 PUT 这一条几十字节的 chat_presence，不复用胖 fire_pack。

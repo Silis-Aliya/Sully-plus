@@ -52,6 +52,36 @@ export const AMSG_SELF_LOG_KEY = 'self_log';
  */
 export const amsgXhsSessionKey = (clientTaskId: string) => `xhs_session:${clientTaskId}`;
 
+// 即时聊天的云端补收账本。Push 丢失时，客户端会从这里补回同一份载荷。
+export const AMSG_CHAT_OUTBOX_KEY = 'chat_outbox';
+export const CHAT_OUTBOX_MAX = 10;
+
+export interface AmsgChatOutboxEntry {
+  messageId: string;
+  sessionId: string;
+  at: number;
+  payload: Record<string, unknown>;
+}
+
+export interface AmsgChatOutbox { v: 1; entries: AmsgChatOutboxEntry[] }
+
+export const parseChatOutbox = (value: string | null | undefined): AmsgChatOutbox | null => {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed?.v === 1 && Array.isArray(parsed.entries) ? parsed as AmsgChatOutbox : null;
+  } catch { return null; }
+};
+
+export const appendChatOutbox = (
+  outbox: AmsgChatOutbox | null,
+  entries: AmsgChatOutboxEntry[],
+): AmsgChatOutbox => {
+  const incoming = new Set(entries.map((entry) => entry.messageId));
+  const kept = (outbox?.entries ?? []).filter((entry) => !incoming.has(entry.messageId));
+  return { v: 1, entries: [...kept, ...entries].slice(-CHAT_OUTBOX_MAX) };
+};
+
 // ─── client_state 的值压缩 ───
 //
 // fire_pack 是「角色完整系统提示词 + 最近 30 条对话」，一份 40KB 起步，排了任务的角色
@@ -272,6 +302,8 @@ export const AMSG_SLOT_SCENE = '{{AMSG_SCENE}}';
  */
 export const AMSG_SLOT_REALTIME_WORLD = '{{AMSG_REALTIME_WORLD}}';
 
+export type AmsgFirePackChatContent = string | Array<{ type: string; [key: string]: unknown }>;
+
 export interface AmsgFirePack {
   v: typeof FIRE_PACK_VERSION;
   /** 完整 prompt 模板，时间性内容与本次任务指令留 AMSG_SLOT_* 槽位。 */
@@ -319,6 +351,11 @@ export interface AmsgFirePack {
    * AMSG_SLOT_SCENE。没日程的角色为 null，那个槽位被抹平。
    */
   scene: AmsgFireScene | null;
+  /** 即时聊天专用：本轮已经构建好的聊天消息；定时主动消息不写这一段。 */
+  chat?: {
+    messages: Array<{ role: string; content: AmsgFirePackChatContent }>;
+    builtAt: number;
+  };
 }
 
 // ─── 按角色参照系渲染时间（②：worker 给角色看的一切时间只此一份） ───

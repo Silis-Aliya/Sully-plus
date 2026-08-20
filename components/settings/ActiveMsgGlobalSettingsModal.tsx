@@ -414,6 +414,31 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
         ) : null}
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="font-bold text-slate-700">即时对话（AMSG 2.0）</div>
+              <p className="mt-1 text-xs leading-relaxed text-slate-500">
+                你按发送后由自己的 Worker 在云端生成，锁屏或退出后仍会推回来。它与“定时主动消息”是两个独立开关：这里开启不会启用角色主动唤醒。
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={instantOn || !config.workerUrl?.trim()}
+              onClick={async () => {
+                const next = !config.instantChatEnabled;
+                patchConfig({ instantChatEnabled: next });
+                await ActiveMsgStore.saveGlobalConfig({ instantChatEnabled: next });
+                addToast(next ? '已开启 AMSG 2.0 即时对话' : '已关闭 AMSG 2.0 即时对话', 'success');
+              }}
+              className={`shrink-0 px-3 py-2 rounded-xl text-xs font-bold ${config.instantChatEnabled ? 'bg-slate-200 text-slate-700' : 'bg-slate-900 text-white'} disabled:opacity-40`}
+            >
+              {config.instantChatEnabled ? '关闭' : '开启'}
+            </button>
+          </div>
+          {instantOn ? <p className="text-xs text-amber-600">请先关闭旧 Instant Push，避免同一句消息走两条云端通道。</p> : null}
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <button
             type="button"
             onClick={() => setDeployOpen((prev) => {

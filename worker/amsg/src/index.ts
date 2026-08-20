@@ -33,6 +33,7 @@ import { stripReasoningTags } from '@rei-standard/amsg-shared';
 import type { ActiveMsg2ExperienceMode, ActiveMsg2TaskRecord, UserProfile } from '../../../types';
 import {
   AMSG_FIRE_PACK_KEY,
+  AMSG_CHAT_OUTBOX_KEY,
   AMSG_LAST_SKIP_KEY,
   AMSG_SELF_LOG_KEY,
   AMSG_SWITCH_CONTROL_KEY,
@@ -50,6 +51,7 @@ import {
   renderFirePack,
   selfLogMatchesPack,
   unpackStateValue,
+  parseChatOutbox,
 } from '../../../utils/amsgFirePack';
 import { resolveFireSceneSong } from '../../../utils/amsgFireScene';
 import { shouldExpireFire } from '../../../utils/amsg2ExpireGuard';
@@ -134,6 +136,16 @@ import {
   type FireSessionState,
 } from './agentic';
 import type { ActiveMsg2TaskRecord } from '../../../types';
+import {
+  buildInstantTimelyBlock,
+  finalizeInstantPush,
+  handleInstantChat,
+  INSTANT_TOTAL_TIMEOUT_MS,
+  isInstantChatTask,
+  toOutboxEntries,
+  writeChatOutbox,
+  type InstantChatExecutionCtx,
+} from './instantChat';
 import { createHybridPushTransport, isFcmConfigured, type NativeFcmEnv } from './nativeFcm';
 import {
   createMailboxBackedPushTransport,
@@ -344,6 +356,8 @@ interface FireStash {
    * 它读到的那首歌，onLLMOutput 把它冻进 directive 带给客户端（见 agentic.attachSceneSong）。
    */
   sceneSong: { id?: number; name: string; artists: string } | null;
+  instant: boolean;
+  chatOutbox: ReturnType<typeof parseChatOutbox>;
 }
 
 const getFireStash = (scratch: Record<string, unknown> | undefined): FireStash | undefined =>
@@ -923,6 +937,9 @@ export const amsgHooks = {
 
     const charRows = await ctx.readState(amsgStateNamespace(charId));
 
+    const taskMeta = (ctx.task.metadata ?? {}) as Record<string, unknown>;
+    const instant = isInstantChatTask(taskMeta);
+
     // 关闭硬闸：前端关闭主动消息时会先写 switch_control=false，再尝试取消远端任务。
     // 即使取消请求断网，残留的一次性任务到点也会在首轮 LLM 前被 skip；上游调度器
     // 随后按成功处理删除它。旧部署没有该状态、或状态损坏时保持 fail-open，避免升级后
@@ -931,7 +948,7 @@ export const amsgHooks = {
     if (switchControlRow) {
       try {
         const switchControl = JSON.parse(switchControlRow.value) as { enabled?: unknown };
-        if (switchControl?.enabled === false) {
+        if (!instant && switchControl?.enabled === false) {
           console.log('[amsg:disabled-control-skip]', { taskId: ctx.task.id, charId });
           await recordSkip(
             ctx, charId, 'active-msg-disabled',
@@ -948,7 +965,6 @@ export const amsgHooks = {
       }
     }
 
-    const taskMeta = (ctx.task.metadata ?? {}) as Record<string, unknown>;
     const storedPolicy = typeof taskMeta.amsgExpirePolicy === 'string'
       ? taskMeta.amsgExpirePolicy : undefined;
 
@@ -957,7 +973,7 @@ export const amsgHooks = {
     const musicWakePresence = parseAmsgMusicWakePresence(
       charRows.find((r) => r.key === AMSG_MUSIC_WAKE_PRESENCE_KEY)?.value,
     );
-    if (isFreshMusicWakePresence(musicWakePresence, charId, ctx.now.getTime())) {
+    if (!instant && isFreshMusicWakePresence(musicWakePresence, charId, ctx.now.getTime())) {
       const occurrenceMs = Date.parse(String(ctx.task.nextSendAt)) || ctx.now.getTime();
       console.log('[amsg:music-wake-skip]', {
         taskId: ctx.task.id,
@@ -974,7 +990,7 @@ export const amsgHooks = {
     const presence = parseAmsgChatPresence(
       charRows.find((r) => r.key === AMSG_CHAT_PRESENCE_KEY)?.value,
     );
-    if (storedPolicy === 'expire' && isFreshChatPresence(presence, charId, ctx.now.getTime())) {
+    if (!instant && storedPolicy === 'expire' && isFreshChatPresence(presence, charId, ctx.now.getTime())) {
       console.log('[amsg:expire-skip]', {
         taskId: ctx.task.id,
         reason: 'active-chat-presence',
@@ -1089,7 +1105,7 @@ export const amsgHooks = {
       nowMs: ctx.now.getTime(),
       occurrenceMs,
     };
-    if (shouldExpireFire(expireInput)) {
+    if (!instant && shouldExpireFire(expireInput)) {
       console.log('[amsg:expire-skip]', { taskId: ctx.task.id, ...expireInput });
       await recordSkip(ctx, charId, 'conversation-moved-on', occurrenceMs);
       return { skip: true } as const;
@@ -1097,7 +1113,7 @@ export const amsgHooks = {
 
     // 任务指令缺失（开发期旧格式任务）：不能用默认 auto 指令凑一个渲染——那会把
     // prompted 任务的方向偷换掉，发出去的内容和用户当初排的不是一回事。
-    if (typeof taskMeta.amsgTaskInstruction !== 'string') {
+    if (!instant && typeof taskMeta.amsgTaskInstruction !== 'string') {
       throw fail('任务 metadata 缺 amsgTaskInstruction（旧格式任务）');
     }
 
@@ -1233,6 +1249,10 @@ export const amsgHooks = {
       // 跟下面 renderFirePack 填「你此刻在听」用的是同一个时刻、同一份 scene、同一个种子
       // （resolveFireSceneSong 与 renderFireSceneBlock 共用判定），冻的必然是正文里那首。
       sceneSong: resolveFireSceneSong(pack.scene, ctx.now.getTime(), tz),
+      instant,
+      chatOutbox: instant
+        ? parseChatOutbox(charRows.find((row) => row.key === AMSG_CHAT_OUTBOX_KEY)?.value)
+        : null,
     } satisfies FireStash;
 
     // 「你还挂着这些排程」：客户端记录的（打包那一刻的快照）+ 角色自己在之前几次 fire 里
@@ -1291,6 +1311,18 @@ export const amsgHooks = {
         ? [buildFireScheduleTool({ nowMs: ctx.now.getTime(), tz })]
         : []),
     ];
+    if (instant) {
+      if (!pack.chat?.messages?.length) throw fail('即时对话 fire_pack 缺 chat.messages');
+      return {
+        messages: [
+          ...pack.chat.messages.map((message) => ({ role: message.role as 'user' | 'assistant' | 'system', content: message.content })),
+          { role: 'system' as const, content: buildInstantTimelyBlock({ nowMs: ctx.now.getTime(), tz, realtimeWorldBlock }) },
+        ],
+        maxToolIterations: MAX_TOOL_ITERATIONS,
+        totalTimeoutMs: INSTANT_TOTAL_TIMEOUT_MS,
+        ...(fireTools.length ? { tools: fireTools } : {}),
+      };
+    }
     return {
       messages: [{ role: 'user' as const, content: prompt }],
       // 轮次上限显式给一份：worker 要靠同一个数判「这是最后一轮了」（见 onLLMOutput），
@@ -1477,14 +1509,22 @@ export const amsgHooks = {
       // 发之前按真实字节预算过一遍：装不下的 XHS 会话数据旁路存起来，push 只留引用键。
       // clientTaskId 当存储键（每任务一份、下次触发覆盖），缺了就没法旁路——那时超限会
       // 由库抛 PUSH_PAYLOAD_TOO_LARGE，照样不会静默丢消息。
+      let finalPayloads = decision.pushPayloads;
       if (stash.clientTaskId && stash.charId) {
         const budgeted = [];
-        for (const payload of decision.pushPayloads) {
+        for (const payload of finalPayloads) {
           budgeted.push(await offloadOversizedPush(
             payload, ctx.writeState, stash.charId, stash.clientTaskId));
         }
-        return { ...decision, pushPayloads: budgeted };
+        finalPayloads = budgeted;
       }
+      if (stash.instant) {
+        const nowMs = Date.now();
+        const ids = { taskRowId: stash.taskRowId, taskUuid: stash.taskUuid, occurrenceMs: stash.occurrenceMs, nowMs, randomId: crypto.randomUUID() };
+        finalPayloads = finalPayloads.map((payload, index) => finalizeInstantPush(payload, index, finalPayloads.length, ids));
+        stash.chatOutbox = await writeChatOutbox(ctx.writeState, stash.charId, stash.chatOutbox, toOutboxEntries(finalPayloads, nowMs));
+      }
+      return { ...decision, pushPayloads: finalPayloads };
     }
 
     return decision;
@@ -1954,7 +1994,7 @@ const readServerVersion = async (request: Request, env: Env) => {
 // 两个 handler 都不往上游传 ctx —— 上游的签名只收 (request/event, env)，多传一个
 // 参数运行时无害，但类型对不上。CF 传给我们的那份直接丢掉即可。
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: InstantChatExecutionCtx): Promise<Response> {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
     const method = request.method.toUpperCase();
 
@@ -1962,7 +2002,7 @@ export default {
       if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
       // 刻意不校验 X-Client-Token：worker 配了口令而前端没填正是要诊断的情形之一，
       // 校验了就查不出来。作为交换，这里只回「配没配」，不回任何值。
-      return jsonWithCors(200, { success: true, data: inspectWorkerEnv(env) });
+      return jsonWithCors(200, { success: true, data: { ...inspectWorkerEnv(env), instantChat: true } });
     }
 
     if (pathname.endsWith('/debug')) {
@@ -1997,6 +2037,12 @@ export default {
 
     const mailboxResponse = await handleDeliveryMailboxRequest(request, env);
     if (mailboxResponse) return mailboxResponse;
+
+    if (pathname.endsWith('/instant-chat')) {
+      if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
+      if (method !== 'POST') return jsonWithCors(405, { success: false, error: { code: 'METHOD_NOT_ALLOWED', message: '/instant-chat 只接受 POST' } });
+      return handleInstantChat({ request, env, ctx, upstream, json: jsonWithCors });
+    }
 
     return upstream.fetch(request, env);
   },

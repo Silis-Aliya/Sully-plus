@@ -47,6 +47,7 @@ import { getPendingTasks, hasActiveAiTask, isAmsg2EnabledForChar } from '../util
 import { buildAmsg2TaskContextText, collectAmsg2TaskContext } from '../utils/amsg2TaskContext';
 import { resolveCharTimeZone } from '../utils/timezone';
 import { appendInstantTraceEntry } from '../utils/instantTraceLog';
+import { isInstantChatReady, sendInstantChatTurn } from '../utils/amsgInstantChat';
 import { AMSG2_TOOLS, AMSG2_TOOL_NAMES, createAmsg2ToolSession, executeAmsg2Tool, isAmsg2GlobalReady } from '../utils/amsg2ToolBridge';
 import { ensureClaudeToolThinkingBudget, shouldSendThinkingParams } from '../utils/thinkingGate';
 import { ensureClaudeToolSchema } from '../utils/toolSchemaCompat';
@@ -1043,6 +1044,35 @@ export const useChatAI = ({
                 // 常驻简介让这一块总是非空：没任务时角色也得知道自己随时能排。
                 return [...messages, { role: 'system', content: text }];
             };
+
+            // AMSG 2.0 即时聊天只接管用户主动发送的这一轮；它不读取也不打开角色的
+            // activeMsg2Config.enabled，因此你关闭 AMSG 定时主动消息时仍可独立使用。
+            // 历史 Instant Push 配置仍开着时让旧通道优先，避免同一句双发。
+            const amsgInstantEligible = !opts?.forceLocal
+                && !isInstantConfigReady()
+                && !payload.flags.luckinChatActive
+                && !payload.flags.mcdActive
+                && !payload.flags.luckinActive
+                && await isInstantChatReady();
+            if (amsgInstantEligible) {
+                const result = await sendInstantChatTurn({
+                    char,
+                    chatMessages: fullMessages as Array<{ role: string; content: unknown }>,
+                    api: { baseUrl: effectiveApi.baseUrl, apiKey: effectiveApi.apiKey, model: effectiveApi.model },
+                    maxTokens: 8000,
+                    userProfile,
+                    groups,
+                    realtimeConfig,
+                });
+                if (!result.ok) {
+                    const reason = result.error || '未知错误';
+                    await DB.saveMessage({ charId: char.id, role: 'system', type: 'text', content: `[${reason}]` });
+                    setMessages(await DB.getRecentMessagesByCharId(char.id, 200));
+                    if (showError) showError('即时对话发送失败', reason);
+                    else addToast(reason, 'error');
+                }
+                return;
+            }
 
             // ─── Instant Push 分支 ───
             // 与本地 fetch 对称：sendInstantPushAndAwaitReply 内部完成 sub 获取 / push 监听 /

@@ -4269,6 +4269,22 @@ var AMSG_FIRE_PACK_KEY = "fire_pack";
 var AMSG_SWITCH_CONTROL_KEY = "switch_control";
 var AMSG_SELF_LOG_KEY = "self_log";
 var amsgXhsSessionKey = (clientTaskId) => `xhs_session:${clientTaskId}`;
+var AMSG_CHAT_OUTBOX_KEY = "chat_outbox";
+var CHAT_OUTBOX_MAX = 10;
+var parseChatOutbox = (value) => {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed?.v === 1 && Array.isArray(parsed.entries) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+var appendChatOutbox = (outbox, entries) => {
+  const incoming = new Set(entries.map((entry) => entry.messageId));
+  const kept = (outbox?.entries ?? []).filter((entry) => !incoming.has(entry.messageId));
+  return { v: 1, entries: [...kept, ...entries].slice(-CHAT_OUTBOX_MAX) };
+};
 var GZIP_VALUE_PREFIX = "gz1:";
 var base64ToBytes2 = (base64) => {
   const binary = atob(base64);
@@ -6397,6 +6413,7 @@ var detectMode = (serverUrl) => {
   return "mcp";
 };
 var liteCookie = "";
+var litePlatform = "auto";
 var resolveLiteCookie = () => {
   if (liteCookie) return liteCookie;
   try {
@@ -6405,6 +6422,15 @@ var resolveLiteCookie = () => {
   } catch {
   }
   return "";
+};
+var resolvePersistedLitePlatform = () => {
+  try {
+    const raw = localStorage.getItem("os_realtime_config");
+    const platform = raw ? JSON.parse(raw)?.xhsMcpConfig?.platform : void 0;
+    return platform === "xhs" || platform === "rednote" ? platform : "auto";
+  } catch {
+    return "auto";
+  }
 };
 var spiderStorage = () => {
   try {
@@ -6452,7 +6478,7 @@ var withSpiderCircuitError = (detail, message) => ({
 });
 var trySpiderV3CommentPatch = async (baseUrl, requestBody, cookie, detail) => {
   const storage = spiderStorage();
-  if (!storage || detail?.data?.comments_status === "loaded") {
+  if (!storage || detail?.data?.comments_status === "loaded" || detail?.platform === "rednote" || detail?.data?.platform === "rednote") {
     return detail;
   }
   const a1Tag = await spiderCookieTag(cookie);
@@ -6475,6 +6501,7 @@ var trySpiderV3CommentPatch = async (baseUrl, requestBody, cookie, detail) => {
       headers: {
         "Content-Type": "application/json",
         "x-xhs-cookie": cookie,
+        ...litePlatform !== "auto" ? { "x-xhs-platform": litePlatform } : {},
         "x-xhs-experiment-ack": XHS_SPIDER_V3_EXPERIMENT.optInValue
       },
       body: JSON.stringify({
@@ -6517,6 +6544,8 @@ var bridgePost = async (serverUrl, endpoint, body = {}) => {
   const headers = { "Content-Type": "application/json" };
   const ck = resolveLiteCookie();
   if (ck) headers["x-xhs-cookie"] = ck;
+  const requestPlatform = endpoint === "check-login" ? litePlatform : litePlatform === "auto" ? resolvePersistedLitePlatform() : litePlatform;
+  if (requestPlatform !== "auto") headers["x-xhs-platform"] = requestPlatform;
   try {
     const resp = await fetch(url, {
       method: "POST",
@@ -6533,6 +6562,10 @@ var bridgePost = async (serverUrl, endpoint, body = {}) => {
     let data = await resp.json();
     if (data.error) {
       return { success: false, error: data.error };
+    }
+    const detectedPlatform = data?.platform || data?.data?.platform;
+    if (detectedPlatform === "xhs" || detectedPlatform === "rednote") {
+      litePlatform = detectedPlatform;
     }
     if (endpoint === "get-feed-detail" && ck) {
       data = await trySpiderV3CommentPatch(baseUrl, body, ck, data);
@@ -6782,10 +6815,12 @@ var XhsMcpClient = {
   },
   // Lite Worker auth: register the XHS cookie used for x-xhs-cookie header.
   setCookie: (cookie) => {
-    liteCookie = cookie || "";
+    const nextCookie = cookie || "";
+    if (nextCookie !== liteCookie) litePlatform = "auto";
+    liteCookie = nextCookie;
   },
   testConnection: async (serverUrl, cookie) => {
-    if (cookie !== void 0) liteCookie = cookie;
+    if (cookie !== void 0) XhsMcpClient.setCookie(cookie);
     const mode = detectMode(serverUrl);
     if (mode === "bridge") {
       try {
@@ -6794,7 +6829,7 @@ var XhsMcpClient = {
         if (!healthResp.ok) return { connected: false, error: `Bridge \u670D\u52A1\u672A\u54CD\u5E94 (HTTP ${healthResp.status})` };
         const loginResult = await bridgePost(serverUrl, "check-login");
         const tools = ["check-login", "search", "list-feeds", "get-feed-detail", "publish", "publish-video", "long-article", "post-comment", "reply-comment", "like-feed", "favorite-feed", "user-profile", "login", "get-qrcode"];
-        let loggedIn = false, nickname, userId;
+        let loggedIn = false, nickname, userId, platform;
         if (loginResult.success && loginResult.data) {
           const d = loginResult.data;
           if (typeof d === "string") {
@@ -6807,6 +6842,7 @@ var XhsMcpClient = {
             loggedIn = !!(d.logged_in || d.loggedIn || d.is_logged_in || d.isLoggedIn || d.logged);
             nickname = d.nickname || d.name || d.username || d.user_name || void 0;
             userId = d.user_id || d.userId || d.id || d.red_id || void 0;
+            platform = d.platform === "xhs" || d.platform === "rednote" ? d.platform : void 0;
           }
         }
         let xsecToken;
@@ -6817,7 +6853,7 @@ var XhsMcpClient = {
           } catch {
           }
         }
-        return { connected: true, tools, nickname, userId, loggedIn, xsecToken };
+        return { connected: true, tools, nickname, userId, loggedIn, xsecToken, platform };
       } catch (e) {
         return { connected: false, error: e.message };
       }
@@ -8118,18 +8154,7 @@ function sanitizeTextForBanner(text) {
   return result;
 }
 function chunkText(text) {
-  const CJK = "\\u4e00-\\u9fff\\u3400-\\u4dbf\\u3000-\\u303f\\uff00-\\uffef\\u2000-\\u206f\\u2e80-\\u2eff\\u3001-\\u3003\\u2018-\\u201f\\u300a-\\u300f\\uff01-\\uff0f\\uff1a-\\uff20";
-  const cjkSplitRe = new RegExp(`([${CJK}])\\s+(?=[${CJK}])`, "g");
-  const SPLIT = String.fromCharCode(1);
-  const lineChunks = text.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/).map((c) => c.trim()).filter((c) => c.length > 0);
-  const SPACE_SENTINEL = String.fromCharCode(0);
-  const out = [];
-  for (const chunk of lineChunks) {
-    const guarded = chunk.replace(/\[{1,2}[^\[\]]*\]{1,2}/g, (m) => m.replace(/\s/g, SPACE_SENTINEL));
-    const sub = guarded.replace(cjkSplitRe, `$1${SPLIT}`).split(SPLIT).map((c) => c.split(SPACE_SENTINEL).join(" ").trim()).filter((c) => c.length > 0);
-    out.push(...sub);
-  }
-  return out;
+  return text.split(/(?:\r\n|\r|\n|\u2028|\u2029)+/).map((c) => c.trim()).filter((c) => c.length > 0);
 }
 function splitOnSendEmoji(chunk) {
   const re = /\[\[SEND_EMOJI[:：]\s*(.*?)\]\]/g;
@@ -8628,6 +8653,233 @@ function buildScheduledPush(message, build, extraMeta, bannerBody) {
     } : {}
   };
 }
+
+// worker/amsg/src/instantChat.ts
+var INSTANT_SCHEDULE_LEAD_MS = 15e3;
+var INSTANT_TICK_FALLBACK_WAIT_MS = INSTANT_SCHEDULE_LEAD_MS + 1e3;
+var INSTANT_TOTAL_TIMEOUT_MS = 6e5;
+var INSTANT_CLAIM_LEASE_MS = INSTANT_TOTAL_TIMEOUT_MS + 12e4;
+var INSTANT_TICK_CRON = "instant-chat";
+var AMSG_INSTANT_CHAT_FLAG = "amsgInstantChat";
+var isInstantChatTask = (metadata) => !!metadata && metadata[AMSG_INSTANT_CHAT_FLAG] === true;
+var buildInstantTimelyBlock = (args) => {
+  const clockHint = buildUserClockHint(args.nowMs, args.tz, { tzId: args.userTzId }, args.targetName);
+  const head = [
+    "\u3010\u6B64\u523B\u7684\u7CFB\u7EDF\u4FE1\u606F\xB7\u4EC5\u4F60\u53EF\u89C1\u3011",
+    `\u73B0\u5728\u662F ${formatFireTimeFull(args.nowMs, args.tz)}\u3002`,
+    // buildUserClockHint 自带前导换行，没时差时返回空串。
+    clockHint
+  ].join("\n");
+  return [head, ...args.blocks.filter((block) => block.trim())].join("\n");
+};
+var NOTIFICATION_WHEN_HIDDEN = "when-hidden";
+var finalizeInstantPush = (payload, index, total, ids) => {
+  const suffix = `@${ids.occurrenceMs}`;
+  const messageIdBase = ids.taskRowId != null ? `msg_task_${ids.taskRowId}${suffix}` : `msg_${ids.randomId}`;
+  const sessionId = ids.taskRowId != null ? `sess_task_${ids.taskRowId}${suffix}` : `sess_${ids.randomId}`;
+  const notification = payload.notification;
+  const hasNotification = !!notification && typeof notification === "object" && !Array.isArray(notification);
+  return {
+    ...payload,
+    ...hasNotification ? { notification: { ...notification, show: NOTIFICATION_WHEN_HIDDEN } } : {},
+    messageId: `${messageIdBase}_hook_${index}`,
+    sessionId,
+    timestamp: new Date(ids.nowMs).toISOString(),
+    messageIndex: index + 1,
+    totalMessages: total,
+    // 库的 stampTaskIdentity 会原样覆写这四个，写成一样的值只是让 outbox 那份也带上。
+    // 任务行 id 在 D1 里是整数，转不出数字就照实报 null，别塞一个 NaN 出去。
+    taskId: ids.taskRowId != null && Number.isFinite(Number(ids.taskRowId)) ? Number(ids.taskRowId) : null,
+    taskUuid: ids.taskUuid,
+    recurrenceType: "none",
+    occurrenceMs: ids.occurrenceMs
+  };
+};
+var toOutboxEntries = (payloads, nowMs) => payloads.map((payload) => ({
+  messageId: String(payload.messageId ?? ""),
+  sessionId: String(payload.sessionId ?? ""),
+  at: nowMs,
+  payload
+}));
+var writeChatOutbox = async (writeState, charId, current, entries) => {
+  if (typeof writeState !== "function" || entries.length === 0) return current;
+  const next = appendChatOutbox(current, entries);
+  try {
+    await writeState(amsgStateNamespace(charId), [
+      { key: AMSG_CHAT_OUTBOX_KEY, value: JSON.stringify(next) }
+    ]);
+    return next;
+  } catch (error) {
+    console.warn("[amsg:instant-chat] outbox \u5199\u5165\u5931\u8D25\uFF08\u8FD9\u6B21\u7167\u5E38\u53D1\u9001\uFF0C\u4F46\u63A8\u9001\u4E22\u4E86\u5BA2\u6237\u7AEF\u8865\u4E0D\u56DE\u6765\uFF09", error);
+    return current;
+  }
+};
+var UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var constantTimeEqual2 = async (a, b) => {
+  const raw = crypto.getRandomValues(new Uint8Array(32));
+  const key = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const enc = new TextEncoder();
+  const da = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(a)));
+  const db = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(b)));
+  let diff = 0;
+  for (let i = 0; i < da.length; i += 1) diff |= da[i] ^ db[i];
+  return diff === 0;
+};
+var isEncryptedEnvelope2 = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const env = value;
+  return typeof env.iv === "string" && typeof env.authTag === "string" && typeof env.encryptedData === "string";
+};
+var pullTaskDue = async (db, uuid, userId, nowMs) => {
+  const d1 = db;
+  if (typeof d1?.prepare !== "function") return false;
+  const iso = new Date(nowMs).toISOString();
+  try {
+    await d1.prepare(
+      `UPDATE scheduled_messages SET next_send_at = ?, updated_at = ?
+          WHERE uuid = ? AND user_id = ? AND status = 'pending' AND next_send_at > ?`
+    ).bind(iso, iso, uuid, userId, iso).run();
+    return true;
+  } catch (error) {
+    console.warn("[amsg:instant-chat] \u4EFB\u52A1\u884C\u62C9\u5230\u671F\u5931\u8D25\uFF08\u6539\u6210\u7B49\u5230\u70B9\u518D\u8D77\u8DF3\uFF09", error);
+    return false;
+  }
+};
+var delay = (ms) => ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
+var handleInstantChat = async (args) => {
+  const { request, env, ctx, upstream: upstream2, json: json2 } = args;
+  const now = args.now ?? Date.now;
+  const sleep = args.sleep ?? delay;
+  const fail = (status, code, message, extra) => json2(status, { success: false, error: { code, message, ...extra ?? {} } });
+  const token = (env.AMSG_SERVER_TOKEN ?? "").trim();
+  const clientToken = request.headers.get("X-Client-Token") ?? "";
+  if (token) {
+    if (!clientToken || !await constantTimeEqual2(clientToken, token)) {
+      return fail(401, "INVALID_CLIENT_TOKEN", "\u5171\u4EAB\u5BC6\u94A5\u65E0\u6548\u6216\u7F3A\u5931");
+    }
+  }
+  const userId = request.headers.get("X-User-Id") ?? "";
+  if (!userId) return fail(400, "USER_ID_REQUIRED", "\u7F3A\u5C11\u7528\u6237\u6807\u8BC6\u7B26");
+  if (!UUID_V4_RE.test(userId)) return fail(400, "INVALID_USER_ID_FORMAT", "X-User-Id \u5FC5\u987B\u662F UUID v4 \u683C\u5F0F");
+  let body;
+  try {
+    const parsed = await request.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+    body = parsed;
+  } catch {
+    return fail(400, "INVALID_JSON", "\u8BF7\u6C42\u4F53\u4E0D\u662F\u5408\u6CD5\u7684 JSON \u5BF9\u8C61");
+  }
+  if (!isEncryptedEnvelope2(body.statePayload)) {
+    return fail(400, "INVALID_STATE_PAYLOAD", "statePayload \u5FC5\u987B\u662F\u52A0\u5BC6\u4FE1\u5C01\uFF08iv / authTag / encryptedData\uFF09");
+  }
+  if (!isEncryptedEnvelope2(body.taskPayload)) {
+    return fail(400, "INVALID_TASK_PAYLOAD", "taskPayload \u5FC5\u987B\u662F\u52A0\u5BC6\u4FE1\u5C01\uFF08iv / authTag / encryptedData\uFF09");
+  }
+  const supersedesUuid = typeof body.supersedesUuid === "string" ? body.supersedesUuid.trim() : "";
+  const requestUrl = new URL(request.url);
+  const mountPath = requestUrl.pathname.replace(/\/+$/, "").replace(/\/instant-chat$/, "");
+  const internalUrl = (path, search = "") => {
+    const url = new URL(request.url);
+    url.pathname = `${mountPath}${path}`;
+    url.search = search;
+    return url.toString();
+  };
+  const encryptedHeaders = {
+    "Content-Type": "application/json",
+    "X-User-Id": userId,
+    "X-Payload-Encrypted": "true",
+    "X-Encryption-Version": "1",
+    ...clientToken ? { "X-Client-Token": clientToken } : {}
+  };
+  const readBody = async (response) => {
+    try {
+      return await response.json();
+    } catch {
+      return null;
+    }
+  };
+  const stateResponse = await upstream2.fetch(
+    new Request(internalUrl("/client-state"), {
+      method: "PUT",
+      headers: encryptedHeaders,
+      body: JSON.stringify(body.statePayload)
+    }),
+    env
+  );
+  if (!stateResponse.ok) {
+    return json2(stateResponse.status, {
+      success: false,
+      error: {
+        code: "INSTANT_CHAT_STATE_FAILED",
+        message: "\u4E91\u7AEF\u72B6\u6001\u6CA1\u4F20\u4E0A\u53BB\uFF0C\u8FD9\u6761\u6CA1\u53D1\u51FA\u53BB",
+        step: "client-state",
+        upstream: await readBody(stateResponse)
+      }
+    });
+  }
+  if (supersedesUuid) {
+    try {
+      const cancelled = await upstream2.fetch(
+        new Request(internalUrl("/cancel-message", `?id=${encodeURIComponent(supersedesUuid)}`), {
+          method: "DELETE",
+          headers: {
+            "X-User-Id": userId,
+            ...clientToken ? { "X-Client-Token": clientToken } : {}
+          }
+        }),
+        env
+      );
+      if (!cancelled.ok) {
+        console.log("[amsg:instant-chat] \u9876\u66FF\u4E0A\u4E00\u6761\u6CA1\u6210\uFF08\u7167\u5E38\u7EE7\u7EED\uFF09", {
+          uuid: supersedesUuid,
+          status: cancelled.status
+        });
+      }
+    } catch (error) {
+      console.log("[amsg:instant-chat] \u9876\u66FF\u4E0A\u4E00\u6761\u629B\u9519\uFF08\u7167\u5E38\u7EE7\u7EED\uFF09", error);
+    }
+  }
+  const taskResponse = await upstream2.fetch(
+    new Request(internalUrl("/schedule-message"), {
+      method: "POST",
+      headers: encryptedHeaders,
+      body: JSON.stringify(body.taskPayload)
+    }),
+    env
+  );
+  const taskBody = await readBody(taskResponse);
+  if (!taskResponse.ok) {
+    return json2(taskResponse.status, {
+      success: false,
+      error: {
+        code: "INSTANT_CHAT_TASK_FAILED",
+        message: "\u4EFB\u52A1\u6CA1\u5EFA\u8D77\u6765\uFF0C\u8FD9\u6761\u6CA1\u53D1\u51FA\u53BB",
+        step: "schedule-message",
+        upstream: taskBody
+      }
+    });
+  }
+  const uuid = taskBody?.data?.uuid;
+  if (typeof uuid !== "string" || !uuid) {
+    return fail(502, "INSTANT_CHAT_TASK_UUID_MISSING", "\u4E0A\u6E38\u6CA1\u6709\u56DE\u4EFB\u52A1 uuid\uFF0C\u65E0\u6CD5\u8DDF\u8E2A\u8FD9\u4E00\u8F6E", {
+      step: "schedule-message"
+    });
+  }
+  if (ctx && typeof ctx.waitUntil === "function") {
+    ctx.waitUntil((async () => {
+      try {
+        const due = await pullTaskDue(env.DB, uuid, userId, now());
+        if (!due) await sleep(INSTANT_TICK_FALLBACK_WAIT_MS);
+        await upstream2.scheduled({ scheduledTime: now(), cron: INSTANT_TICK_CRON }, env);
+      } catch (error) {
+        console.warn("[amsg:instant-chat] \u7ACB\u5373\u89E6\u53D1\u5931\u8D25\uFF08\u7B49 cron \u515C\u5E95\uFF09", error);
+      }
+    })());
+  } else {
+    console.warn("[amsg:instant-chat] \u8FD0\u884C\u65F6\u6CA1\u7ED9 ctx\uFF0C\u8DF3\u8FC7\u7ACB\u5373\u89E6\u53D1\uFF0C\u7B49 cron \u515C\u5E95");
+  }
+  return json2(202, { status: "accepted", uuid });
+};
 
 // worker/amsg/src/nativeFcm.ts
 var accessTokenCache = null;
@@ -9300,11 +9552,13 @@ var amsgHooks = {
       }
     };
     const charRows = await ctx.readState(amsgStateNamespace(charId));
+    const taskMeta = ctx.task.metadata ?? {};
+    const instant = isInstantChatTask(taskMeta);
     const switchControlRow = charRows.find((r) => r.key === AMSG_SWITCH_CONTROL_KEY);
     if (switchControlRow) {
       try {
         const switchControl = JSON.parse(switchControlRow.value);
-        if (switchControl?.enabled === false) {
+        if (!instant && switchControl?.enabled === false) {
           console.log("[amsg:disabled-control-skip]", { taskId: ctx.task.id, charId });
           await recordSkip(
             ctx,
@@ -9322,12 +9576,11 @@ var amsgHooks = {
         });
       }
     }
-    const taskMeta = ctx.task.metadata ?? {};
     const storedPolicy = typeof taskMeta.amsgExpirePolicy === "string" ? taskMeta.amsgExpirePolicy : void 0;
     const musicWakePresence = parseAmsgMusicWakePresence(
       charRows.find((r) => r.key === AMSG_MUSIC_WAKE_PRESENCE_KEY)?.value
     );
-    if (isFreshMusicWakePresence(musicWakePresence, charId, ctx.now.getTime())) {
+    if (!instant && isFreshMusicWakePresence(musicWakePresence, charId, ctx.now.getTime())) {
       const occurrenceMs2 = Date.parse(String(ctx.task.nextSendAt)) || ctx.now.getTime();
       console.log("[amsg:music-wake-skip]", {
         taskId: ctx.task.id,
@@ -9339,7 +9592,7 @@ var amsgHooks = {
     const presence = parseAmsgChatPresence(
       charRows.find((r) => r.key === AMSG_CHAT_PRESENCE_KEY)?.value
     );
-    if (storedPolicy === "expire" && isFreshChatPresence(presence, charId, ctx.now.getTime())) {
+    if (!instant && storedPolicy === "expire" && isFreshChatPresence(presence, charId, ctx.now.getTime())) {
       console.log("[amsg:expire-skip]", {
         taskId: ctx.task.id,
         reason: "active-chat-presence",
@@ -9436,12 +9689,12 @@ var amsgHooks = {
       nowMs: ctx.now.getTime(),
       occurrenceMs
     };
-    if (shouldExpireFire(expireInput)) {
+    if (!instant && shouldExpireFire(expireInput)) {
       console.log("[amsg:expire-skip]", { taskId: ctx.task.id, ...expireInput });
       await recordSkip(ctx, charId, "conversation-moved-on", occurrenceMs);
       return { skip: true };
     }
-    if (typeof taskMeta.amsgTaskInstruction !== "string") {
+    if (!instant && typeof taskMeta.amsgTaskInstruction !== "string") {
       throw fail("\u4EFB\u52A1 metadata \u7F3A amsgTaskInstruction\uFF08\u65E7\u683C\u5F0F\u4EFB\u52A1\uFF09");
     }
     const globalRows = await ctx.readState(AMSG_GLOBAL_NAMESPACE);
@@ -9538,7 +9791,9 @@ var amsgHooks = {
       selfLogTexts: null,
       // 跟下面 renderFirePack 填「你此刻在听」用的是同一个时刻、同一份 scene、同一个种子
       // （resolveFireSceneSong 与 renderFireSceneBlock 共用判定），冻的必然是正文里那首。
-      sceneSong: resolveFireSceneSong(pack.scene, ctx.now.getTime(), tz)
+      sceneSong: resolveFireSceneSong(pack.scene, ctx.now.getTime(), tz),
+      instant,
+      chatOutbox: instant ? parseChatOutbox(charRows.find((row) => row.key === AMSG_CHAT_OUTBOX_KEY)?.value) : null
     };
     const taskListBlock = buildFireTaskListBlock(actionablePendingTasks, {
       nowMs: ctx.now.getTime(),
@@ -9574,6 +9829,18 @@ var amsgHooks = {
       ...mcpResolve && mcpNative ? buildMcpFireTools(mcpResolve) : [],
       ...canSelfSchedule && mcpNative && !switchMode ? [buildFireScheduleTool({ nowMs: ctx.now.getTime(), tz })] : []
     ];
+    if (instant) {
+      if (!pack.chat?.messages?.length) throw fail("\u5373\u65F6\u5BF9\u8BDD fire_pack \u7F3A chat.messages");
+      return {
+        messages: [
+          ...pack.chat.messages.map((message) => ({ role: message.role, content: message.content })),
+          { role: "system", content: buildInstantTimelyBlock({ nowMs: ctx.now.getTime(), tz, realtimeWorldBlock }) }
+        ],
+        maxToolIterations: MAX_TOOL_ITERATIONS,
+        totalTimeoutMs: INSTANT_TOTAL_TIMEOUT_MS,
+        ...fireTools.length ? { tools: fireTools } : {}
+      };
+    }
     return {
       messages: [{ role: "user", content: prompt }],
       // 轮次上限显式给一份：worker 要靠同一个数判「这是最后一轮了」（见 onLLMOutput），
@@ -9717,9 +9984,10 @@ var amsgHooks = {
         };
       }
       decision = { ...decision, pushPayloads: withScheduled };
+      let finalPayloads = decision.pushPayloads;
       if (stash.clientTaskId && stash.charId) {
         const budgeted = [];
-        for (const payload of decision.pushPayloads) {
+        for (const payload of finalPayloads) {
           budgeted.push(await offloadOversizedPush(
             payload,
             ctx.writeState,
@@ -9727,8 +9995,15 @@ var amsgHooks = {
             stash.clientTaskId
           ));
         }
-        return { ...decision, pushPayloads: budgeted };
+        finalPayloads = budgeted;
       }
+      if (stash.instant) {
+        const nowMs = Date.now();
+        const ids = { taskRowId: stash.taskRowId, taskUuid: stash.taskUuid, occurrenceMs: stash.occurrenceMs, nowMs, randomId: crypto.randomUUID() };
+        finalPayloads = finalPayloads.map((payload, index) => finalizeInstantPush(payload, index, finalPayloads.length, ids));
+        stash.chatOutbox = await writeChatOutbox(ctx.writeState, stash.charId, stash.chatOutbox, toOutboxEntries(finalPayloads, nowMs));
+      }
+      return { ...decision, pushPayloads: finalPayloads };
     }
     return decision;
   },
@@ -10019,12 +10294,12 @@ var readServerVersion = async (request, env) => {
   }
 };
 var src_default = {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, "") || "/";
     const method = request.method.toUpperCase();
     if (pathname.endsWith("/config-check")) {
       if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS2 });
-      return jsonWithCors(200, { success: true, data: inspectWorkerEnv(env) });
+      return jsonWithCors(200, { success: true, data: { ...inspectWorkerEnv(env), instantChat: true } });
     }
     if (pathname.endsWith("/debug")) {
       if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS2 });
@@ -10051,6 +10326,11 @@ var src_default = {
     }
     const mailboxResponse = await handleDeliveryMailboxRequest(request, env);
     if (mailboxResponse) return mailboxResponse;
+    if (pathname.endsWith("/instant-chat")) {
+      if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS2 });
+      if (method !== "POST") return jsonWithCors(405, { success: false, error: { code: "METHOD_NOT_ALLOWED", message: "/instant-chat \u53EA\u63A5\u53D7 POST" } });
+      return handleInstantChat({ request, env, ctx, upstream, json: jsonWithCors });
+    }
     return upstream.fetch(request, env);
   },
   async scheduled(event, env) {
