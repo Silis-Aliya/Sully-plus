@@ -547,13 +547,14 @@ const Settings: React.FC = () => {
   const XHS_RISK_TEXT = '⚠️ 风险：本功能基于网页爬虫技术调用小红书，账号有被风控的概率。建议①用小号；②尽量别让角色主动发帖；③发出的笔记可能被屏蔽。';
   const XHS_COOKIE_GUIDE = [
     '【获取小红书 cookie 教程】',
-    '1. 用电脑浏览器(Chrome/Edge)登录 www.xiaohongshu.com',
+    '1. 用电脑浏览器(Chrome/Edge)登录实际分配给你的站点：www.xiaohongshu.com 或 www.rednote.com',
     '2. 按 F12 打开开发者工具，切到「Network/网络」标签',
-    '3. 刷新页面，点列表最上面那条「explore」(document 类型，发给 www.xiaohongshu.com 的主请求)',
+    '3. 刷新页面，点列表最上面那条「explore」(document 类型，发给当前网站的主请求)',
     '4. 右侧切到「Headers/标头」，往下滚到「Request Headers/请求标头」',
     '5. 找到 cookie: 开头那一行(很长一串)',
     '6. 复制它后面整段的值：可把 Request Headers 右边的「Raw」开关打开看纯文本更好选，或在值上右键 Copy value，或选中后 Ctrl+C',
     '7. 确认这串里有 a1= 和 web_session= 两个字段(最关键)，粘到「小红书 Lite」的 cookie 框',
+    'Lite 会自动判断这串 Cookie 属于国内小红书还是全球 RedNote；不用自己补 gid、bRequestId 等会随站点变化的字段。',
     '注意：别用 Console 的 document.cookie，拿不到 web_session(httpOnly)。cookie 数天~数周会过期，失效重复制即可。',
   ].join('\n');
   const _xhsCfgUrl = realtimeConfig.xhsMcpConfig?.serverUrl || '';
@@ -576,6 +577,7 @@ const Settings: React.FC = () => {
   const [rtXhsPhoneDeviceAddress, setRtXhsPhoneDeviceAddress] = useState(realtimeConfig.xhsPhoneConfig?.deviceAddress || '100.67.26.88:5555');
   const [rtXhsPhoneAccessToken, setRtXhsPhoneAccessToken] = useState(realtimeConfig.xhsPhoneConfig?.accessToken || '');
   const [rtXhsPhoneStatus, setRtXhsPhoneStatus] = useState<XhsPhoneChannelStatus | null>(null);
+  const [rtXhsPlatform, setRtXhsPlatform] = useState<'xhs' | 'rednote' | undefined>(realtimeConfig.xhsMcpConfig?.platform);
   const [rtXhsGuideOpen, setRtXhsGuideOpen] = useState(false);
   const [rtTestStatus, setRtTestStatus] = useState('');
   const renderRealtimeTestStatus = () => rtTestStatus ? (
@@ -1512,6 +1514,7 @@ const Settings: React.FC = () => {
               serverUrl: rtXhsMode === 'lite' ? XHS_LITE_URL : rtXhsLocalUrl,
               liteMode: rtXhsMode === 'lite' ? rtXhsLiteMode : 'full',
               cookie: rtXhsMode === 'lite' ? (rtXhsCookie.trim() || undefined) : undefined,
+              platform: rtXhsMode === 'lite' ? rtXhsPlatform : undefined,
               loggedInNickname: rtXhsNickname || undefined,
               loggedInUserId: rtXhsUserId || undefined,
               userXsecToken: realtimeConfig.xhsMcpConfig?.userXsecToken, // 保留自动获取的 token
@@ -1610,19 +1613,22 @@ const Settings: React.FC = () => {
               trackEvent('测试小红书桥接连接', { mode: rtXhsMode === 'lite' ? 'lite' : 'local', result: 'connected' });
               const toolCount = result.tools?.length || 0;
               const tokenInfo = result.xsecToken ? ' | xsecToken 已获取' : '';
+              const platformInfo = result.platform ? ` | 平台: ${result.platform === 'rednote' ? 'RedNote' : '小红书'}` : '';
               const loginInfo = result.loggedIn
-                  ? ` | ${result.nickname ? `账号: ${result.nickname}` : '已登录'}${result.userId ? ` (ID: ${result.userId})` : ''}${tokenInfo}`
+                  ? `${platformInfo} | ${result.nickname ? `账号: ${result.nickname}` : '已登录'}${result.userId ? ` (ID: ${result.userId})` : ''}${tokenInfo}`
                   : ' | 未登录，Cookie 可能已过期或不完整，请重新复制（至少需要 a1 和 web_session）';
               setRtTestStatus(`连接成功! ${toolCount} 个功能可用${loginInfo}`);
               // 自动填充：只在用户未手动填写时覆盖
               if (result.nickname && !rtXhsNickname) setRtXhsNickname(result.nickname);
               if (result.userId && !rtXhsUserId) setRtXhsUserId(result.userId);
+              setRtXhsPlatform(result.platform);
               const xhsUpdates = {
                   xhsMcpConfig: {
                       enabled: rtXhsMcpEnabled,
                       serverUrl: urlToUse,
                       liteMode: rtXhsMode === 'lite' ? rtXhsLiteMode : 'full',
                       cookie: cookieToUse,
+                      platform: result.platform,
                       loggedInNickname: rtXhsNickname || result.nickname,
                       loggedInUserId: rtXhsUserId || result.userId,
                       userXsecToken: result.xsecToken,
@@ -3909,7 +3915,7 @@ const Settings: React.FC = () => {
                       </label>
                   </div>
                   <p className="text-[10px] text-rose-500/70 leading-relaxed">
-                      免电脑、免扫码：粘贴一次小红书 cookie，即可搜索/浏览/详情/点赞/分享。完整版额外开放收藏/评论/发帖(带图)。地址已内置，无需填写。
+                      免电脑、免扫码：粘贴一次小红书 / RedNote cookie，即可搜索、浏览、看详情及互动；国内小红书的完整版还支持收藏、评论和发帖(带图)。地址已内置，无需填写。
                   </p>
                   <p className="text-[10px] text-amber-700 leading-relaxed bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">{XHS_RISK_TEXT}</p>
                   {rtXhsMcpEnabled && rtXhsMode === 'lite' && (
@@ -3926,7 +3932,7 @@ const Settings: React.FC = () => {
                           </div>
                           <div>
                               <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">小红书 Cookie</label>
-                              <textarea value={rtXhsCookie} onChange={e => setRtXhsCookie(e.target.value)} rows={2} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[10px] font-mono resize-y" placeholder="a1=...; web_session=...; （从浏览器登录后复制完整 cookie）" />
+                              <textarea value={rtXhsCookie} onChange={e => { setRtXhsCookie(e.target.value); setRtXhsPlatform(undefined); }} rows={2} className="w-full bg-white/80 border border-rose-200 rounded-xl px-3 py-2 text-[10px] font-mono resize-y" placeholder="a1=...; web_session=...; （从浏览器登录后复制完整 cookie）" />
                           </div>
                           <button onClick={testXhsMcp} className="w-full py-2 bg-rose-100 text-rose-600 text-xs font-bold rounded-xl active:scale-95 transition-transform">测试连接</button>
                           {renderRealtimeTestStatus()}
