@@ -75,6 +75,7 @@ import { exportMcdLocal } from '../utils/mcdMcpClient';
 import { exportMcpLocal } from '../utils/mcpClient';
 import { exportDesktopSkinLocal } from '../utils/desktopSkinBackup';
 import { assertSupportedSullyBackup } from '../utils/backupImportPolicy';
+import { externalizeVoiceMessageBlobs, restoreVoiceMessageBlobs, shouldIncludeVoiceRelatedAssetInBackup } from '../utils/voiceMessageBackup';
 import { markMusicMigrationEnded } from '../utils/musicMigrationNotice';
 import { ClockProvider } from './ClockContext';
 
@@ -4422,9 +4423,10 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
               // --- MODE SPECIFIC FILTERING ---
 
               if (storeName === 'assets' && Array.isArray(rawData)) {
-                  rawData = rawData.filter((asset: { id?: string } | null | undefined) => {
+                  rawData = rawData.filter((asset: { id?: string; data?: { favorite?: boolean } } | null | undefined) => {
                       if (!asset || typeof asset.id !== 'string') return true;
-                      return !isRedundantManagedAssetId(asset.id);
+                      if (isRedundantManagedAssetId(asset.id)) return false;
+                      return shouldIncludeVoiceRelatedAssetInBackup(asset, mode !== 'text_only');
                   });
               }
 
@@ -4569,6 +4571,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
               await new Promise(resolve => setTimeout(resolve, 10));
           }
+
+          // 收藏音频是 Blob，JSON 分片无法承载；在写 manifest 前把它抽到 ZIP 二进制条目。
+          await externalizeVoiceMessageBlobs(backupData.assets, (path, bytes) => {
+              zip.file(path, bytes, { compression: 'STORE' });
+          });
 
           // 进度条停在 70% 让用户看到接下来的"压缩中 X%"实际推进，而不是卡在 95% 干等。
           // text_only 用 level 6；媒体/全量仍用 level 9，具体见 generateAsync 配置。
@@ -4751,6 +4758,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           // 必须发生在 restoreAssetsInPlace / DB.importFullData 之前：不受支持的第三方
           // 备份一旦命中特征就整包拒绝，不能出现“导入了一半才报错”的状态。
           assertSupportedSullyBackup(data);
+
+          // ZIP 内的收藏语音要在写入 IndexedDB 前还原为 Blob；缺文件则整包拒绝，避免只导入半份收藏。
+          if (zip && Array.isArray(data.assets)) {
+              await restoreVoiceMessageBlobs(data.assets, async (path) => {
+                  const entry = zip?.file(path);
+                  return entry ? entry.async('uint8array') : null;
+              });
+          }
 
           const hadAssetStoreBackup = data.assets !== undefined;
           const hadCustomIconsBackup = data.customIcons !== undefined;

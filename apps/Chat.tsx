@@ -44,6 +44,7 @@ import CharacterEntryTransition from '../components/chat/CharacterEntryTransitio
 import ChromeCssEditor from '../components/chat/ChromeCssEditor';
 import ChatInputArea from '../components/chat/ChatInputArea';
 import MemoryRepairPortal from '../components/chat/MemoryRepairPortal';
+import VoiceFavoritesPortal from '../components/chat/VoiceFavoritesPortal';
 import ChatModals from '../components/chat/ChatModals';
 import Modal from '../components/os/Modal';
 import ProactiveSettingsModal from '../components/chat/ProactiveSettingsModal';
@@ -55,6 +56,7 @@ import { collectVoiceBatchSubtitle, isPoisonedVoiceSubtitle } from '../utils/voi
 import { synthesizeSpeechDetailed, characterHasVoice } from '../utils/ttsRouter';
 import { shouldAutoGenerateVoice, shouldAutoPlayGeneratedVoice } from '../utils/voicePlayback';
 import { fetchBlobForShare, shareOrDownloadBlob } from '../utils/shareExport';
+import { getVoiceFavorite, removeVoiceFavorite, saveVoiceFavorite } from '../utils/voiceFavorites';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { CHAT_GEN_EVENTS, isChatReplyGenerating } from '../utils/chatGenEvents';
 import { resolveFishAudioApiKey, stripFishMarkupForDisplay, cleanTextForTtsFish } from '../utils/fishAudioTts';
@@ -130,6 +132,7 @@ const Chat: React.FC = () => {
     const [input, setInput] = useState('');
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
     const [memoryRepairOpen, setMemoryRepairOpen] = useState(false);
+    const [voiceFavoritesOpen, setVoiceFavoritesOpen] = useState(false);
     
     // Emoji State
     const [emojis, setEmojis] = useState<Emoji[]>([]);
@@ -613,7 +616,7 @@ const Chat: React.FC = () => {
             const storedLang = voiceLang || undefined;
             setVoiceDataMap(prev => ({ ...prev, [msg.id]: { url: blobUrl, originalText, spokenText: storedSpokenText, lang: storedLang } }));
             // Persist so the voice bar survives leaving and re-entering the chat.
-            persistVoice(msg.id, blobUrl, blob, originalText, storedSpokenText, storedLang);
+            await persistVoice(msg.id, blobUrl, blob, originalText, storedSpokenText, storedLang);
             // 合成完是否立刻播（规则和来由见 shouldAutoPlayGeneratedVoice）：
             // AI 自动发来的默认不响、等用户点；用户自己点着要的一定响。
             if (shouldAutoPlayGeneratedVoice({ autoTriggered, autoPlayEnabled: char.chatVoiceAutoPlay })) {
@@ -650,6 +653,38 @@ const Chat: React.FC = () => {
             trackEvent('下载语音条');
         } catch {
             addToast('语音下载失败', 'error');
+        }
+    };
+
+    // 普通 TTS 是可再生成的缓存；只有用户明确点收藏才进入可备份的语音档案。
+    const handleToggleVoiceFavorite = async (msg: Message) => {
+        if (!char || !msg?.id) return;
+        const sourceKey = String(msg.id);
+        try {
+            if (await getVoiceFavorite('chat', sourceKey)) {
+                await removeVoiceFavorite('chat', sourceKey);
+                addToast('已取消收藏语音', 'info');
+                return;
+            }
+            if (!voiceDataMap[msg.id]) await handleManualTts(msg, false);
+            const stored = await DB.getAssetRaw(voiceAssetKey(msg.id)) as StoredVoice | null;
+            let blob: Blob | null = stored?.blob instanceof Blob ? stored.blob : null;
+            if (!blob && stored?.remoteUrl) {
+                try { blob = await fetchBlobForShare(stored.remoteUrl, 'audio/mpeg'); } catch { /* show a useful message below */ }
+            }
+            if (!blob) {
+                addToast('先生成可播放语音后才能收藏', 'info');
+                return;
+            }
+            await saveVoiceFavorite({
+                source: 'chat', sourceKey, charId: char.id, charName: char.name,
+                sourceTimestamp: msg.timestamp || Date.now(),
+                originalText: stored?.originalText || cleanTextForTts(msg.content),
+                spokenText: stored?.spokenText, language: stored?.lang, blob,
+            });
+            addToast('已收藏到语音收藏', 'success');
+        } catch (error: any) {
+            addToast(`语音收藏失败: ${error?.message || '未知错误'}`, 'error');
         }
     };
 
@@ -1493,6 +1528,7 @@ const Chat: React.FC = () => {
         }
         switch (type) {
             case 'memory-link': setShowPanel('none'); setMemoryRepairOpen(true); break;
+            case 'voice-favorites': setShowPanel('none'); setVoiceFavoritesOpen(true); break;
             case 'transfer': setModalType('transfer'); break;
             case 'poke': handleSendText('[戳一戳]', 'interaction'); break;
             case 'archive': setModalType('archive-settings'); break;
@@ -3233,6 +3269,9 @@ const Chat: React.FC = () => {
                 onGenerateVoice={selectedMessage ? () => handleManualTts(selectedMessage) : undefined}
                 voiceDownloadable={!!(selectedMessage?.id && voiceDataMap[selectedMessage.id])}
                 onDownloadVoice={selectedMessage ? () => handleDownloadVoice(selectedMessage) : undefined}
+                voiceCollectable={!!(selectedMessage?.id && selectedMessage.role === 'assistant' && selectedMessage.type === 'text')}
+                onToggleVoiceFavorite={selectedMessage ? () => handleToggleVoiceFavorite(selectedMessage) : undefined}
+                voiceFavorited={false}
                 scheduleData={scheduleData}
                 isScheduleGenerating={isScheduleGenerating}
                 onScheduleEdit={handleScheduleEdit}
@@ -4008,6 +4047,10 @@ const Chat: React.FC = () => {
                         setShowPanel('none');
                     }}
                 />
+            )}
+
+            {voiceFavoritesOpen && (
+                <VoiceFavoritesPortal onClose={() => setVoiceFavoritesOpen(false)} />
             )}
 
             <McdMiniApp

@@ -110,6 +110,9 @@ interface ChatModalsProps {
     voiceAvailable?: boolean; // true if char has voiceProfile configured
     onDownloadVoice?: () => void;
     voiceDownloadable?: boolean; // true if the selected message already has generated voice
+    voiceCollectable?: boolean;
+    onToggleVoiceFavorite?: () => void;
+    voiceFavorited?: boolean;
     // Schedule
     scheduleData?: DailySchedule | null;
     isScheduleGenerating?: boolean;
@@ -249,7 +252,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     xhsEnabled, onToggleXhs,
     htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, setHtmlModeCustomPrompt,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceAutoPlay, onToggleChatVoiceAutoPlay, chatVoiceLang, onSetChatVoiceLang,
-    onGenerateVoice, voiceAvailable, onDownloadVoice, voiceDownloadable,
+    onGenerateVoice, voiceAvailable, onDownloadVoice, voiceDownloadable, voiceCollectable, onToggleVoiceFavorite, voiceFavorited,
     scheduleData, isScheduleGenerating, onScheduleEdit, onScheduleDelete, onScheduleReroll, onScheduleCoverChange,
     onScheduleStyleChange, onPlayTheater,
     isScheduleFeatureEnabled, onToggleScheduleFeature,
@@ -949,6 +952,11 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                         <button onClick={() => { onDownloadVoice(); setModalType('none'); }} className="w-full py-3 bg-sky-50 text-sky-600 font-medium rounded-2xl active:bg-sky-100 transition-colors flex items-center justify-center gap-2">
                             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
                             下载语音
+                        </button>
+                    )}
+                    {voiceCollectable && onToggleVoiceFavorite && (
+                        <button onClick={() => { onToggleVoiceFavorite(); setModalType('none'); }} className="w-full py-3 bg-violet-50 text-violet-600 font-medium rounded-2xl active:bg-violet-100 transition-colors flex items-center justify-center gap-2">
+                            {voiceFavorited ? '取消收藏语音' : '收藏/取消收藏语音'}
                         </button>
                     )}
                     <button onClick={onDeleteMessage} className="w-full py-3 bg-red-50 text-red-500 font-medium rounded-2xl active:bg-red-100 transition-colors flex items-center justify-center gap-2">

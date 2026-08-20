@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Alarm, Sparkle, CaretDown, FadersHorizontal, Microphone, Keyboard, LinkSimple } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, ChatCircleDots, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, BellSimpleRinging, Alarm, Sparkle, CaretDown, FadersHorizontal, Microphone, Keyboard, LinkSimple, Waveform } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
@@ -960,6 +960,15 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                 <LinkSimple className="w-6 h-6" weight="bold" />
                               </span>
                               <span className="text-xs font-bold">记忆链接</span>
+                            </button>
+                            <button
+                              onClick={() => onPanelAction('voice-favorites')}
+                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
+                            >
+                              <span className={`w-14 h-14 rounded-2xl grid place-items-center shadow-sm border ${acnh ? 'bg-white/70 border-[#e6dab4] text-[#8f674a]' : isDiscordStyle ? 'bg-slate-800 text-violet-300 border-violet-400/20' : 'bg-violet-50 text-violet-500 border-violet-100'}`}>
+                                <Waveform className="w-6 h-6" weight="bold" />
+                              </span>
+                              <span className="text-xs font-bold">语音收藏</span>
                             </button>
                           </div>
 
