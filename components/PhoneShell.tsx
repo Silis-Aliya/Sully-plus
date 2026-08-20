@@ -1,7 +1,7 @@
 
 
 
-import React, { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense } from 'react';
 import {
   IMPORT_IN_PROGRESS_KEY,
   useAlerts,
@@ -22,44 +22,8 @@ import Launcher from '../apps/Launcher';
 // lazyApp：在 lazy 之外把 import 工厂挂到 .preload 上，使各 chunk 可被「预取」。
 // 桌面就绪后空闲时按优先级后台预热（见下方 useEffect），真正打开 App 时代码已在内存，
 // React.lazy 几乎同步解析 —— 过场层几乎不再出现，从根本上消除「每次进 App 都要加载」。
-type PreloadableLazy = React.LazyExoticComponent<React.ComponentType<any>> & { preload: () => Promise<unknown> };
-const lazyApp = (factory: () => Promise<{ default: React.ComponentType<any> }>): PreloadableLazy => {
-  const Comp = lazy(factory) as PreloadableLazy;
-  Comp.preload = factory;
-  return Comp;
-};
-
-// 预热 React.lazy 的「负载」本身：不仅下载模块，还把 lazy 内部状态推进到 resolved，
-// 使首次渲染该 App 时不再 suspend —— 杜绝切换瞬间露出外壳粉紫底色（深色 App 上尤其扎眼）的那一帧闪烁。
-// _payload / _init 为 React.lazy 内部结构（本项目锁定 React 18，形态稳定）；带防御，取不到则退化为仅预热 Vite 模块。
-// 注意：仅解析负载、不挂载组件，因此不会触发各 App 的副作用/数据读取。
-const LAZY_UNINITIALIZED = -1;
-const LAZY_PENDING = 0;
-const LAZY_REJECTED = 2;
-const warmLazy = (Comp: PreloadableLazy): void => {
-  try {
-    const payload: any = (Comp as any)?._payload;
-    const init: any = (Comp as any)?._init;
-    if (!payload || typeof init !== 'function' || payload._status !== LAZY_UNINITIALIZED) {
-      Comp.preload(); // 已在加载/已加载，或拿不到内部结构 → 仅预热 Vite 模块
-      return;
-    }
-    init(payload); // 触发下载 + 解析负载
-    // 关键防护：若空闲预取阶段加载失败，把负载复位为「未初始化」，避免该 App 被永久钉死为错误态；
-    // 真正打开时按 React 正常流程重试（再失败才交给错误边界），与预取前行为一致。
-    const thenable = payload._result;
-    if (payload._status === LAZY_PENDING && thenable && typeof thenable.then === 'function') {
-      thenable.then(undefined, () => {
-        if (payload._status === LAZY_REJECTED) {
-          payload._status = LAZY_UNINITIALIZED;
-          payload._result = Comp.preload; // 还原工厂，供 React 重新调用
-        }
-      });
-    }
-  } catch {
-    try { Comp.preload(); } catch { /* ignore */ }
-  }
-};
+import { createPreloadableLazy, type PreloadableLazy } from './os/preloadableLazy';
+const lazyApp = createPreloadableLazy;
 
 const Settings = lazyApp(() => import('../apps/Settings'));
 const Character = lazyApp(() => import('../apps/Character'));
@@ -101,8 +65,8 @@ const CharCreatorDevApp = lazyApp(() => import('../apps/CharCreatorDevApp'));
 const SpecialMomentsApp = lazyApp(() => import('./ValentineEvent').then(m => ({ default: m.SpecialMomentsApp })));
 
 // 预取优先级：高频/常驻 App 先预热，其余随后；逐个在空闲时触发，避免与交互抢主线程/带宽。
-const APP_PRELOAD_ORDER: PreloadableLazy[] = [
-  Chat, Character, GroupChat, SocialApp, RoomApp, Settings, Appearance,
+const APP_IDLE_PRELOAD_ORDER: PreloadableLazy[] = [
+  Chat, Character, Settings, Appearance, GroupChat, RoomApp, CheckPhone,
   CheckPhone, JournalApp, ScheduleApp, MusicApp, CallApp, Gallery, DateApp, UserApp,
   StudyApp, GameApp, NovelApp, BankApp, WorldbookApp, MemoryPalaceApp, HandbookApp,
   VRWorldApp, WorldHomeApp, LifeSimApp, SongwritingApp, GuidebookApp, FAQApp, HotNewsApp,
@@ -110,11 +74,9 @@ const APP_PRELOAD_ORDER: PreloadableLazy[] = [
   SpecialMomentsApp, CharCreatorDevApp,
 ];
 
-const ROLE_ENTRY_PRELOAD_ORDER: PreloadableLazy[] = [
-  Character,
-  CallApp,
-  RoomApp,
-];
+const IDLE_PRELOAD_START_MS = 600;
+const IDLE_PRELOAD_GAP_MS = 250;
+let idlePreloadCursor = 0;
 
 // AppID → 懒加载组件，供「按下即预取」连 React.lazy 负载一起解析（消除切换瞬间露底色的闪烁）。
 // AppID 由下方 import 引入，ES 模块提升后全模块可用。
@@ -133,8 +95,8 @@ const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
   [AppID.VRWorld]: VRWorldApp, [AppID.CharCreatorDev]: CharCreatorDevApp, [AppID.SpecialMoments]: SpecialMomentsApp,
   [AppID.WorldHome]: WorldHomeApp, [AppID.Workbench]: WorkbenchApp,
 };
-// 注入负载预热器：AppIcon 的 pointerdown → preloadApp(id) → 这里 warmLazy，连 React.lazy 负载一起解析。
-setAppPayloadWarmer((id: AppID) => { const c = APP_BY_ID[id]; if (c) warmLazy(c); });
+// 注入预热器：AppIcon 的 pointerdown → preloadApp(id) → 复用对应 App 的模块 Promise。
+setAppPayloadWarmer((id: AppID) => APP_BY_ID[id]?.preload());
 
 import { Like520Controller, shouldShowLike520Popup } from './Like520Event';
 import { UpdateNotificationController, shouldShowUpdateNotification } from './UpdateNotificationEvent';
@@ -157,7 +119,7 @@ import PersonaSimIndicator from './os/PersonaSimIndicator';
 import DreamSimIndicator from './os/DreamSimIndicator';
 import ErrorDialog from './os/ErrorDialog';
 import BootSequence from './os/BootSequence';
-import { setAppPayloadWarmer } from './os/appPreload';
+import { setAppPayloadWarmer, shouldUseIdleAppPreload } from './os/appPreload';
 
 /*
 // Internal Error Boundary Component
@@ -564,31 +526,47 @@ const PhoneShell: React.FC = () => {
   // 冷启动「世界入场」是否已结束。结束前由 BootSequence 接管整屏（同时取代旧的黑屏 spinner）。
   const [bootDone, setBootDone] = useState(false);
 
-  // 从根本上消除「每次进 App 都要加载」：数据一就绪就在后台按优先级逐个预热各 App 的代码块。
-  // 关键：不等开机动画（bootDone）结束就开始 —— 否则用户在开机那 ~2 秒内点开 Chat 时 chunk 还没热，
-  // 会现下载+解析 300KB+，首次进聊天卡好几秒。预热与开机动画并行（只下载/解析负载、不挂载、无副作用）。
-  // 逐个、空闲触发（requestIdleCallback），不与首屏交互抢主线程/带宽。
   useEffect(() => {
-    if (!isDataLoaded) return;
-    ROLE_ENTRY_PRELOAD_ORDER.forEach(warmLazy);
-  }, [isDataLoaded]);
-
-  useEffect(() => {
-    if (!isDataLoaded) return;
-    if (useIOSStandaloneLayout) return;
-    let cancelled = false;
-    let idx = 0;
-    const ric: (cb: () => void) => number = (window as any).requestIdleCallback
-      ? (cb) => (window as any).requestIdleCallback(cb, { timeout: 1500 })
-      : (cb) => window.setTimeout(cb, 200);
-    const step = () => {
-      if (cancelled || idx >= APP_PRELOAD_ORDER.length) return;
-      warmLazy(APP_PRELOAD_ORDER[idx++]); // 下载 chunk + 解析 React.lazy 负载 → 首次打开不再 suspend、无底色闪烁
-      if (!cancelled) ric(step);
+    if (!bootDone || !isDataLoaded || activeApp !== AppID.Launcher) return;
+    if (!shouldUseIdleAppPreload() || idlePreloadCursor >= APP_IDLE_PRELOAD_ORDER.length) return;
+    let stoppedByInteraction = false;
+    let startTimer: number | null = null;
+    let gapTimer: number | null = null;
+    let idleHandle: number | null = null;
+    const requestIdle = (callback: () => void): number => typeof (window as any).requestIdleCallback === 'function'
+      ? (window as any).requestIdleCallback(callback, { timeout: 2_000 }) : window.setTimeout(callback, 250);
+    const cancelScheduled = () => {
+      if (startTimer !== null) window.clearTimeout(startTimer);
+      if (gapTimer !== null) window.clearTimeout(gapTimer);
+      if (idleHandle !== null) typeof (window as any).cancelIdleCallback === 'function'
+        ? (window as any).cancelIdleCallback(idleHandle) : window.clearTimeout(idleHandle);
+      startTimer = null; gapTimer = null; idleHandle = null;
     };
-    const startId = window.setTimeout(() => ric(step), 150); // 让首帧先绘制一拍，随即开始（含开机动画期间）
-    return () => { cancelled = true; window.clearTimeout(startId); };
-  }, [isDataLoaded, useIOSStandaloneLayout]);
+    const scheduleStep = (delay: number) => {
+      if (stoppedByInteraction || document.visibilityState !== 'visible') return;
+      gapTimer = window.setTimeout(() => { gapTimer = null; idleHandle = requestIdle(() => { idleHandle = null; void runStep(); }); }, delay);
+    };
+    const runStep = async () => {
+      if (stoppedByInteraction || document.visibilityState !== 'visible') return;
+      const next = APP_IDLE_PRELOAD_ORDER[idlePreloadCursor++];
+      if (!next) return;
+      try { await next.preload(); } catch { /* Explicit open retries the failed import. */ }
+      if (!stoppedByInteraction && idlePreloadCursor < APP_IDLE_PRELOAD_ORDER.length) scheduleStep(IDLE_PRELOAD_GAP_MS);
+    };
+    const stopForInteraction = () => { stoppedByInteraction = true; cancelScheduled(); };
+    const handleVisibilityChange = () => {
+      cancelScheduled();
+      if (document.visibilityState === 'visible' && !stoppedByInteraction) startTimer = window.setTimeout(() => scheduleStep(0), IDLE_PRELOAD_START_MS);
+    };
+    window.addEventListener('pointerdown', stopForInteraction, { capture: true, once: true });
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    startTimer = window.setTimeout(() => scheduleStep(0), IDLE_PRELOAD_START_MS);
+    return () => {
+      stoppedByInteraction = true; cancelScheduled();
+      window.removeEventListener('pointerdown', stopForInteraction, { capture: true });
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [activeApp, bootDone, isDataLoaded]);
 
   // Disclaimer popup for first-time users
   const [showDisclaimer, setShowDisclaimer] = useState(() => {
