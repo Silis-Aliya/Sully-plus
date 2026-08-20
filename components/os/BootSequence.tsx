@@ -122,12 +122,10 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
       aria-label="Sully Plus"
       className="fixed inset-0 z-[9999] overflow-hidden select-none cursor-pointer"
       style={{
-        // iOS standalone 的 fixed 视口不含 Home 指示条安全区。开屏层若停在
-        // 可视区底部，动画开始前就会露出浏览器默认的白底；向下延一段安全区，
-        // 让当前星空/壁纸场景连续铺到底。非 iOS 的 --safe-bottom 为 0，不受影响。
-        // CSS calc() 的乘法在 iOS WebKit 上无效，整条 bottom 会被丢弃；
-        // 用减法才能确实越过 standalone PWA 的 Home 指示条安全区。
-        bottom: 'calc(0px - var(--safe-bottom, 0px))',
+        // WebKit 冷启动的首帧可能把 env(safe-area-inset-bottom) 报成 0；
+        // 不能让开屏覆盖范围依赖这个迟到的值。多铺 40px 全在物理屏幕外，
+        // 足以盖过所有 iPhone 的 Home 指示条安全区，也不改变可见动画构图。
+        bottom: '-40px',
         background: '#05060f',
         opacity: exiting ? 0 : 1,
         transition: `opacity ${EXIT}ms ease-in`,
