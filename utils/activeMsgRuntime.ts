@@ -145,11 +145,19 @@ const loadApiConfigFromLocalStorage = (): APIConfig => {
 /** 从 localStorage 读 RealtimeConfig — 整个 push 路径里我们不会再回连 LLM, 但 ChatParser
  *  及 DIARY 写入(可执行的副作用)需要这些配置, 缺失时返回 undefined 让消费方走 fallback。 */
 const loadRealtimeConfigFromLocalStorage = (): RealtimeConfig | undefined => {
+  const raw = (() => {
+    try {
+      return localStorage.getItem('os_realtime_config');
+    } catch {
+      console.warn('[amsg2] 读不到 os_realtime_config（存储不可用），按没配过处理');
+      return null;
+    }
+  })();
+  if (!raw) return undefined;
   try {
-    const raw = localStorage.getItem('os_realtime_config');
-    if (!raw) return undefined;
     return JSON.parse(raw) as RealtimeConfig;
   } catch {
+    console.warn('[amsg2] os_realtime_config 存的内容解析不了，这一轮按没配过处理');
     return undefined;
   }
 };
