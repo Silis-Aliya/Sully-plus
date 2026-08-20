@@ -44,9 +44,6 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
   const EXIT = cinematic ? 680 : 300;  // 推进式退场时长
 
   const [phase, setPhase] = useState<'enter' | 'exit'>('enter');
-  // iOS 冷启动的第一帧先把画面略向下铺进 Home 指示条区域；浏览器完成首轮布局后
-  // 恢复正常构图，再开始原有动画。只影响首帧，不会把 logo / 动画永久下移。
-  const [viewportSettled, setViewportSettled] = useState(false);
   const startRef = useRef(0);
   if (startRef.current === 0) {
     startRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -60,14 +57,7 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
     const html = document.documentElement;
     const previous = html.style.backgroundColor;
     html.style.backgroundColor = '#05060f';
-    let firstRaf = 0;
-    let secondRaf = 0;
-    firstRaf = requestAnimationFrame(() => {
-      secondRaf = requestAnimationFrame(() => setViewportSettled(true));
-    });
     return () => {
-      cancelAnimationFrame(firstRaf);
-      cancelAnimationFrame(secondRaf);
       html.style.backgroundColor = previous;
     };
   }, []);
@@ -139,12 +129,14 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
     <div
       onClick={skip}
       aria-label="Sully Plus"
-      className="fixed inset-0 z-[9999] overflow-hidden select-none cursor-pointer"
+      className="fixed left-0 right-0 z-[9999] overflow-hidden select-none cursor-pointer"
       style={{
-        // WebKit 冷启动的首帧可能把 env(safe-area-inset-bottom) 报成 0；
-        // 不能让开屏覆盖范围依赖这个迟到的值。多铺 40px 全在物理屏幕外，
-        // 足以盖过所有 iPhone 的 Home 指示条安全区，也不改变可见动画构图。
-        bottom: '-40px',
+        // 直接把「同一幅开机画面」上下各延伸 64px。不能用透明层：透明后面就是
+        // iOS 首帧的白色 canvas；也不能只补深色，因为会跟用户壁纸/星云断层。
+        // top=-64 与 height=可见高度+128 配对，画面中心仍在原来的屏幕中心，logo
+        // 不会被推偏，但背景、星点和暗角会真实铺过 Home Indicator 区域。
+        top: '-64px',
+        height: 'calc(var(--app-height, 100lvh) + 128px)',
         background: '#05060f',
         opacity: exiting ? 0 : 1,
         transition: `opacity ${EXIT}ms ease-in`,
@@ -166,10 +158,8 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
       <div
         className="absolute inset-0"
         style={{
-          transform: exiting ? 'scale(1.12)' : viewportSettled ? 'translateY(0) scale(1)' : 'translateY(40px) scale(1.04)',
-          transition: exiting
-            ? `transform ${EXIT}ms cubic-bezier(0.4,0,0.2,1)`
-            : viewportSettled ? 'transform 220ms cubic-bezier(0.22,1,0.36,1)' : 'none',
+          transform: exiting ? 'scale(1.12)' : undefined,
+          transition: exiting ? `transform ${EXIT}ms cubic-bezier(0.4,0,0.2,1)` : undefined,
           willChange: 'transform',
         }}
       >
