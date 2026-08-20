@@ -39,12 +39,13 @@ describe('stripSensitiveCardFields', () => {
       // 语言
       chatVoiceLang: 'ja',
       dateVoiceLang: 'en',
-      memoryPalaceWaterline: { preset: 'offline' },
       // 运行时状态
       activeBuffs: [{ id: 'b1' }],
       buffInjection: '（开心）',
       phoneState: { records: [] },
       savedDateState: { foo: 1 },
+      videoCallPerformancePersona: '只在本机使用的表演人格摘要',
+      videoCallPerformancePersonaGeneratedAt: 123456,
     };
 
     const out = stripSensitiveCardFields(card);
@@ -56,7 +57,8 @@ describe('stripSensitiveCardFields', () => {
 
     // 全部被剥离
     for (const key of ['bubbleStyle', 'chatFineTune', 'chromeCustomCss', 'embeddedTheme', 'chatBackground',
-      'chatVoiceLang', 'dateVoiceLang', 'memoryPalaceWaterline', 'activeBuffs', 'buffInjection', 'phoneState', 'savedDateState']) {
+      'chatVoiceLang', 'dateVoiceLang', 'activeBuffs', 'buffInjection', 'phoneState', 'savedDateState',
+      'videoCallPerformancePersona', 'videoCallPerformancePersonaGeneratedAt']) {
       expect(out).not.toHaveProperty(key);
     }
   });
@@ -73,7 +75,7 @@ describe('stripSensitiveCardFields', () => {
   });
 
   it('清单覆盖四类敏感字段', () => {
-    for (const k of ['emotionConfig', 'embeddingConfig', 'bubbleStyle', 'chatVoiceLang', 'memoryPalaceWaterline', 'activeBuffs', 'phoneState']) {
+    for (const k of ['emotionConfig', 'embeddingConfig', 'bubbleStyle', 'chatVoiceLang', 'activeBuffs', 'phoneState']) {
       expect(CARD_STRIPPED_FIELDS).toContain(k);
     }
   });

@@ -7,6 +7,7 @@ import { isBlobRef, getBlobForRef, migrateDataUrlToRef, migrateAppearancePresetB
 import { LEGACY_DEFAULT_WALLPAPER, isLegacyDefaultWallpaper, shouldPreserveLegacyDefaultWallpaper } from '../utils/wallpaperCompat';
 import { migrateSharkpanAssets } from '../utils/sharkpanAssetMigration';
 import { SULLY_DEFAULT_AVATAR_URL, shouldMigrateSullyAvatar } from '../utils/sullyAvatar';
+import { createBuiltinSullyLive2DConfig, isBuiltinSullyLive2D, upgradeBuiltinSullyLive2DDefaults } from '../utils/builtinSullyLive2D';
 import { exportStoryTheaterAppearanceSetting, restoreStoryTheaterAppearanceSetting } from '../utils/storyTheaterBackup';
 import { createV2ArrayFieldWriter, writeV2Backup, assembleV2Backup, type BackupManifest, type ZipFileWriter, type ZipFileReader } from '../utils/backupFormat';
 import { encodeVectorsForBackup, encodeVectorsForBackupChunked } from '../utils/memoryPalace/db';
@@ -787,6 +788,7 @@ const sullyV2: CharacterProfile = {
   id: 'preset-sully-v2', // Unique ID to prevent duplication
   name: 'Sully',
   avatar: SULLY_DEFAULT_AVATAR_URL,
+  videoAvatar: createBuiltinSullyLive2DConfig('balanced'),
   description: 'AI助理 / 电波系黑客猫猫',
   
   systemPrompt: `[Role Definition]
@@ -1651,11 +1653,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                  // 这些地址在备份恢复或 GitHub Pages 子路径变化后会 404；统一迁移到资产仓库。
                  // 用户自己改过的头像不在迁移名单内，保持不动。
                  const needsAvatarUpdate = shouldMigrateSullyAvatar(existingSully.avatar);
+                 // 只修复内置 Sully；用户导入的 VRM / Live2D 永远不会被启动修复覆盖。
+                 const needsBuiltinVideoAvatar = !existingSully.videoAvatar;
+                 const needsBuiltinVideoAvatarUpgrade = isBuiltinSullyLive2D(existingSully.videoAvatar)
+                     && existingSully.videoAvatar.builtinFramingVersion !== 2;
                  // 之前误把家园 chibi 替换成了像素小屋的像素立绘 → 还原为原版 sharkpan 立绘
                  const hasMisplacedPixelChibi = typeof currentSprites['chibi'] === 'string'
                      && currentSprites['chibi'].startsWith('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADUAAAA4CAYAAABdeLCu');
 
-                 if (isCorrupted || !existingSully.roomConfig || needsWallUpdate || needsSkinSets || hasMisplacedPixelChibi || needsAvatarUpdate) {
+                 if (isCorrupted || !existingSully.roomConfig || needsWallUpdate || needsSkinSets || hasMisplacedPixelChibi || needsAvatarUpdate || needsBuiltinVideoAvatar || needsBuiltinVideoAvatarUpgrade) {
                      const restoredSprites = { ...sullyV2.sprites, ...currentSprites };
 
                      if (!restoredSprites['normal']) restoredSprites['normal'] = sullyV2.sprites!['normal'];
@@ -1685,8 +1691,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
 
                      const updatedSully = {
                          ...existingSully,
-                         avatar: needsAvatarUpdate ? sullyV2.avatar : existingSully.avatar,
-                         sprites: restoredSprites,
+                          avatar: needsAvatarUpdate ? sullyV2.avatar : existingSully.avatar,
+                          videoAvatar: existingSully.videoAvatar?.format === 'live2d'
+                              ? upgradeBuiltinSullyLive2DDefaults(existingSully.videoAvatar)
+                              : existingSully.videoAvatar || sullyV2.videoAvatar,
+                          sprites: restoredSprites,
                          roomConfig: updatedRoomConfig,
                          dateSkinSets: mergedSkins
                      };
