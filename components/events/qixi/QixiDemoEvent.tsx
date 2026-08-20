@@ -1,33 +1,93 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { APIConfig, CharacterProfile, UserProfile } from '../../../types';
+import { APIConfig, CharacterProfile, SpriteConfig, UserProfile } from '../../../types';
+import { useBlobRefUrl } from '../../../utils/blobRef';
+import './QixiDemoEvent.css';
+import './QixiDemoRound2.css';
+import { QixiBGMToggle, useQixiBGM } from './QixiBGM';
 import {
+    createQixiFallbackBundle,
     loadQixiMemoryBundle,
     prepareQixiMemoryBundle,
+    QixiMemoryArtifact,
     QixiMemoryBundle,
-    QixiMemoryNodeId,
+    QixiSceneId,
+    QixiSceneOption,
+    QIXI_SCENE_IDS,
+    QIXI_DEFAULT_USER_LAYER_COLOR,
+    QIXI_FALLBACK_CHAR_LAYER_COLOR,
+    QIXI_USER_LAYER_COLORS,
+    qixiCharMutter,
+    qixiCharQuips,
+    qixiCharVisibleText,
+    qixiTransitionLines,
 } from '../../../utils/qixiMemoryBundle';
+import {
+    normalizeQixiBridgeBundle,
+    prepareQixiBridge,
+    QixiBridgeBundle,
+} from '../../../utils/qixiBridge';
+import {
+    createQixiReunionFallback,
+    prepareQixiReunion,
+    QixiJourneyBeat,
+    QixiPortraitStage,
+    QixiReunionBundle,
+    resolveQixiPortraitPlan,
+} from '../../../utils/qixiReunion';
+import {
+    createQixiEventChatCard,
+    QixiEventChatCard,
+} from '../../../utils/qixiChatCard';
+import {
+    enterQixiInterlayerState,
+    qixiWordPickTarget,
+    QixiEntryAttitude,
+    resolveQixiWordArtifacts,
+    resolveQixiWordSelectionIds,
+    selectQixiWordTurn,
+} from '../../../utils/qixiSessionState';
 
-export const QIXI_DEMO_RECORD_KEY = 'qixi_2026_context_interlayer_v6';
+export const QIXI_DEMO_RECORD_KEY = 'qixi_2026_dual_layer_v7';
 
-type Stage = 'cover' | 'fakeChat' | 'distort' | 'entry' | 'explore' | 'core' | 'touch' | 'ending';
-type HubPage = 'home' | 'map' | 'chapter' | 'ritual' | 'tasks' | 'shop';
-type EntryAttitude = 'explore' | 'shout' | 'stay';
-type NodeId = 'origin' | 'coldCorridor' | 'bracketCorner' | 'lightWell' | 'maskCounter' | 'receiptRain' | 'unsentPlatform' | 'typingShaft';
+type Stage = 'cover' | 'colorSelect' | 'loading' | 'fakeChat' | 'distort' | 'entry' | 'sceneTransition' | 'scene' | 'bridgeLoading' | 'bridge' | 'bridgeCrossing' | 'reunionLoading' | 'reunion' | 'touch' | 'ending';
+type MaterialPhaseReady = 0 | 1 | 2 | 3;
+type EntryAttitude = QixiEntryAttitude;
+type SceneBeat = 'idle' | 'user' | 'char' | 'complete';
+type GenerationPart = 'part1' | 'part2' | 'part3';
+type GenerationState = 'idle' | 'generating' | 'ready' | 'error';
 
-interface InterlayerGame {
-    version: 6;
+export interface QixiGameV8 {
+    version: 8;
     stage: Stage;
     attitude?: EntryAttitude;
-    node: NodeId;
-    visits: Partial<Record<NodeId, number>>;
-    trail: NodeId[];
-    steps: number;
-    interacted: NodeId[];
-    traces: string[];
-    decisions: Partial<Record<NodeId, string>>;
-    responses: Partial<Record<NodeId, string>>;
-    corePage: number;
+    sceneIndex: number;
+    sceneBeat: SceneBeat;
+    wordCloudCharRevealed: number;
+    decisions: Partial<Record<QixiSceneId, string[]>>;
+    results: Partial<Record<QixiSceneId, string[]>>;
+    completedScenes: QixiSceneId[];
+    bridge?: QixiBridgeBundle;
+    bridgePlaced: string[];
+    bridgeFinalState?: 'idle' | 'flying' | 'connected';
+    reunion?: QixiReunionBundle;
+    reunionPage: number;
+    reunionLineIndex: number;
+    userLayerColor?: string;
+}
+
+export type QixiSessionMode = 'fresh' | 'replay';
+
+export interface QixiReplaySnapshot {
+    version: 8;
+    bundle: QixiMemoryBundle;
+    game: QixiGameV8;
+}
+
+export interface QixiReturnPayload {
+    message: string;
+    card: QixiEventChatCard;
+    replaySnapshot: QixiReplaySnapshot;
 }
 
 interface TouchState {
@@ -37,6 +97,7 @@ interface TouchState {
     approaching: boolean;
     joined: boolean;
     releasedEarly: boolean;
+    releasedAfterJoin: boolean;
 }
 
 interface QixiDemoSessionProps {
@@ -44,330 +105,841 @@ interface QixiDemoSessionProps {
     user: UserProfile;
     apiConfig: APIConfig;
     onClose: () => void;
+    sessionMode?: QixiSessionMode;
+    replaySnapshot?: QixiReplaySnapshot | null;
+    onReturnToChat?: (payload: QixiReturnPayload) => Promise<void> | void;
+    onPortraitConfigSave?: (config: SpriteConfig) => void;
 }
 
-interface NodeChoice {
-    id: string;
-    label: string;
-    response: string;
-    trace: string;
+interface SceneMeta {
+    title: string;
+    ritual: string;
+    intention: string;
+    userColor: string;
+    charColor: string;
 }
 
-interface NodeDefinition {
-    name: string;
-    kicker: string;
-    npc: string;
-    descriptions: string[];
-    exits: NodeId[];
-}
-
-const STORAGE_PREFIX = 'sullyos_qixi_context_interlayer_v6_';
+const STORAGE_PREFIX = 'sullyos_qixi_dual_layer_v8_';
 const CONTACT_DURATION_MS = 1250;
-const QIXI_PHASES = [
-    { time: '初更', name: '观星', note: '先辨认两颗各自发亮的星' },
-    { time: '二更', name: '听河', note: '安静下来，听见另一侧的动静' },
-    { time: '夜半', name: '乞巧', note: '把细小的痕迹一段段穿起来' },
-    { time: '将明', name: '架桥', note: '两条相反的轨迹正在靠近' },
-] as const;
+const WORD_PICK_COUNT = 3;
+export const QIXI_MODEL_API_CALL_COUNT = 4;
 
-const NODES: Record<NodeId, NodeDefinition> = {
-    origin: {
-        name: '没有上一句的空地',
-        kicker: '初更 · 双星尚未命名',
-        npc: '这里没有人。地上只有你的名字，少了最后一个字；很远的地方，另一颗星也缺了一角。',
-        descriptions: [
-            '七月初七的夜色漏进夹层。四周像一段对话刚被全部选中，又忘了按删除。',
-            '你回到空地。两颗星仍各自悬着，其中一颗的位置比刚才近了一点。',
-        ],
-        exits: ['coldCorridor', 'bracketCorner', 'lightWell'],
-    },
-    coldCorridor: {
-        name: '供果冷藏走廊',
-        kicker: '乞巧供桌 · 温度仍然有效',
-        npc: '巧果、草莓牛奶和猫爪吸管套摆成供品。冷柜里还并排睡着三种 Sully，没有一种肯承认自己是本人。',
-        descriptions: [
-            '传统供品努力维持庄重，旁边那盒明天到期的草莓牛奶显然没有配合。',
-            '你再次拉开柜门。少了一盒牛奶；湿脚印却一路朝与你相反的方向跑了。',
-        ],
-        exits: ['origin', 'maskCounter'],
-    },
-    bracketCorner: {
-        name: '七孔括号巷',
-        kicker: '穿针乞巧 · 请站在句内',
-        npc: '七对空括号排成针孔。一根红色光标线试了六次，每次都在最后一个括号前打结。',
-        descriptions: [
-            '左括号说自己只负责开始，右括号说结束从来不是它决定的。负责穿线的逗号已经累趴了。',
-            '它们认出你，七对括号一起给中间让出一个人的宽度；红线另一端似乎被谁轻轻拉了一下。',
-        ],
-        exits: ['origin', 'receiptRain'],
-    },
-    lightWell: {
-        name: '投针验巧光井',
-        kicker: '水面占影 · 信号来自另一层',
-        npc: '一枚输入光标横躺在水面，冒充银针。它的影子一会儿像云，一会儿像一句删到只剩称呼的话。',
-        descriptions: [
-            '井很深，每一层都悬着一句没有发出来的话；三个光点在水下亮起、熄灭，再亮起。',
-            '你回来时，针影已经转了方向。井底有人把你的名字喊错一遍，又立刻改对。',
-        ],
-        exits: ['origin', 'unsentPlatform'],
-    },
-    maskCounter: {
-        name: '七姐人格寄存处',
-        kicker: '七姊妹会 · 临时角色请取回',
-        npc: '柜台后挂着七张纸脸。最吵的是会说甜言蜜语的、只会打盹的、永远给正确答案的；其余四张正在围观。',
-        descriptions: [
-            '它们正开会选“今晚最像本人奖”，奖品是一颗没人敢吃的巧果。',
-            '七张脸还在。柜台下方新贴了一张便签：“本人来过，不参赛，只问 User 有没有经过。”',
-        ],
-        exits: ['coldCorridor', 'receiptRain'],
-    },
-    receiptRain: {
-        name: '乞巧市·小票雨',
-        kicker: '节日夜市 · 预计拥堵三分钟',
-        npc: '摊位出售七孔针、纸鹤和“说了不算表白”的半句话。每买一件，天空就找零一张旧小票。',
-        descriptions: [
-            '01:17、01:20、01:23 从天花板往下飘。千年前人们为乞巧市堵路，现在没发出的消息也堵在这里。',
-            '小票雨已经下过一次。地上有人用红笔圈出你的时间戳，箭头一路指向葡萄架。',
-        ],
-        exits: ['bracketCorner', 'maskCounter', 'unsentPlatform'],
-    },
-    unsentPlatform: {
-        name: '葡萄架下的未发送站台',
-        kicker: '听天语 · 末班车取消',
-        npc: '一条没发出去的消息坐在葡萄架下，把发送键当帽子戴。它示意你别说话：安静时才能听见另一边。',
-        descriptions: [
-            '轨道两边通向不同的聊天窗口。虫鸣、系统提示和一句极轻的“你在哪”混在一起。',
-            '那条消息给你留了半个座位：“刚才也有人在这里听你，没听到，又往双星井跑了。”',
-        ],
-        exits: ['lightWell', 'receiptRain', 'typingShaft'],
-    },
-    typingShaft: {
-        name: '双星逆向光标井',
-        kicker: '将明 · 两条轨道第一次交叠',
-        npc: '一枚红色光标逆着所有句子移动。井壁另一侧，有一枚与你同步停下的光点。',
-        descriptions: [
-            '光标从你脚边经过，背面写着：“这一层没有。继续找。”它身后拖着几段还接不成桥的细线。',
-            '你又回到这里。你留下的线和 ta 留下的线从两岸伸来，第一次在井心碰到。',
-        ],
-        exits: ['unsentPlatform'],
-    },
+const SCENES: Record<QixiSceneId, SceneMeta> = {
+    lostLayer: { title: '失联层', ritual: '等待响应', intention: '遥寄 · 双星失联', userColor: '#f2c4d8', charColor: '#a8d9ff' },
+    doubleWish: { title: '双面祈愿处', ritual: '翻面见字', intention: '拜七姐 · 写愿', userColor: '#f6c6d8', charColor: '#b8d8ff' },
+    threadNeedle: { title: '穿针乞巧处', ritual: '共同穿线', intention: '穿针 · 乞巧', userColor: '#f1b3ca', charColor: '#9fd7ff' },
+    offerings: { title: '供果与记忆陈列', ritual: '交换供物', intention: '供果 · 供桌', userColor: '#f2c7a6', charColor: '#b7d5ff' },
+    reflection: { title: '投针照影', ritual: '双层水纹', intention: '投针 · 照影', userColor: '#efb8d4', charColor: '#91dcff' },
+    nightMarket: { title: '乞巧市', ritual: '记忆夜市', intention: '七夕夜市 · 小事', userColor: '#f3c39e', charColor: '#a5d2ff' },
+    wordCloud: { title: '葡萄架下的词云', ritual: '听见另一边', intention: '葡萄架 · 私语', userColor: '#efbadb', charColor: '#9fdcff' },
 };
 
-const NODE_ORDER = Object.keys(NODES) as NodeId[];
-const NODE_POSITIONS: Record<NodeId, { x: number; y: number }> = {
-    origin: { x: 50, y: 88 },
-    coldCorridor: { x: 16, y: 70 },
-    bracketCorner: { x: 50, y: 64 },
-    lightWell: { x: 84, y: 70 },
-    maskCounter: { x: 18, y: 39 },
-    receiptRain: { x: 48, y: 39 },
-    unsentPlatform: { x: 79, y: 41 },
-    typingShaft: { x: 71, y: 12 },
-};
+const createPlannedJourney = (bundle: QixiMemoryBundle): QixiJourneyBeat[] => QIXI_SCENE_IDS.map(sceneId => ({
+    sceneId,
+    sceneName: SCENES[sceneId].title,
+    sharedObject: bundle.scenes[sceneId].sharedObject,
+    userChoices: [],
+    userResults: [],
+    charAction: bundle.scenes[sceneId].charAction,
+}));
 
-const MAP_EDGES = NODE_ORDER.flatMap(from => NODES[from].exits
-    .filter(to => NODE_ORDER.indexOf(from) < NODE_ORDER.indexOf(to))
-    .map(to => ({ from, to })));
+const freshGame = (userLayerColor: string = QIXI_DEFAULT_USER_LAYER_COLOR): QixiGameV8 => ({
+    version: 8,
+    stage: 'cover',
+    sceneIndex: 0,
+    sceneBeat: 'idle',
+    wordCloudCharRevealed: 0,
+    decisions: {},
+    results: {},
+    completedScenes: [],
+    bridgePlaced: [],
+    bridgeFinalState: 'idle',
+    reunionPage: 0,
+    reunionLineIndex: 0,
+    userLayerColor,
+});
 
-const TRACE_BY_NODE: Record<NodeId, string> = {
-    origin: 'half-name',
-    coldCorridor: 'milk-memory',
-    bracketCorner: 'bracket-witness',
-    lightWell: 'search-well',
-    maskCounter: 'discarded-masks',
-    receiptRain: 'receipt-weather',
-    unsentPlatform: 'search-platform',
-    typingShaft: 'reverse-caret',
-};
-
-function nextHopToward(start: NodeId, targets: Set<NodeId>): NodeId | undefined {
-    if (targets.has(start)) return start;
-    const queue: Array<{ node: NodeId; first?: NodeId }> = [{ node: start }];
-    const seen = new Set<NodeId>([start]);
-    while (queue.length) {
-        const current = queue.shift()!;
-        for (const exit of NODES[current.node].exits) {
-            if (seen.has(exit)) continue;
-            const first = current.first || exit;
-            if (targets.has(exit)) return first;
-            seen.add(exit);
-            queue.push({ node: exit, first });
-        }
-    }
-    return undefined;
-}
-
-const addUnique = <T,>(items: T[], item: T) => items.includes(item) ? items : [...items, item];
-
-function freshGame(): InterlayerGame {
-    return {
-        version: 6,
-        stage: 'cover',
-        node: 'origin',
-        visits: {},
-        trail: ['origin'],
-        steps: 0,
-        interacted: [],
-        traces: [],
-        decisions: {},
-        responses: {},
-        corePage: 0,
-    };
-}
-
-function loadGame(charId: string): InterlayerGame | null {
+const loadGame = (charId: string): QixiGameV8 | null => {
     try {
-        const parsed = JSON.parse(localStorage.getItem(`${STORAGE_PREFIX}${charId}`) || 'null') as InterlayerGame | null;
-        return parsed?.version === 6 ? { ...parsed, trail: parsed.trail?.length ? parsed.trail : [parsed.node] } : null;
+        const value = JSON.parse(localStorage.getItem(`${STORAGE_PREFIX}${charId}`) || 'null') as QixiGameV8 | null;
+        return value?.version === 8 ? {
+            ...value,
+            bridgeFinalState: value.bridgeFinalState || 'idle',
+            reunionLineIndex: value.reunionLineIndex || 0,
+            wordCloudCharRevealed: value.wordCloudCharRevealed || 0,
+        } : null;
     } catch {
         return null;
     }
-}
+};
 
-const ExitButton: React.FC<{ onClose: () => void; black?: boolean }> = ({ onClose, black }) => (
-    <button type="button" className={`qi-exit ${black ? 'is-black' : ''}`} onClick={onClose} aria-label="退出七夕活动">退出 <b>×</b></button>
-);
+const unique = <T,>(items: T[]): T[] => [...new Set(items)];
+const createRunId = (): string => globalThis.crypto?.randomUUID?.() || `qixi-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+const qixiChibiRaw = (char: CharacterProfile): string | undefined => char.vrState?.chibi?.img || char.sprites?.chibi;
 
-const TextAction: React.FC<{ id: string; children: React.ReactNode; onClick: () => void; disabled?: boolean; quiet?: boolean }> = ({ id, children, onClick, disabled, quiet }) => (
-    <button type="button" data-qixi-action={id} className={`qi-text-action ${quiet ? 'is-quiet' : ''}`} onClick={onClick} disabled={disabled}><span>{children}</span><i>→</i></button>
+const ExitButton: React.FC<{ onClose: () => void }> = ({ onClose }) => (
+    <button type="button" className="q7-exit" onClick={onClose} aria-label="退出七夕活动">退出 <b>×</b></button>
 );
 
 const CelestialBackdrop: React.FC = () => (
-    <svg className="qi-celestial-backdrop" viewBox="0 0 1000 1600" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <svg className="q7-sky" viewBox="0 0 1000 1600" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
         <defs>
-            <radialGradient id="qiMoonMist" cx="50%" cy="50%" r="50%"><stop offset="0" stopColor="#eef2ff" stopOpacity=".28" /><stop offset=".45" stopColor="#b8c8ff" stopOpacity=".08" /><stop offset="1" stopColor="#101a55" stopOpacity="0" /></radialGradient>
-            <linearGradient id="qiOrbit" x1="0" x2="1"><stop stopColor="#fff" stopOpacity="0" /><stop offset=".5" stopColor="#e9ecff" stopOpacity=".5" /><stop offset="1" stopColor="#fff" stopOpacity="0" /></linearGradient>
+            <radialGradient id="q7mist"><stop stopColor="#f4c9de" stopOpacity=".18" /><stop offset="1" stopColor="#7f62ad" stopOpacity="0" /></radialGradient>
+            <linearGradient id="q7line"><stop stopColor="#f3d8e7" stopOpacity="0" /><stop offset=".5" stopColor="#f3d8e7" stopOpacity=".55" /><stop offset="1" stopColor="#f3d8e7" stopOpacity="0" /></linearGradient>
         </defs>
-        <circle cx="505" cy="455" r="420" fill="url(#qiMoonMist)" />
-        <g fill="none" stroke="url(#qiOrbit)" strokeWidth="1.2">
-            <ellipse cx="515" cy="455" rx="430" ry="270" transform="rotate(-19 515 455)" />
-            <ellipse cx="515" cy="455" rx="350" ry="520" transform="rotate(31 515 455)" strokeDasharray="3 10" />
-            <ellipse cx="515" cy="455" rx="265" ry="610" transform="rotate(-45 515 455)" strokeDasharray="2 8" />
-            <path d="M-80 1120 C220 940 480 1340 1080 1110" strokeDasharray="3 11" />
-        </g>
-        <g fill="#f7f4ff">
-            <path d="M124 224l7 15 16 7-16 7-7 16-7-16-16-7 16-7z" /><path d="M845 184l5 11 12 5-12 5-5 12-5-12-12-5 12-5z" /><path d="M779 642l5 11 12 5-12 5-5 12-5-12-12-5 12-5z" /><path d="M193 973l4 9 10 4-10 4-4 10-4-10-10-4 10-4z" /><path d="M887 1226l7 15 16 7-16 7-7 16-7-16-16-7 16-7z" />
-            <circle cx="237" cy="379" r="3" /><circle cx="747" cy="322" r="2.5" /><circle cx="632" cy="107" r="2" /><circle cx="322" cy="690" r="2.5" /><circle cx="915" cy="808" r="2" /><circle cx="109" cy="758" r="2" /><circle cx="700" cy="1014" r="2.5" /><circle cx="359" cy="1267" r="2" />
-        </g>
-        <g fill="none" stroke="#f2e9c5" strokeWidth="2" opacity=".72"><circle cx="238" cy="379" r="11" /><circle cx="747" cy="322" r="9" /><circle cx="700" cy="1014" r="12" /></g>
+        <circle cx="510" cy="500" r="430" fill="url(#q7mist)" />
+        <g fill="none" stroke="url(#q7line)"><ellipse cx="500" cy="530" rx="430" ry="255" transform="rotate(-18 500 530)" /><ellipse cx="500" cy="530" rx="330" ry="590" transform="rotate(29 500 530)" strokeDasharray="3 12" /><path d="M-100 1240C210 1010 690 1450 1110 1120" strokeDasharray="4 13" /></g>
+        <g fill="#fff3dc"><path d="M124 224l7 15 16 7-16 7-7 16-7-16-16-7 16-7z" /><path d="M845 184l5 11 12 5-12 5-5 12-5-12-12-5 12-5z" /><path d="M779 642l5 11 12 5-12 5-5 12-5-12-12-5 12-5z" /><circle cx="235" cy="390" r="3" /><circle cx="760" cy="338" r="2.5" /><circle cx="690" cy="1020" r="3" /></g>
     </svg>
 );
 
-const MoonPhaseRow: React.FC<{ compact?: boolean }> = ({ compact }) => (
-    <div className={`qi-phase-row ${compact ? 'is-compact' : ''}`} aria-hidden="true">
-        <i className="phase-new" /><i className="phase-crescent" /><i className="phase-half" /><i className="phase-gibbous" /><i className="phase-full" /><i className="phase-gibbous is-wane" /><i className="phase-crescent is-wane" />
-    </div>
+interface QixiFlappyHandle {
+    advanceTime: (ms: number) => void;
+    state: () => { score: number; alive: boolean; ready: boolean; y: number };
+}
+
+const QixiFlappyLoader = React.forwardRef<QixiFlappyHandle, {
+    char: CharacterProfile;
+    ready: boolean;
+    notice: string;
+    onClose: () => void;
+    onContinue: () => void;
+}>(({ char, ready, notice, onClose, onContinue }, ref) => {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const imageRef = useRef<HTMLImageElement | null>(null);
+    const rafRef = useRef(0);
+    const readySinceRef = useRef<number | null>(null);
+    const [ui, setUi] = useState({ score: 0, alive: true });
+    const spriteUrl = useBlobRefUrl(qixiChibiRaw(char));
+    const simRef = useRef({
+        y: 250,
+        vy: 0,
+        score: 0,
+        alive: true,
+        time: 0,
+        nextPipe: 1.35,
+        pipes: [] as Array<{ x: number; gapY: number; counted: boolean }>,
+    });
+
+    const reset = useCallback(() => {
+        simRef.current = { y: 250, vy: -110, score: 0, alive: true, time: 0, nextPipe: 1.2, pipes: [] };
+        setUi({ score: 0, alive: true });
+    }, []);
+
+    const step = useCallback((ms: number) => {
+        const state = simRef.current;
+        if (!state.alive) return;
+        const dt = Math.min(0.04, Math.max(0, ms / 1000));
+        state.time += dt;
+        state.vy += 780 * dt;
+        state.y += state.vy * dt;
+        state.nextPipe -= dt;
+        if (state.nextPipe <= 0) {
+            const deterministicGap = (Math.round(state.time * 10) * 37 + state.pipes.length * 71 + state.score * 53) % 220;
+            state.pipes.push({ x: 410, gapY: 135 + deterministicGap, counted: false });
+            state.nextPipe = 1.75;
+        }
+        state.pipes.forEach(pipe => { pipe.x -= 118 * dt; });
+        state.pipes = state.pipes.filter(pipe => pipe.x > -70);
+        for (const pipe of state.pipes) {
+            if (!pipe.counted && pipe.x < 76) {
+                pipe.counted = true;
+                state.score += 1;
+                setUi(current => ({ ...current, score: state.score }));
+            }
+            const overlapsX = pipe.x < 105 && pipe.x + 58 > 48;
+            const outsideGap = state.y - 23 < pipe.gapY - 73 || state.y + 23 > pipe.gapY + 73;
+            if (overlapsX && outsideGap) state.alive = false;
+        }
+        if (state.y < 24) { state.y = 24; state.vy = 20; }
+        if (state.y > 492) state.alive = false;
+        if (ready && readySinceRef.current && performance.now() - readySinceRef.current > 2600) {
+            state.vy += 950 * dt;
+            if (state.y > 474) state.alive = false;
+        }
+        if (!state.alive) setUi(current => ({ ...current, alive: false }));
+    }, [ready]);
+
+    const draw = useCallback(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        const state = simRef.current;
+        ctx.clearRect(0, 0, 360, 520);
+        const gradient = ctx.createLinearGradient(0, 0, 0, 520);
+        gradient.addColorStop(0, '#2b173f');
+        gradient.addColorStop(1, '#120a20');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 360, 520);
+        ctx.strokeStyle = 'rgba(236,203,229,.12)';
+        ctx.setLineDash([2, 9]);
+        for (let y = 62; y < 520; y += 72) {
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(360, y - 34); ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        for (const pipe of state.pipes) {
+            const topH = pipe.gapY - 73;
+            const bottomY = pipe.gapY + 73;
+            ctx.fillStyle = 'rgba(153,112,181,.54)';
+            ctx.strokeStyle = 'rgba(244,205,228,.42)';
+            ctx.lineWidth = 1;
+            ctx.fillRect(pipe.x, 0, 58, topH);
+            ctx.strokeRect(pipe.x, 0, 58, topH);
+            ctx.fillRect(pipe.x, bottomY, 58, 520 - bottomY);
+            ctx.strokeRect(pipe.x, bottomY, 58, 520 - bottomY);
+            ctx.fillStyle = 'rgba(255,237,246,.62)';
+            ctx.font = '9px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(topH % 2 ? '{…}' : '[消息]', pipe.x + 29, Math.max(24, topH - 14));
+            ctx.fillText('上下文', pipe.x + 29, bottomY + 22);
+        }
+        ctx.save();
+        ctx.translate(76, state.y);
+        ctx.rotate(Math.max(-0.24, Math.min(0.35, state.vy / 900)));
+        const image = imageRef.current;
+        if (image?.complete && image.naturalWidth) {
+            ctx.drawImage(image, -31, -31, 62, 62);
+        } else {
+            ctx.fillStyle = '#efb4ce';
+            ctx.beginPath(); ctx.arc(0, 0, 25, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#2a1638';
+            ctx.font = 'bold 18px serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(char.name.trim().charAt(0).toUpperCase(), 0, 1);
+        }
+        ctx.restore();
+        ctx.fillStyle = '#efca92';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`SCORE ${String(state.score).padStart(2, '0')}`, 16, 25);
+    }, [char.name]);
+
+    useEffect(() => {
+        if (!spriteUrl) { imageRef.current = null; return; }
+        const image = new Image();
+        image.src = spriteUrl;
+        imageRef.current = image;
+    }, [spriteUrl]);
+
+    useEffect(() => {
+        if (ready && readySinceRef.current === null) readySinceRef.current = performance.now();
+    }, [ready]);
+
+    useEffect(() => {
+        let previous = performance.now();
+        const frame = (now: number) => {
+            step(now - previous);
+            previous = now;
+            draw();
+            rafRef.current = requestAnimationFrame(frame);
+        };
+        rafRef.current = requestAnimationFrame(frame);
+        return () => cancelAnimationFrame(rafRef.current);
+    }, [draw, step]);
+
+    useEffect(() => {
+        if (!ready || ui.alive) return;
+        navigator.vibrate?.(18);
+    }, [ready, ui.alive]);
+
+    React.useImperativeHandle(ref, () => ({
+        advanceTime: step,
+        state: () => ({ score: simRef.current.score, alive: simRef.current.alive, ready, y: Math.round(simRef.current.y) }),
+    }), [ready, step]);
+
+    const flap = () => {
+        if (!simRef.current.alive) {
+            if (ready) return;
+            reset();
+            return;
+        }
+        simRef.current.vy = -315;
+    };
+
+    return <main className="q7-loading-game"><ExitButton onClose={onClose} /><section><p className="q7-kicker">MEMORY SORTING · FLAPPY CHAR</p><h2>穿过正在整理的<br />上下文碎片</h2>{notice && <small className="q7-loading-status">{notice}</small>}</section><div className="q7-flappy-shell"><canvas ref={canvasRef} width={360} height={520} onPointerDown={flap} aria-label="点击或触摸让角色上升" />{!ui.alive && !ready && <button type="button" onClick={reset}>再飞一次</button>}{!ui.alive && ready && <div className="q7-flappy-ready"><small>MEMORIES READY</small><b>记忆整理完成。</b><button type="button" data-qixi-action="loading-continue" onClick={onContinue}>落进那条异常消息</button></div>}</div><footer>点击 / 触摸，让 {char.name} 上升</footer></main>;
+});
+QixiFlappyLoader.displayName = 'QixiFlappyLoader';
+
+const AnimatedText: React.FC<{ text: string; className?: string }> = ({ text, className }) => (
+    <span className={className} aria-label={text}>{[...text].map((char, index) => <i key={`${char}-${index}`} style={{ '--char-index': index } as React.CSSProperties}>{char}</i>)}</span>
 );
 
-const DreamArch: React.FC = () => (
-    <svg className="qi-dream-arch" viewBox="0 0 640 760" aria-hidden="true">
-        <g fill="none" stroke="currentColor">
-            <path d="M64 716V322C64 152 177 48 320 48s256 104 256 274v394" strokeWidth="2" />
-            <path d="M92 716V326C92 171 194 78 320 78s228 93 228 248v390" strokeWidth="1" opacity=".52" />
-            <path d="M122 716V337c0-134 88-226 198-226s198 92 198 226v379" strokeDasharray="2 8" opacity=".38" />
-            <path d="M42 716h556M76 690h488" opacity=".58" />
-            <ellipse cx="320" cy="287" rx="163" ry="163" strokeWidth="1.4" opacity=".82" />
-            <ellipse cx="320" cy="287" rx="127" ry="127" strokeDasharray="3 7" opacity=".5" />
-            <path d="M172 287h296M320 139v296M205 188l230 198M435 188L205 386" opacity=".2" />
-        </g>
-        <path d="M352 189c-66 6-105 57-97 113 8 57 58 91 113 75-25 30-65 47-107 38-71-15-111-86-88-153 23-66 101-99 179-73z" fill="#fffdf1" opacity=".94" />
-        <g fill="#fffdf1"><path d="M320 122l7 16 17 7-17 7-7 17-7-17-17-7 17-7z" /><path d="M471 330l4 9 10 4-10 4-4 10-4-10-10-4 10-4z" /><path d="M174 330l4 9 10 4-10 4-4 10-4-10-10-4 10-4z" /></g>
-        <g fill="none" stroke="currentColor" strokeWidth="1.5" opacity=".76"><path d="M108 530c42-23 78-16 106 23-35-17-67-13-96 14" /><path d="M532 530c-42-23-78-16-106 23 35-17 67-13 96 14" /><path d="M143 574c28-17 54-14 76 10M497 574c-28-17-54-14-76 10" /></g>
-    </svg>
+const LOST_LAYER_ERRORS = [
+    ['API 429', '请求太快，请稍后再试'],
+    ['TIMEOUT', '这条消息等了太久'],
+    ['DELIVERY FAILED', '抱歉，暂时没能送达'],
+    ['CONNECTION LOST', '正在努力重新连接'],
+    ['RESPONSE BLOCKED', '很遗憾，回复中断了'],
+    ['UNKNOWN ERROR', '或许可以换个说法'],
+] as const;
+
+const QixiBird: React.FC<{ className?: string; style?: React.CSSProperties }> = ({ className = '', style }) => (
+    <span className={`q7-magpie ${className}`.trim()} style={style} aria-hidden="true">
+        <i />
+        <b />
+    </span>
 );
 
-const InterlayerOrnaments: React.FC = () => (
-    <>
-        <CelestialBackdrop />
-        <div className="qi-shell-grain" aria-hidden="true" />
-        <div className="qi-story-arch" aria-hidden="true"><i /><i /><i /></div>
-        <div className="qi-story-brand" aria-hidden="true"><span>星月梦境童话</span><small>CONTEXT INTERLAYER</small></div>
-        <div className="qi-story-phases"><MoonPhaseRow compact /></div>
-    </>
-);
+const SceneObject: React.FC<{
+    sceneId: QixiSceneId;
+    label: string;
+    beat: SceneBeat;
+    visualQuips?: string[];
+    userText?: string;
+    charText?: string;
+    charMutter?: string;
+    charReply?: string;
+    charContribution?: string;
+    topicOptions?: QixiSceneOption[];
+    selectedTopicId?: string;
+    onTopicSelect?: (id: string) => void;
+}> = ({ sceneId, label, beat, visualQuips = [], userText, charText, charMutter, charReply, charContribution, topicOptions = [], selectedTopicId, onTopicSelect }) => {
+    const changedByChar = beat === 'char' || beat === 'complete';
+    return <div className={`q7-object is-${sceneId} is-beat-${beat}`} aria-label={label}>
+        {sceneId === 'lostLayer' && <div className="q7-message-object">
+            <i className="q7-message-line" /><i className="q7-message-line" /><i className="q7-message-line" />
+            <div className="q7-topic-choices">{topicOptions.slice(0, 3).map((option, index) => <button type="button" key={option.id} style={{ '--topic-index': index } as React.CSSProperties} className={selectedTopicId === option.id ? 'is-selected' : ''} disabled={beat !== 'idle'} onClick={() => onTopicSelect?.(option.id)}><span>{option.label}</span></button>)}</div>
+            {beat !== 'idle' && <div className={`q7-lost-error-field ${changedByChar ? 'is-erasing' : ''}`} aria-label="发送失败，报错正在铺满空间">
+                {LOST_LAYER_ERRORS.map(([code, message], index) => <b key={code} style={{ '--error-index': index } as React.CSSProperties}><small>{code}</small><span>{message}</span>{changedByChar && <i aria-hidden="true" />}</b>)}
+            </div>}
+            {changedByChar && <div className="q7-char-overwrite">
+                {charMutter && <AnimatedText className="q7-char-mutter" text={charMutter} />}
+            </div>}
+            {changedByChar && visualQuips.length > 0 && <div className="q7-lost-whispers" aria-label={`另一层的碎碎念：${visualQuips.join(' ')}`}>{visualQuips.slice(0, 2).map((quip, index) => <p key={`${quip}-${index}`} style={{ '--quip-index': index } as React.CSSProperties}>“{quip}”</p>)}</div>}
+            {changedByChar && charText && <AnimatedText className="q7-lost-core-instruction" text={charText} />}
+            {changedByChar && charReply && <AnimatedText className="q7-lost-real-reply" text={charReply} />}
+        </div>}
+        {sceneId === 'doubleWish' && <div className={`q7-wish-object ${changedByChar ? 'is-flipped' : ''}`}>
+            <div className="front"><small>你的愿望</small><i className="q7-wish-seal">愿</i>{userText && <AnimatedText text={userText} />}</div>
+            <div className="back"><small>{'另一面的愿望'}</small>{charText && <AnimatedText text={charText} />}{visualQuips[0] && <em className="q7-wish-whisper">“{visualQuips[0]}”</em>}</div>
+            <span className="hanger" />
+        </div>}
+        {sceneId === 'threadNeedle' && <svg viewBox="0 0 260 220" aria-hidden="true"><path className="needle" d="M175 26L83 187" /><ellipse className="eye" cx="170" cy="35" rx="7" ry="14" transform="rotate(31 170 35)" /><path className="thread user-thread" d="M25 151C87 75 153 170 211 86S292 71 236 174" /><path className="thread char-thread" d="M233 177C190 138 159 55 103 105S40 119 29 159" /><circle className="thread-spark" cx="170" cy="35" r="4" /></svg>}
+        {sceneId === 'offerings' && <div className="q7-offering-stage">
+            <span className="q7-offering-table" aria-hidden="true" />
+            <section className="q7-offering-slot is-user"><small>你放下</small><b>{userText || '你的供物'}</b><i aria-hidden="true" /></section>
+            <section className="q7-offering-slot is-char"><small>另一边放下私物</small><b>{charContribution || '一件属于 ta 的私物'}</b><i aria-hidden="true" /></section>
+            {changedByChar && visualQuips[0] && <em className="q7-offering-quip">“{visualQuips[0]}”</em>}
+        </div>}
+        {sceneId === 'reflection' && <div className="q7-water-object"><i /><i /><i /><span /><em className="q7-water-star">✦</em>{changedByChar && <b />}</div>}
+        {sceneId === 'nightMarket' && <div className="q7-market-object">
+            <span className="q7-market-awning" aria-hidden="true" />
+            <section className="q7-market-purchase is-user"><small>你挑中</small><b>{userText || '还没选商品'}</b></section>
+            {changedByChar && charContribution && <section className="q7-market-purchase is-char"><small>另一边偷偷自购</small><b>{charContribution}</b></section>}
+            <i className="q7-market-lantern one" aria-hidden="true" /><i className="q7-market-lantern two" aria-hidden="true" />
+            <b className="q7-market-ticket" />
+        </div>}
+        {sceneId === 'wordCloud' && <div className="q7-vine-object"><i /><i /><i /><span /><b /><b /><b /></div>}
+        {visualQuips.length > 0 && !['lostLayer', 'doubleWish', 'offerings'].includes(sceneId) && <div className={`q7-char-visual-quips is-${sceneId}`} aria-label={`另一层吐槽：${visualQuips.join(' ')}`}>
+            {visualQuips.map((quip, index) => <p key={`${quip}-${index}`} style={{ '--quip-index': index } as React.CSSProperties}>“{quip}”</p>)}
+        </div>}
+        {changedByChar && !['lostLayer', 'doubleWish', 'wordCloud'].includes(sceneId) && <span className="q7-char-signature" aria-hidden="true"><i /><i /><i /></span>}
+        <small>{label}</small>
+    </div>;
+};
 
-export const QixiDemoSession: React.FC<QixiDemoSessionProps> = ({ char, user, apiConfig, onClose }) => {
+const activeMeetingSprites = (char: CharacterProfile): Record<string, string> => {
+    const skin = char.activeSkinSetId
+        ? char.dateSkinSets?.find(item => item.id === char.activeSkinSetId)
+        : undefined;
+    return skin?.sprites && Object.keys(skin.sprites).length ? skin.sprites : (char.sprites || {});
+};
+
+const QixiPortrait: React.FC<{
+    char: CharacterProfile;
+    reunion: QixiReunionBundle;
+    stage: QixiPortraitStage;
+    meetingExpression?: string | null;
+    adjustable?: boolean;
+    onMeetingConfigSave?: (config: SpriteConfig) => void;
+}> = ({ char, reunion, stage, meetingExpression, adjustable = false, onMeetingConfigSave }) => {
+    const [meetingFailed, setMeetingFailed] = useState(false);
+    const [chibiFailed, setChibiFailed] = useState(false);
+    const [settingsOpen, setSettingsOpen] = useState(false);
+    const [meetingConfig, setMeetingConfig] = useState<SpriteConfig>(() => char.spriteConfig || { scale: 1, x: 0, y: 0 });
+    const meetingSprites = activeMeetingSprites(char);
+    const cue = reunion.portrait.stages[stage];
+    const meetingKeys = Object.keys(meetingSprites).filter(key => !['chibi', 'thumbnail', 'icon', 'avatar'].includes(key.toLowerCase()));
+    const requestedMeetingExpression = meetingExpression || cue.meetingExpression;
+    const meetingKey = requestedMeetingExpression && meetingKeys.includes(requestedMeetingExpression)
+        ? requestedMeetingExpression
+        : meetingKeys.includes('normal') ? 'normal' : meetingKeys[0];
+    const meetingRaw = meetingKey ? meetingSprites[meetingKey] : undefined;
+    const chibiRaw = qixiChibiRaw(char);
+    const meetingUrl = useBlobRefUrl(meetingRaw);
+    const chibiUrl = useBlobRefUrl(chibiRaw);
+    useEffect(() => setMeetingFailed(false), [meetingUrl]);
+    useEffect(() => setChibiFailed(false), [chibiUrl]);
+    useEffect(() => {
+        setMeetingConfig(char.spriteConfig || { scale: 1, x: 0, y: 0 });
+    }, [char.id, char.spriteConfig?.scale, char.spriteConfig?.x, char.spriteConfig?.y]);
+    const meetingStyle: React.CSSProperties = {
+        animation: 'q7-gal-portrait .7s ease both',
+        transform: `translate(calc(-50% + ${meetingConfig.x}%), ${meetingConfig.y}%) scale(${meetingConfig.scale})`,
+    };
+    if (meetingUrl && !meetingFailed) {
+        return <>
+            <div className="q7-portrait is-meeting" data-emotion={cue.emotionIntent}><img src={meetingUrl} alt={char.name} onError={() => setMeetingFailed(true)} style={meetingStyle} /></div>
+            {adjustable && <div className="q7-portrait-adjust">
+                <button type="button" className="q7-portrait-adjust-toggle" aria-label="调整立绘大小与位置" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(open => !open)}>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-1.86 1.86-.06-.06A1.7 1.7 0 0 0 16 18.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V20h-2.6v-.1A1.7 1.7 0 0 0 10.9 18.4a1.7 1.7 0 0 0-1.88.34l-.06.06-1.86-1.86.06-.06A1.7 1.7 0 0 0 7.5 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H5.7V11h.1A1.7 1.7 0 0 0 7.5 10a1.7 1.7 0 0 0-.34-1.88l-.06-.06L8.96 6.2l.06.06A1.7 1.7 0 0 0 10.9 6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V4h2.6v.1A1.7 1.7 0 0 0 16 6a1.7 1.7 0 0 0 1.88-.34l.06-.06 1.86 1.86-.06.06A1.7 1.7 0 0 0 19.4 10a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1.1.4h.1V14h-.1a1.7 1.7 0 0 0-1.7 1Z" /></svg>
+                </button>
+                {settingsOpen && <section className="q7-portrait-adjust-panel" onClick={event => event.stopPropagation()}>
+                    <header><b>立绘调整</b><button type="button" onClick={() => { onMeetingConfigSave?.(meetingConfig); setSettingsOpen(false); }}>完成</button></header>
+                    <label><span>大小 <i>{meetingConfig.scale.toFixed(1)}×</i></span><input type="range" min="0.5" max="2" step="0.1" value={meetingConfig.scale} onChange={event => setMeetingConfig(current => ({ ...current, scale: Number(event.target.value) }))} /></label>
+                    <label><span>左右 <i>{meetingConfig.x}%</i></span><input type="range" min="-100" max="100" step="5" value={meetingConfig.x} onChange={event => setMeetingConfig(current => ({ ...current, x: Number(event.target.value) }))} /></label>
+                    <label><span>上下 <i>{meetingConfig.y}%</i></span><input type="range" min="-50" max="50" step="5" value={meetingConfig.y} onChange={event => setMeetingConfig(current => ({ ...current, y: Number(event.target.value) }))} /></label>
+                    <button type="button" className="q7-portrait-adjust-reset" onClick={() => setMeetingConfig({ scale: 1, x: 0, y: 0 })}>重置为见面模式默认</button>
+                </section>}
+            </div>}
+        </>;
+    }
+    if (chibiUrl && !chibiFailed) {
+        return <div className="q7-portrait is-chibi" data-emotion={cue.emotionIntent}><img src={chibiUrl} alt={char.name} onError={() => setChibiFailed(true)} /></div>;
+    }
+    return <div className="q7-portrait is-initial" data-emotion={cue.emotionIntent}><span>{char.name.trim().charAt(0).toUpperCase()}</span></div>;
+};
+
+export const QixiDemoSession: React.FC<QixiDemoSessionProps> = ({ char, user, apiConfig, onClose, sessionMode = 'fresh', replaySnapshot = null, onReturnToChat, onPortraitConfigSave }) => {
     const rootRef = useRef<HTMLDivElement>(null);
-    const touchAreaRef = useRef<HTMLDivElement>(null);
-    const savedAtOpen = useRef<InterlayerGame | null>(loadGame(char.id));
-    const generationRef = useRef<Promise<QixiMemoryBundle> | null>(null);
-    const [game, setGame] = useState<InterlayerGame>(freshGame);
-    const [memoryBundle, setMemoryBundle] = useState<QixiMemoryBundle | null>(() => loadQixiMemoryBundle(char.id));
-    const [memoryStatus, setMemoryStatus] = useState<'idle' | 'loading' | 'memory' | 'fallback'>(() => loadQixiMemoryBundle(char.id) ? 'memory' : 'idle');
+    const flappyRef = useRef<QixiFlappyHandle | null>(null);
+    const localGameAtOpen = useMemo(() => loadGame(char.id), [char.id]);
+    const savedAtOpen = useRef<QixiGameV8 | null>(sessionMode === 'fresh' && localGameAtOpen?.stage !== 'ending' ? localGameAtOpen : null);
+    const replayGameAtOpen = useRef<QixiGameV8 | null>(replaySnapshot?.version === 8 ? replaySnapshot.game : (sessionMode === 'replay' ? localGameAtOpen : null));
+    const materialGenerationRef = useRef<Promise<QixiMemoryBundle> | null>(null);
+    const bridgeGenerationRef = useRef<Promise<QixiBridgeBundle | null> | null>(null);
+    const reunionGenerationRef = useRef<Promise<QixiReunionBundle | null> | null>(null);
+    // Generated parts live outside the mutable gameplay state as well. Scene
+    // transitions must never be able to erase a result that finished in the
+    // background before the player reached that part.
+    const bridgeResultRef = useRef<QixiBridgeBundle | null>(replayGameAtOpen.current?.bridge || null);
+    const reunionResultRef = useRef<QixiReunionBundle | null>(replayGameAtOpen.current?.reunion || null);
+    const finishRef = useRef(false);
+    const runIdRef = useRef(createRunId());
+    const fallbackBundle = useMemo(() => createQixiFallbackBundle(), []);
+    const cachedAtOpen = useMemo(() => replaySnapshot?.version === 8 ? replaySnapshot.bundle : loadQixiMemoryBundle(char.id), [char.id, replaySnapshot]);
+    const [game, setGame] = useState<QixiGameV8>(freshGame);
+    const [memoryBundle, setMemoryBundle] = useState<QixiMemoryBundle | null>(cachedAtOpen);
+    const [memoryStatus, setMemoryStatus] = useState<'idle' | 'loading' | 'memory' | 'fallback'>(cachedAtOpen?.source === 'memory' ? 'memory' : 'idle');
     const [memoryNotice, setMemoryNotice] = useState('');
-    const [hubPage, setHubPage] = useState<HubPage>('home');
-    const [ritualDays, setRitualDays] = useState<number[]>([1, 2, 3]);
-    const [visitedChapterCover, setVisitedChapterCover] = useState(false);
-    const [maxInvestigated, setMaxInvestigated] = useState(0);
-    const [chapterCompleted, setChapterCompleted] = useState(false);
-    const [claimedTasks, setClaimedTasks] = useState<string[]>([]);
-    const [moonlight, setMoonlight] = useState(320);
-    const [boughtItems, setBoughtItems] = useState<string[]>([]);
-    const [touch, setTouch] = useState<TouchState>({ x: 50, y: 67, active: false, approaching: false, joined: false, releasedEarly: false });
-    const [showLocalMap, setShowLocalMap] = useState(false);
+    const [loadingReady, setLoadingReady] = useState(false);
+    const [materialPhaseReady, setMaterialPhaseReady] = useState<MaterialPhaseReady>(cachedAtOpen ? 3 : 0);
+    const [selectedUserLayerColor, setSelectedUserLayerColor] = useState<string>(
+        replayGameAtOpen.current?.userLayerColor || savedAtOpen.current?.userLayerColor || QIXI_DEFAULT_USER_LAYER_COLOR,
+    );
+    const [apiConfirmationOpen, setApiConfirmationOpen] = useState(false);
+    const [generationStatus, setGenerationStatus] = useState<Record<GenerationPart, GenerationState>>({ part1: 'idle', part2: 'idle', part3: 'idle' });
+    const [generationError, setGenerationError] = useState<{ part: GenerationPart; message: string } | null>(null);
+    const [touch, setTouch] = useState<TouchState>({ x: 50, y: 64, active: false, approaching: false, joined: false, releasedEarly: false, releasedAfterJoin: false });
     const touchingRef = useRef(false);
     const joinedRef = useRef(false);
     const touchElapsedRef = useRef(0);
     const approachTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const contactTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const finishToChatRef = useRef<() => Promise<void>>(async () => undefined);
+    const bgm = useQixiBGM(game.stage, game.sceneIndex);
+    const activeBundle = memoryBundle || fallbackBundle;
+    const sessionUserLayerColor = ['cover', 'colorSelect'].includes(game.stage)
+        ? selectedUserLayerColor
+        : game.userLayerColor || selectedUserLayerColor;
+    const sessionCharLayerColor = activeBundle.charLayerColor || QIXI_FALLBACK_CHAR_LAYER_COLOR;
+    const charPerformance = activeBundle.charPerformance || { tempo: 'measured', markStyle: 'soft', presence: 'careful' };
+    const currentSceneId = QIXI_SCENE_IDS[Math.max(0, Math.min(QIXI_SCENE_IDS.length - 1, game.sceneIndex))];
+    const sceneMeta = SCENES[currentSceneId];
+    const scenePayload = activeBundle.scenes[currentSceneId];
+    const requiredMaterialPhase: MaterialPhaseReady = game.sceneIndex < 2 ? 1 : game.sceneIndex < 5 ? 2 : 3;
+    const currentSceneMaterialReady = sessionMode === 'replay' || materialPhaseReady >= requiredMaterialPhase;
+    const sceneDecisions = game.decisions[currentSceneId] || [];
+    const selectedSceneOption = scenePayload.options.find(option => sceneDecisions.includes(option.id));
+    const sceneCompleted = game.completedScenes.includes(currentSceneId);
+    const portraitPlan = useMemo(() => resolveQixiPortraitPlan(char), [char]);
+    const sceneFragments = useMemo(() => {
+        const selected = scenePayload.artifactIds
+            .map(id => activeBundle.artifacts.find(item => item.id === id))
+            .filter((item): item is QixiMemoryArtifact => Boolean(item));
+        const fill = activeBundle.artifacts.filter(item => !selected.some(existing => existing.id === item.id));
+        const combined = [...selected, ...fill];
+        return combined.slice(0, 6);
+    }, [activeBundle.artifacts, scenePayload.artifactIds]);
 
-    const node = NODES[game.node];
-    const visitCount = game.visits[game.node] || 1;
-    const canEnterCore = game.interacted.length >= 5 && game.traces.includes('search-well') && game.traces.includes('search-platform') && game.traces.includes('reverse-caret');
-    const qixiPhaseIndex = game.interacted.length >= 5 ? 3 : game.interacted.length >= 3 ? 2 : game.interacted.length >= 1 ? 1 : 0;
-    const qixiPhase = QIXI_PHASES[qixiPhaseIndex];
-    const discoveredNodes = useMemo(() => new Set<NodeId>([
-        game.node,
-        ...Object.keys(game.visits) as NodeId[],
-        ...NODES[game.node].exits,
-    ]), [game.node, game.visits]);
-    const recommendedNode = useMemo(() => {
-        if (canEnterCore) return nextHopToward(game.node, new Set<NodeId>(['typingShaft']));
-        const required = (['lightWell', 'unsentPlatform', 'typingShaft'] as NodeId[])
-            .filter(nodeId => !game.interacted.includes(nodeId));
-        const ordinary = NODE_ORDER.filter(nodeId => nodeId !== game.node && !game.interacted.includes(nodeId));
-        const targets = game.interacted.length >= 3 && required.length ? required : ordinary;
-        return nextHopToward(game.node, new Set<NodeId>(targets));
-    }, [canEnterCore, game.interacted, game.node]);
-    const routeObjective = canEnterCore
-        ? game.node === 'typingShaft' ? '桥已经接通：进入那条不该存在的内层' : '桥已经接通：沿亮起的路线去双星逆向光标井'
-        : game.interacted.length < 5
-            ? `再去 ${5 - game.interacted.length} 个未点亮地点，收集能搭桥的痕迹`
-            : '投针井、葡萄架与逆向光标各藏着一段互相寻找的证据';
+    const wordArtifacts = useMemo(() => resolveQixiWordArtifacts(
+        scenePayload.artifactIds,
+        scenePayload.charSelectionIds,
+        activeBundle.artifacts,
+        scenePayload.options.map(option => ({
+            id: option.id,
+            label: option.label,
+            kind: 'trait',
+            evidenceIds: option.evidenceIds,
+        })),
+    ), [activeBundle.artifacts, scenePayload.artifactIds, scenePayload.charSelectionIds, scenePayload.options]);
+    const wordPickTarget = qixiWordPickTarget(wordArtifacts.length, WORD_PICK_COUNT);
 
-    const ensureMemoryBundle = useCallback(async (): Promise<QixiMemoryBundle> => {
-        if (memoryBundle) return memoryBundle;
-        if (generationRef.current) return generationRef.current;
+    const charWordSelections = useMemo(() => {
+        return resolveQixiWordSelectionIds(scenePayload.charSelectionIds, wordArtifacts, WORD_PICK_COUNT);
+    }, [scenePayload.charSelectionIds, wordArtifacts]);
+    const visibleCharWordSelections = charWordSelections.slice(0, game.wordCloudCharRevealed);
+    const wordTurnWaiting = currentSceneId === 'wordCloud'
+        && game.sceneBeat === 'idle'
+        && sceneDecisions.length > game.wordCloudCharRevealed;
+    const sceneCharQuips = qixiCharQuips(currentSceneId, scenePayload);
+    const activeWordCloudQuip = currentSceneId === 'wordCloud' && game.wordCloudCharRevealed > 0
+        ? sceneCharQuips[Math.min(game.wordCloudCharRevealed - 1, sceneCharQuips.length - 1)]
+        : '';
+    const visibleVisualCharQuips = currentSceneId === 'wordCloud'
+        ? (activeWordCloudQuip && !wordTurnWaiting ? [activeWordCloudQuip] : [])
+        : (game.sceneBeat === 'char' || game.sceneBeat === 'complete' ? sceneCharQuips.slice(0, 2) : []);
+
+    const generatePart3 = useCallback(async (bundle: QixiMemoryBundle): Promise<QixiReunionBundle | null> => {
+        if (reunionResultRef.current) {
+            const reunion = reunionResultRef.current;
+            setGame(current => ({ ...current, reunion }));
+            setGenerationStatus(current => ({ ...current, part3: 'ready' }));
+            return reunion;
+        }
+        if (reunionGenerationRef.current) return reunionGenerationRef.current;
+        setGenerationStatus(current => ({ ...current, part3: 'generating' }));
+        setGenerationError(current => current?.part === 'part3' ? null : current);
+        const plannedJourney = createPlannedJourney(bundle);
+        reunionGenerationRef.current = prepareQixiReunion(char, user, apiConfig, bundle, plannedJourney, portraitPlan)
+            .then(reunion => {
+                reunionResultRef.current = reunion;
+                setGame(current => ({ ...current, reunion }));
+                setGenerationStatus(current => ({ ...current, part3: 'ready' }));
+                return reunion;
+            })
+            .catch((error: any) => {
+                setGenerationStatus(current => ({ ...current, part3: 'error' }));
+                setGenerationError({ part: 'part3', message: error?.message || '最终见面生成失败。' });
+                return null;
+            })
+            .finally(() => { reunionGenerationRef.current = null; });
+        return reunionGenerationRef.current;
+    }, [apiConfig, char, portraitPlan, user]);
+
+    const generatePart2And3 = useCallback(async (bundle: QixiMemoryBundle): Promise<QixiBridgeBundle | null> => {
+        if (bridgeResultRef.current) {
+            const bridge = bridgeResultRef.current;
+            setGame(current => ({ ...current, bridge }));
+            setGenerationStatus(current => ({ ...current, part2: 'ready' }));
+            if (!reunionResultRef.current) void generatePart3(bundle);
+            return bridge;
+        }
+        if (bridgeGenerationRef.current) return bridgeGenerationRef.current;
+        setGenerationStatus(current => ({ ...current, part2: 'generating', part3: 'idle' }));
+        setGenerationError(current => current?.part === 'part2' ? null : current);
+        bridgeGenerationRef.current = prepareQixiBridge(user, bundle)
+            .then(async bridge => {
+                bridgeResultRef.current = bridge;
+                setGame(current => ({ ...current, bridge, bridgePlaced: [], bridgeFinalState: 'idle' }));
+                setGenerationStatus(current => ({ ...current, part2: 'ready' }));
+                await generatePart3(bundle);
+                return bridge;
+            })
+            .catch((error: any) => {
+                setGenerationStatus(current => ({ ...current, part2: 'error', part3: 'idle' }));
+                setGenerationError({ part: 'part2', message: error?.message || '记忆鹊生成失败。' });
+                return null;
+            })
+            .finally(() => { bridgeGenerationRef.current = null; });
+        return bridgeGenerationRef.current;
+    }, [generatePart3, user]);
+
+    const ensureMaterials = useCallback(async (forceRegenerate = false, onRecallComplete?: () => void): Promise<QixiMemoryBundle> => {
+        if (materialGenerationRef.current) return materialGenerationRef.current;
         setMemoryStatus('loading');
-        setMemoryNotice('正在从共同记忆里辨认星线……');
-        generationRef.current = prepareQixiMemoryBundle(char, user, apiConfig).then(prepared => {
-            setMemoryBundle(prepared.bundle);
-            setMemoryStatus(prepared.usedFallback ? 'fallback' : 'memory');
-            setMemoryNotice(prepared.usedFallback
-                ? (prepared.reason || '今夜先沿基础梦境前行')
-                : `已从 ${prepared.bundle.anchors.length} 段共同记忆里找到星线`);
-            return prepared.bundle;
-        });
-        return generationRef.current;
-    }, [apiConfig, char, memoryBundle, user]);
+        setGenerationStatus({ part1: 'generating', part2: 'idle', part3: 'idle' });
+        setGenerationError(null);
+        setMemoryNotice(`正在整理你和 ${char.name} 的聊天与共同记忆，这一步可能需要稍长时间。`);
+        materialGenerationRef.current = prepareQixiMemoryBundle(char, user, apiConfig, {
+            forceRegenerate,
+            strict: true,
+            onRecallComplete,
+            onPhaseReady: (phase, bundle) => {
+                const readyPhase: MaterialPhaseReady = phase === 'first' ? 1 : phase === 'second' ? 2 : 3;
+                setMemoryBundle(bundle);
+                setMemoryStatus('memory');
+                setMaterialPhaseReady(current => Math.max(current, readyPhase) as MaterialPhaseReady);
+                if (phase === 'first') {
+                    setLoadingReady(true);
+                    setGenerationStatus({ part1: 'ready', part2: 'generating', part3: 'idle' });
+                    setMemoryNotice(`开场与前两处空间已经整理完成；${char.name} 正在后台继续寻找后面的路。`);
+                    return;
+                }
+                if (phase === 'second') {
+                    setGenerationStatus({ part1: 'ready', part2: 'generating', part3: 'idle' });
+                    setMemoryNotice('中段空间已经抵达；下一段仍在后台继续生成。');
+                    return;
+                }
+                setGenerationStatus({ part1: 'ready', part2: 'ready', part3: 'generating' });
+                setMemoryNotice('七处空间与鹊桥剧情已经全部生成。');
+                void generatePart2And3(bundle);
+            },
+            userLayerColor: selectedUserLayerColor,
+        })
+            .then(prepared => {
+                setMemoryBundle(prepared.bundle);
+                setMemoryStatus('memory');
+                return prepared.bundle;
+            })
+            .catch((error: any) => {
+                setMemoryStatus('idle');
+                setGenerationStatus(current => ({ ...current, part1: 'error' }));
+                setGenerationError({ part: 'part1', message: error?.message || '记忆与开场生成失败。' });
+                throw error;
+            })
+            .finally(() => { materialGenerationRef.current = null; });
+        return materialGenerationRef.current;
+    }, [apiConfig, char, generatePart2And3, selectedUserLayerColor, user]);
+
+    const startFresh = useCallback(async () => {
+        setApiConfirmationOpen(false);
+        finishRef.current = false;
+        runIdRef.current = createRunId();
+        bridgeResultRef.current = null;
+        reunionResultRef.current = null;
+        setLoadingReady(false);
+        setMaterialPhaseReady(0);
+        setGame({ ...freshGame(selectedUserLayerColor), stage: 'colorSelect' });
+        try {
+            await ensureMaterials(true, () => setGame({ ...freshGame(selectedUserLayerColor), stage: 'loading' }));
+            setLoadingReady(true);
+        } catch {
+            setLoadingReady(false);
+        }
+    }, [ensureMaterials, selectedUserLayerColor]);
+
+    const confirmApiAndStart = useCallback(() => {
+        setApiConfirmationOpen(false);
+        void startFresh();
+    }, [startFresh]);
 
     useEffect(() => {
-        if (game.stage === 'cover') return;
+        if (!apiConfirmationOpen) return;
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') setApiConfirmationOpen(false);
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return () => window.removeEventListener('keydown', closeOnEscape);
+    }, [apiConfirmationOpen]);
+
+    const openColorSelect = useCallback(() => {
+        setMemoryNotice('');
+        setGame(current => ({ ...current, stage: 'colorSelect' }));
+    }, []);
+
+    const startReplay = useCallback(() => {
+        finishRef.current = false;
+        const source = replayGameAtOpen.current;
+        bridgeResultRef.current = source?.bridge || null;
+        reunionResultRef.current = source?.reunion || null;
+        if (!memoryBundle) setMemoryBundle(replaySnapshot?.bundle || loadQixiMemoryBundle(char.id) || fallbackBundle);
+        const replayColor = source?.userLayerColor || selectedUserLayerColor;
+        setSelectedUserLayerColor(replayColor);
+        setGame({ ...freshGame(replayColor), stage: 'fakeChat', attitude: source?.attitude });
+    }, [char.id, fallbackBundle, memoryBundle, replaySnapshot?.bundle, selectedUserLayerColor]);
+
+    const continueAfterLoading = useCallback(() => {
+        setGame(current => ({ ...current, stage: 'fakeChat' }));
+    }, []);
+
+    const resume = useCallback(() => {
+        if (!savedAtOpen.current) return;
+        const bundle = memoryBundle || loadQixiMemoryBundle(char.id) || fallbackBundle;
+        bridgeResultRef.current = savedAtOpen.current.bridge || bridgeResultRef.current;
+        reunionResultRef.current = savedAtOpen.current.reunion || reunionResultRef.current;
+        if (!memoryBundle) setMemoryBundle(bundle);
+        setGame(savedAtOpen.current);
+        if (!savedAtOpen.current.bridge || !savedAtOpen.current.reunion) void generatePart2And3(bundle);
+    }, [char.id, fallbackBundle, generatePart2And3, memoryBundle]);
+
+    const retryGeneration = useCallback(async () => {
+        const part = generationError?.part;
+        if (!part) return;
+        setGenerationError(null);
+        if (part === 'part1') {
+            setLoadingReady(false);
+            setMaterialPhaseReady(0);
+            setGame({ ...freshGame(selectedUserLayerColor), stage: 'colorSelect' });
+            try {
+                const bundle = await ensureMaterials(true, () => setGame({ ...freshGame(selectedUserLayerColor), stage: 'loading' }));
+                setLoadingReady(true);
+                return bundle;
+            } catch { return null; }
+        }
+        if (part === 'part2') return generatePart2And3(activeBundle);
+        return generatePart3(activeBundle);
+    }, [activeBundle, ensureMaterials, generatePart2And3, generatePart3, generationError?.part, selectedUserLayerColor]);
+
+    const enterInterlayer = useCallback((attitude: EntryAttitude) => {
+        // Preserve bridge/reunion generated during Flappy and the opening. The
+        // previous full-state replacement silently discarded both results.
+        setGame(current => ({ ...enterQixiInterlayerState(current, attitude), stage: 'sceneTransition' }));
+    }, []);
+
+    const chooseOption = useCallback((optionId: string, result: string) => {
+        if (sceneCompleted || game.sceneBeat !== 'idle') return;
+        setGame(current => ({
+            ...current,
+            sceneBeat: 'user',
+            decisions: { ...current.decisions, [currentSceneId]: [optionId] },
+            results: { ...current.results, [currentSceneId]: [result] },
+        }));
+    }, [currentSceneId, game.sceneBeat, sceneCompleted]);
+
+    const toggleWord = useCallback((artifactId: string) => {
+        if (sceneCompleted || game.sceneBeat !== 'idle') return;
+        setGame(current => {
+            const selected = current.decisions.wordCloud || [];
+            const next = selectQixiWordTurn(selected, current.wordCloudCharRevealed, artifactId, wordPickTarget);
+            if (next === selected) return current;
+            return {
+                ...current,
+                wordCloudCharRevealed: Math.min(current.wordCloudCharRevealed, next.length),
+                decisions: { ...current.decisions, wordCloud: next },
+                results: { ...current.results, wordCloud: next.map(id => wordArtifacts.find(item => item.id === id)?.label || id) },
+            };
+        });
+    }, [game.sceneBeat, sceneCompleted, wordArtifacts, wordPickTarget]);
+
+    const continueEmptyWordCloud = useCallback(() => {
+        setGame(current => current.stage === 'scene' && current.sceneBeat === 'idle'
+            ? { ...current, sceneBeat: 'char' }
+            : current);
+    }, []);
+
+    useEffect(() => {
+        if (game.stage !== 'scene' || currentSceneId !== 'wordCloud' || game.sceneBeat !== 'idle') return;
+        if (wordPickTarget <= 0) return;
+        if (sceneDecisions.length >= wordPickTarget && game.wordCloudCharRevealed >= wordPickTarget) {
+            setGame(current => current.stage === 'scene' && current.sceneBeat === 'idle'
+                ? { ...current, sceneBeat: 'char' }
+                : current);
+            return;
+        }
+        if (sceneDecisions.length <= game.wordCloudCharRevealed) return;
+        const timer = window.setTimeout(() => setGame(current => {
+            const selected = current.decisions.wordCloud || [];
+            if (current.stage !== 'scene' || current.sceneBeat !== 'idle' || selected.length <= current.wordCloudCharRevealed) return current;
+            const revealed = Math.min(wordPickTarget, current.wordCloudCharRevealed + 1);
+            return {
+                ...current,
+                wordCloudCharRevealed: revealed,
+                sceneBeat: selected.length >= wordPickTarget && revealed >= wordPickTarget ? 'char' : 'idle',
+            };
+        }), 720);
+        return () => window.clearTimeout(timer);
+    }, [currentSceneId, game.sceneBeat, game.stage, game.wordCloudCharRevealed, sceneDecisions.length, wordPickTarget]);
+
+    const advanceSceneBeat = useCallback(() => {
+        setGame(current => {
+            if (current.stage !== 'scene') return current;
+            if (current.sceneBeat === 'user') {
+                return { ...current, sceneBeat: 'char' };
+            }
+            if (current.sceneBeat === 'char') {
+                return { ...current, sceneBeat: 'complete', completedScenes: unique([...current.completedScenes, currentSceneId]) };
+            }
+            return current;
+        });
+    }, [currentSceneId]);
+
+    const nextScene = useCallback(() => {
+        setGame(current => current.sceneIndex >= QIXI_SCENE_IDS.length - 1
+            ? { ...current, stage: 'bridgeLoading' }
+            : { ...current, stage: 'sceneTransition', sceneIndex: current.sceneIndex + 1, sceneBeat: 'idle' });
+    }, []);
+
+    const journey = useMemo((): QixiJourneyBeat[] => QIXI_SCENE_IDS.map(sceneId => {
+        const payload = activeBundle.scenes[sceneId];
+        const decisionIds = game.decisions[sceneId] || [];
+        const words = sceneId === 'wordCloud'
+            ? decisionIds.map(id => wordArtifacts.find(item => item.id === id)?.label || id)
+            : decisionIds.map(id => payload.options.find(option => option.id === id)?.label || id);
+        return {
+            sceneId,
+            sceneName: SCENES[sceneId].title,
+            sharedObject: payload.sharedObject,
+            userChoices: words,
+            userResults: game.results[sceneId] || [],
+            charAction: payload.charAction,
+        };
+    }), [activeBundle.scenes, game.decisions, game.results, wordArtifacts]);
+
+    useEffect(() => {
+        if (game.stage !== 'bridgeLoading') return;
+        const preparedBridge = game.bridge || bridgeResultRef.current;
+        if (preparedBridge) {
+            setGame(current => ({ ...current, bridge: preparedBridge, stage: 'bridge', bridgeFinalState: 'idle' }));
+            return;
+        }
+        if (sessionMode !== 'replay') return;
+        const replayBridge = normalizeQixiBridgeBundle(replayGameAtOpen.current?.bridge, activeBundle, user.name);
+        setGame(current => ({ ...current, bridge: replayBridge, bridgePlaced: [], bridgeFinalState: 'idle', stage: 'bridge' }));
+    }, [activeBundle, game.bridge, game.stage, sessionMode, user.name]);
+
+    const placeBridgeNode = useCallback((nodeId: string) => {
+        setGame(current => {
+            if (current.stage !== 'bridge' || !current.bridge) return current;
+            if (!current.bridge.userMagpies.some(item => item.id === nodeId) || current.bridgePlaced.includes(nodeId)) return current;
+            return { ...current, bridgePlaced: [...current.bridgePlaced, nodeId] };
+        });
+        navigator.vibrate?.(14);
+    }, []);
+
+    useEffect(() => {
+        if (game.stage !== 'bridge' || !game.bridge || game.bridgeFinalState !== 'idle') return;
+        if (game.bridgePlaced.length < game.bridge.userMagpies.length) return;
+        const timer = window.setTimeout(() => setGame(current => current.stage === 'bridge'
+            ? { ...current, bridgeFinalState: 'flying' }
+            : current), 800);
+        return () => window.clearTimeout(timer);
+    }, [game.bridge, game.bridgeFinalState, game.bridgePlaced.length, game.stage]);
+
+    useEffect(() => {
+        if (game.stage !== 'bridge' || game.bridgeFinalState !== 'flying') return;
+        const timer = window.setTimeout(() => setGame(current => current.stage === 'bridge'
+            ? { ...current, bridgeFinalState: 'connected' }
+            : current), 1450);
+        return () => window.clearTimeout(timer);
+    }, [game.bridgeFinalState, game.stage]);
+
+    useEffect(() => {
+        if (game.stage !== 'bridge' || game.bridgeFinalState !== 'connected') return;
+        const timer = window.setTimeout(() => setGame(current => current.stage === 'bridge'
+            ? { ...current, stage: 'bridgeCrossing' }
+            : current), 1750);
+        return () => window.clearTimeout(timer);
+    }, [game.bridgeFinalState, game.stage]);
+
+    useEffect(() => {
+        if (game.stage !== 'bridgeCrossing') return;
+        const timer = window.setTimeout(() => {
+            if (sessionMode === 'replay') {
+                const reunion = replayGameAtOpen.current?.reunion || createQixiReunionFallback(char, user, portraitPlan);
+                setGame(current => ({ ...current, reunion, reunionPage: 0, reunionLineIndex: 0, stage: 'reunion' }));
+                return;
+            }
+            setGame(current => {
+                const reunion = current.reunion || reunionResultRef.current || undefined;
+                return { ...current, reunion, reunionPage: 0, reunionLineIndex: 0, stage: reunion ? 'reunion' : 'reunionLoading' };
+            });
+        }, 1700);
+        return () => window.clearTimeout(timer);
+    }, [char, game.stage, portraitPlan, sessionMode, user]);
+
+    useEffect(() => {
+        if (game.stage !== 'reunionLoading') return;
+        const reunion = game.reunion || reunionResultRef.current;
+        if (!reunion) return;
+        setGame(current => ({ ...current, reunion, reunionPage: 0, reunionLineIndex: 0, stage: 'reunion' }));
+    }, [game.reunion, game.stage]);
+
+    useEffect(() => {
+        if (['cover', 'loading', 'bridgeLoading', 'reunionLoading'].includes(game.stage)) return;
         try { localStorage.setItem(`${STORAGE_PREFIX}${char.id}`, JSON.stringify(game)); } catch { /* optional resume */ }
     }, [char.id, game]);
-
-    useEffect(() => {
-        if (game.stage !== 'cover') return;
-        const frame = requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>('.qi-event-shell')?.scrollTo({ top: 0, left: 0 }));
-        return () => cancelAnimationFrame(frame);
-    }, [game.stage, hubPage]);
-
-    useEffect(() => {
-        if (game.stage !== 'explore') return;
-        setShowLocalMap(false);
-        const timer = window.setTimeout(() => rootRef.current?.querySelector<HTMLElement>('.qi-explore')?.scrollTo({ top: 0, left: 0 }), 30);
-        return () => window.clearTimeout(timer);
-    }, [game.node, game.stage]);
 
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
@@ -384,238 +956,176 @@ export const QixiDemoSession: React.FC<QixiDemoSessionProps> = ({ char, user, ap
         if (contactTimerRef.current) clearTimeout(contactTimerRef.current);
     }, []);
 
-    const choicesForNode = useCallback((nodeId: NodeId): NodeChoice[] => {
-        const choices: Record<NodeId, NodeChoice[]> = {
-            origin: [
-                { id: 'take-name', label: '捡起自己名字旁边那一小截星线', response: `星线很轻，另一端却绷着。标签背面写着：“如果见到 ${user.name}，让 ta 原地等一下。”落款被撕走了。`, trace: 'half-name' },
-                { id: 'leave-name', label: '把标签朝远处那颗缺角的星推过去', response: '标签没有飘远，星线却被另一端接住了一瞬。那里确实有谁，只是你们之间还没有路。', trace: 'half-name' },
-            ],
-            coldCorridor: [
-                { id: 'sweet', label: '敲敲“甜言蜜语味”的盒子', response: '盒子立刻说：“我永远不会让你等。”冷柜在“永远”两个字上结了一层假霜。', trace: 'milk-memory' },
-                { id: 'sleepy', label: '摇醒“只会打盹味”的盒子', response: `它打着哈欠说：“${char.name} 不在。本人刚拿走原味那盒，问你是不是往括号那边去了。”`, trace: 'milk-memory' },
-                { id: 'original', label: '把一枚巧果掰成两半，留一半在原味盒旁', response: '巧果不算好吃，胜在确实由你完成。水珠下面多了一枚刚按上去的指印；另一半已经被谁拿走。', trace: 'milk-memory' },
-            ],
-            bracketCorner: [
-                { id: 'inside', label: '耐心把红色光标线穿过七个括号', response: `前六个都很顺。最后一个孔抖得厉害，像被另一端拉住。线穿过去时，巷口传来一句：“${user.name} 刚才是不是在这里？”`, trace: 'bracket-witness' },
-                { id: 'mediate', label: '请累趴的逗号帮你扶住最后一个针孔', response: '逗号骂骂咧咧地站起来。你们一起把线穿过去；它没有变成奖章，只是在地图上多连亮了一小段。', trace: 'bracket-witness' },
-            ],
-            lightWell: [
-                { id: 'wait', label: '等水面完全静下来，再看针影', response: `杂光退去以后，针影没有显示“得巧”或“失巧”，只拼出 ${char.name} 的一句话：“这一层也没有。你们看见 ${user.name} 了吗？”`, trace: 'search-well' },
-                { id: 'answer', label: `把光标针轻轻拨向“${user.name} 在这里”`, response: '水面没有替你占卜未来。很远的地方却回答：“等我。”红色光点开始逆着井壁往上爬。', trace: 'search-well' },
-                { id: 'touch', label: '用手指接住最暗的那枚针影', response: '它亮成一个极小的输入光标，先指向你，又急忙指向更深处。水纹像一座还缺很多段的桥。', trace: 'search-well' },
-            ],
-            maskCounter: [
-                { id: 'which-real', label: '让七张脸投票：“哪一个才是真的？”', response: `七票全部投给“都不是”。打盹的那张补充：“本人没空领奖，在找 ${user.name}。”`, trace: 'discarded-masks' },
-                { id: 'wear-one', label: '替永远给正确答案的那张脸系好松掉的线', response: `它谢过你，用 ${char.name} 的语气说了一句完全不像 ta 的正确答案。你们一致决定让它继续当纸脸。`, trace: 'discarded-masks' },
-                { id: 'look-under', label: '加入七姊妹会，检查柜台下的秘密议程', response: '议程只有一项：“帮本人找人。”附带特征：说话很容易赌气，看到猫爪会拍照。找到请让 ta 等我。', trace: 'discarded-masks' },
-            ],
-            receiptRain: [
-                { id: '0117', label: '用纸鹤接住标着 01:17 的找零', response: '“最后一盒。这个猫爪有点像你。”纸背新印了一行：“我记得。你人呢？”纸鹤叼着它往站台飞。', trace: 'receipt-weather' },
-                { id: '0120', label: '花一枚不存在的铜钱买下 01:20', response: '“算了，当我没发。”摊主把撤回提示泡进水里，下面露出一句：“撤回也算发过。”', trace: 'receipt-weather' },
-                { id: '0123', label: '帮摊主把标错日期的 01:23 挂回去', response: `旧回答下面多出今天的时间：“如果 ${user.name} 掉进来，先别让 ta 一个人乱走。”摊主说这句不卖，它在等失主。`, trace: 'receipt-weather' },
-            ],
-            unsentPlatform: [
-                { id: 'ask-route', label: '忍住不问，先在葡萄架下听十秒', response: `虫声下面慢慢浮出 ${char.name} 的声音：“每趟车都问过了。${user.name} 不在……我去反方向找。”`, trace: 'search-platform' },
-                { id: 'sit', label: '在长椅空出的半边坐一会儿', response: '椅面还是温的。你没有听见神仙说话，只听见有人用指尖一遍遍写你的名字，最后一遍没有写错。', trace: 'search-platform' },
-                { id: 'send-it', label: '替那条消息按下戴在头上的发送键', response: `它终于飞出去，只留下地址：“给正在找 ${user.name} 的 ${char.name}。”轨道两边同时亮了一小段。`, trace: 'search-platform' },
-            ],
-            typingShaft: [
-                { id: 'stop-caret', label: '把一路收来的细线系到红色光标上', response: `光标差点撞上你。它背面反复写着：“不是这一层。继续找 ${user.name}。”最后一个字还没干；线的另一端骤然绷紧。`, trace: 'reverse-caret' },
-                { id: 'follow-caret', label: '沿着另一颗星留下的线反方向走一小段', response: `所有句子都在向外生成，只有它向里跑。${char.name} 用过的语气、称呼和没有选中的回答，一小段一小段接到你脚下。`, trace: 'reverse-caret' },
-            ],
-        };
-        const memoryBeat = memoryBundle?.source === 'memory'
-            ? memoryBundle.beats[nodeId as QixiMemoryNodeId]
-            : undefined;
-        if (!memoryBeat) return choices[nodeId];
-        return [
-            {
-                id: 'memory-thread',
-                label: memoryBeat.ritualAction,
-                response: memoryBeat.result,
-                trace: TRACE_BY_NODE[nodeId],
-            },
-            ...choices[nodeId].slice(0, 2),
-        ];
-    }, [char.name, memoryBundle, user.name]);
-
-    const restart = useCallback(() => {
-        try { localStorage.removeItem(`${STORAGE_PREFIX}${char.id}`); } catch { /* optional */ }
-        savedAtOpen.current = null;
-        setGame(freshGame());
-        setHubPage('home');
-        joinedRef.current = false;
-        setTouch({ x: 50, y: 67, active: false, approaching: false, joined: false, releasedEarly: false });
-    }, [char.id]);
-
-    const startFresh = useCallback(async () => {
-        await ensureMemoryBundle();
-        setGame({ ...freshGame(), stage: 'fakeChat' });
-    }, [ensureMemoryBundle]);
-    const resume = useCallback(() => {
-        // 正常的新存档在首次进入时已经缓存素材包；旧 Demo 存档直接用基础文本续玩，
-        // 不因为“继续游戏”额外制造一次模型调用。
-        if (savedAtOpen.current) setGame(savedAtOpen.current);
-    }, []);
-
-    const enterInterlayer = useCallback((attitude: EntryAttitude) => {
-        setGame({ ...freshGame(), stage: 'explore', attitude, node: 'origin', visits: { origin: 1 }, trail: ['origin'] });
-    }, []);
-
-    const moveTo = useCallback((target: NodeId) => {
-        setGame(current => {
-            if (!NODES[current.node].exits.includes(target)) return current;
-            return {
-                ...current,
-                node: target,
-                trail: [...current.trail, target],
-                steps: current.steps + 1,
-                visits: { ...current.visits, [target]: (current.visits[target] || 0) + 1 },
-            };
-        });
-    }, []);
-
-    const returnToOrigin = useCallback(() => {
-        setGame(current => {
-            if (current.node === 'origin') return current;
-            return {
-                ...current,
-                node: 'origin',
-                trail: [...current.trail, 'origin'],
-                steps: current.steps + 1,
-                visits: { ...current.visits, origin: (current.visits.origin || 0) + 1 },
-            };
-        });
-    }, []);
-
-    const backtrack = useCallback(() => {
-        setGame(current => {
-            if (current.trail.length < 2) return current;
-            const trail = current.trail.slice(0, -1);
-            const target = trail[trail.length - 1];
-            return {
-                ...current,
-                node: target,
-                trail,
-                steps: current.steps + 1,
-                visits: { ...current.visits, [target]: (current.visits[target] || 0) + 1 },
-            };
-        });
-    }, []);
-
-    const interact = useCallback((choice: NodeChoice) => {
-        setMaxInvestigated(value => Math.max(value, game.interacted.includes(game.node) ? game.interacted.length : game.interacted.length + 1));
-        setGame(current => ({
-            ...current,
-            interacted: addUnique(current.interacted, current.node),
-            traces: addUnique(current.traces, choice.trace),
-            decisions: { ...current.decisions, [current.node]: choice.id },
-            responses: { ...current.responses, [current.node]: choice.response },
-        }));
-    }, [game.interacted, game.node]);
-
-    const leaveNode = useCallback(() => {
-        setShowLocalMap(true);
-        window.setTimeout(() => {
-            const scroller = rootRef.current?.querySelector<HTMLElement>('.qi-explore');
-            const map = rootRef.current?.querySelector<HTMLElement>('.qi-mini-map');
-            if (scroller && map) scroller.scrollTo({ top: Math.max(0, map.offsetTop - 26), left: 0, behavior: 'smooth' });
-        }, 40);
-    }, []);
-
-    const updateTouchPosition = useCallback((clientX: number, clientY: number) => {
-        const rect = touchAreaRef.current?.getBoundingClientRect();
-        if (!rect) return { x: 50, y: 67 };
-        return {
-            x: Math.max(7, Math.min(93, ((clientX - rect.left) / rect.width) * 100)),
-            y: Math.max(18, Math.min(88, ((clientY - rect.top) / rect.height) * 100)),
-        };
-    }, []);
-
     const completeTouch = useCallback(() => {
         joinedRef.current = true;
         touchElapsedRef.current = CONTACT_DURATION_MS;
         if (contactTimerRef.current) clearTimeout(contactTimerRef.current);
-        setTouch(current => ({ ...current, active: true, approaching: true, joined: true, releasedEarly: false }));
-        navigator.vibrate?.([24, 44, 24]);
+        setTouch(current => ({ ...current, active: true, approaching: true, joined: true, releasedEarly: false, releasedAfterJoin: false }));
+        navigator.vibrate?.([22, 42, 22]);
     }, []);
 
-    const beginTouch = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const beginTouch = useCallback((event: React.PointerEvent<HTMLButtonElement>) => {
         if (joinedRef.current) return;
-        event.currentTarget.setPointerCapture?.(event.pointerId);
-        const point = updateTouchPosition(event.clientX, event.clientY);
+        if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
+        event.preventDefault();
+        try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch { /* Safari may already own/release capture */ }
         touchingRef.current = true;
         joinedRef.current = false;
         touchElapsedRef.current = 0;
-        setTouch({ ...point, active: true, approaching: false, joined: false, releasedEarly: false });
+        setTouch({ x: 50, y: 64, active: true, approaching: false, joined: false, releasedEarly: false, releasedAfterJoin: false });
         if (approachTimerRef.current) clearTimeout(approachTimerRef.current);
         if (contactTimerRef.current) clearTimeout(contactTimerRef.current);
-        approachTimerRef.current = setTimeout(() => { if (touchingRef.current) setTouch(current => ({ ...current, approaching: true })); }, 120);
+        approachTimerRef.current = setTimeout(() => { if (touchingRef.current) setTouch(current => ({ ...current, approaching: true })); }, 260);
         contactTimerRef.current = setTimeout(() => { if (touchingRef.current) completeTouch(); }, CONTACT_DURATION_MS);
-    }, [completeTouch, updateTouchPosition]);
+    }, [completeTouch]);
 
-    const moveTouch = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-        if (!touchingRef.current || joinedRef.current) return;
-        setTouch(current => ({ ...current, ...updateTouchPosition(event.clientX, event.clientY) }));
-    }, [updateTouchPosition]);
-
-    const endTouch = useCallback(() => {
+    const endTouch = useCallback((event?: React.PointerEvent<HTMLButtonElement>) => {
+        event?.preventDefault();
         if (!touchingRef.current) return;
         touchingRef.current = false;
+        try {
+            if (event?.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch { /* cancellation can release capture before React receives it */ }
         if (contactTimerRef.current) clearTimeout(contactTimerRef.current);
         if (approachTimerRef.current) clearTimeout(approachTimerRef.current);
         if (joinedRef.current) {
-            setChapterCompleted(true);
-            setGame(current => ({ ...current, stage: 'ending' }));
+            setTouch(current => ({ ...current, active: false, approaching: false, releasedAfterJoin: true }));
             return;
         }
         setTouch(current => ({ ...current, active: false, approaching: false, releasedEarly: true }));
     }, []);
 
-    const visibleActions = useMemo(() => {
-        if (game.stage === 'cover') return memoryStatus === 'loading'
-            ? ['正在辨认共同记忆']
-            : savedAtOpen.current ? ['进入梦境', '继续上次探索'] : ['进入梦境'];
-        if (game.stage === 'explore') {
-            const local = game.decisions[game.node] ? [] : choicesForNode(game.node).map(choice => choice.label);
-            if (!game.decisions[game.node]) return local;
-            if (!showLocalMap) return ['离开'];
-            const exits = node.exits.map(exit => `前往：${NODES[exit].name}`);
-            return [...exits, canEnterCore && game.node === 'typingShaft' ? '进入不该存在的内层' : null].filter(Boolean);
+    useEffect(() => {
+        if (game.stage !== 'touch' || !touch.joined || !touch.releasedAfterJoin) return;
+        const timer = window.setTimeout(() => setGame(current => current.stage === 'touch' ? { ...current, stage: 'ending' } : current), 1800);
+        return () => window.clearTimeout(timer);
+    }, [game.stage, touch.joined, touch.releasedAfterJoin]);
+
+    const finishToChat = useCallback(async () => {
+        if (finishRef.current) return;
+        finishRef.current = true;
+        if (sessionMode === 'replay') {
+            onClose();
+            return;
         }
-        if (game.stage === 'touch') return [touch.joined ? '保持勾住，然后松手' : '在任意位置持续按住'];
-        return ['继续'];
-    }, [canEnterCore, choicesForNode, game.decisions, game.node, game.stage, memoryStatus, node.exits, showLocalMap, touch.joined]);
+        const message = game.reunion?.returnMessage || `七夕快乐，${user.name}。`;
+        try {
+            const reunion = game.reunion;
+            const card = createQixiEventChatCard({
+                runId: runIdRef.current,
+                charName: char.name,
+                charAvatar: char.avatar || '',
+                userName: user.name,
+                timestamp: Date.now(),
+                openingChat: activeBundle.openingChat,
+                entryAttitude: game.attitude,
+                scenes: QIXI_SCENE_IDS.map(sceneId => ({
+                    id: sceneId,
+                    title: SCENES[sceneId].title,
+                    sharedObject: activeBundle.scenes[sceneId].sharedObject,
+                    userActions: journey.find(item => item.sceneId === sceneId)?.userChoices || [],
+                    userResults: game.results[sceneId] || [],
+                    charAction: activeBundle.scenes[sceneId].charAction,
+                    memoryLine: activeBundle.scenes[sceneId].memoryLine,
+                })),
+                bridgeNodes: (game.bridge?.nodes || []).map(node => ({ name: node.name, artifactLabel: node.visualHint, memoryLine: node.memory })),
+                reunionLines: reunion?.reunion.lines || [],
+                metaReflection: reunion?.metaReflection || [],
+                companionshipReflection: reunion?.companionshipReflection || [],
+                blessing: reunion?.blessing || [],
+                promiseInvitation: reunion?.touch.invitation || [],
+                promiseComplete: reunion?.touch.complete || '……约好了。',
+            });
+            const replaySnapshotValue: QixiReplaySnapshot = {
+                version: 8,
+                bundle: activeBundle,
+                game: { ...game, stage: 'ending' },
+            };
+            if (onReturnToChat) await onReturnToChat({ message, card, replaySnapshot: replaySnapshotValue });
+            else onClose();
+        } catch {
+            finishRef.current = false;
+        }
+    }, [activeBundle, char.avatar, char.name, game, journey, onClose, onReturnToChat, sessionMode, user.name]);
+
+    useEffect(() => {
+        finishToChatRef.current = finishToChat;
+    }, [finishToChat]);
+
+    const visibleActions = useMemo(() => {
+        if (apiConfirmationOpen) return ['确认 API 配置并开始', '先不开始'];
+        if (game.stage === 'cover') {
+            if (sessionMode === 'replay') return ['重看上一次梦境'];
+            return savedAtOpen.current ? ['进入梦境', '继续上次探索'] : ['进入梦境'];
+        }
+        if (game.stage === 'colorSelect') return memoryStatus === 'loading' ? ['正在辨认共同记忆'] : QIXI_USER_LAYER_COLORS.map(color => color.label);
+        if (game.stage === 'loading') return loadingReady ? ['等待落地', '记忆整理完成后继续'] : ['点击或触摸使角色上升'];
+        if (game.stage === 'entry') return ['探索附近', '喊 ta 的名字', '留在原地'];
+        if (game.stage === 'sceneTransition') return currentSceneMaterialReady ? ['继续'] : ['等待这一段生成完成'];
+        if (game.stage === 'scene') {
+            if (game.sceneBeat === 'user') return [currentSceneId === 'lostLayer' ? '看看另一层的反应' : '继续'];
+            if (game.sceneBeat === 'char') return ['继续'];
+            if (currentSceneId === 'wordCloud' && !sceneCompleted) {
+                if (wordPickTarget === 0) return ['继续'];
+                return wordTurnWaiting ? ['等待另一边选择'] : wordArtifacts.map(item => item.label);
+            }
+            if (!sceneCompleted) return scenePayload.options.map(option => option.label);
+            return [game.sceneIndex === QIXI_SCENE_IDS.length - 1 ? '让痕迹汇成桥' : '沿星线继续'];
+        }
+        if (game.stage === 'bridgeLoading') return ['正在把真实记忆整理成桥面'];
+        if (game.stage === 'bridge') {
+            const remaining = game.bridge?.userMagpies.filter(item => !game.bridgePlaced.includes(item.id)) || [];
+            return remaining.length ? remaining.map(item => `想起：${item.name}`) : ['等待最后一只鹊从对岸飞来'];
+        }
+        if (game.stage === 'bridgeCrossing') return ['沿双方织出的星线走向对岸'];
+        if (game.stage === 'reunion') return ['继续'];
+        if (game.stage === 'touch') {
+            const invitationCount = game.reunion?.touch.invitation.length || 0;
+            if (game.reunionLineIndex < invitationCount) return ['继续听约定'];
+            return [touch.joined ? '松手，留下约定' : '按住发光圆圈'];
+        }
+        if (game.stage === 'ending') return ['点击任意处结束'];
+        return [];
+    }, [apiConfirmationOpen, currentSceneId, currentSceneMaterialReady, game.bridge, game.bridgePlaced, game.reunion?.touch.invitation.length, game.reunionLineIndex, game.sceneBeat, game.sceneIndex, game.stage, loadingReady, memoryStatus, sceneCompleted, scenePayload.options, sessionMode, touch.joined, wordArtifacts, wordPickTarget, wordTurnWaiting]);
 
     useEffect(() => {
         const renderState = () => JSON.stringify({
-            game: 'qixi-context-interlayer-v6',
-            coordinateSystem: 'fixed world map; current node and every discovered location keep stable percentage coordinates; touch uses percentages from top-left',
+            game: 'qixi-dual-layer-v8',
+            sessionMode,
+            coordinateSystem: 'full-screen story surface; touch coordinates are percentages from top-left',
             stage: game.stage,
-            node: game.stage === 'explore' ? game.node : undefined,
-            exits: game.stage === 'explore' ? node.exits : undefined,
-            previousNode: game.stage === 'explore' && game.trail.length > 1 ? game.trail[game.trail.length - 2] : undefined,
-            localMap: game.stage === 'explore' ? {
-                visible: showLocalMap,
-                current: game.node,
-                adjacent: showLocalMap ? node.exits : [],
-                discovered: [...discoveredNodes],
-                recommended: recommendedNode,
-                objective: routeObjective,
-                positions: NODE_POSITIONS,
+            apiConfirmationOpen,
+            scene: ['sceneTransition', 'scene'].includes(game.stage) ? { id: currentSceneId, title: sceneMeta.title, index: game.sceneIndex + 1, beat: game.sceneBeat, completed: sceneCompleted } : undefined,
+            transitionLines: game.stage === 'sceneTransition' && currentSceneMaterialReady ? qixiTransitionLines(currentSceneId, scenePayload) : undefined,
+            material: { status: memoryStatus, readyPhase: materialPhaseReady, currentSceneReady: currentSceneMaterialReady, evidence: activeBundle.evidence.length, artifacts: activeBundle.artifacts.length, personalizedScenes: activeBundle.personalizedSceneIds },
+            layerIdentity: { userColor: sessionUserLayerColor, charColor: sessionCharLayerColor, charPerformance },
+            bgm: { group: bgm.group, muted: bgm.muted },
+            flappy: game.stage === 'loading' ? flappyRef.current?.state() : undefined,
+            selected: game.stage === 'scene' ? sceneDecisions : undefined,
+            wordCloudTurns: game.stage === 'scene' && currentSceneId === 'wordCloud' ? { user: sceneDecisions.length, char: game.wordCloudCharRevealed, waiting: wordTurnWaiting } : undefined,
+            charRemark: game.stage === 'scene' && visibleVisualCharQuips.length ? visibleVisualCharQuips : undefined,
+            charReply: game.stage === 'scene' && currentSceneId === 'lostLayer' ? selectedSceneOption?.charReply : undefined,
+            charContribution: game.stage === 'scene' && ['offerings', 'nightMarket'].includes(currentSceneId) ? scenePayload.charContribution : undefined,
+            completedScenes: game.completedScenes,
+            generation: generationStatus,
+            preparedParts: { part2: Boolean(game.bridge || bridgeResultRef.current), part3: Boolean(game.reunion || reunionResultRef.current) },
+            generationError: generationError?.part,
+            bridge: game.stage === 'bridge' ? {
+                userMagpies: game.bridge?.userMagpies.length || 0,
+                userPlaced: game.bridgePlaced.length,
+                charMagpies: game.bridge?.charMagpies.length || 0,
+                finalState: game.bridgeFinalState,
             } : undefined,
-            memoryMaterial: { status: memoryStatus, anchors: memoryBundle?.anchors.length || 0 },
-            qixiPhase: game.stage === 'explore' ? qixiPhase : undefined,
-            steps: game.steps,
-            visits: game.visits,
-            interacted: game.interacted,
-            traces: game.traces,
-            canEnterCore,
-            corePage: game.stage === 'core' ? game.corePage : undefined,
+            reunionPage: game.stage === 'reunion' ? { page: game.reunionPage, line: game.reunionLineIndex } : undefined,
+            portrait: game.reunion?.portrait.resourceType,
             touch: game.stage === 'touch' ? touch : undefined,
             visibleActions,
         });
         const advanceTime = (ms: number) => {
+            if (game.stage === 'loading') {
+                flappyRef.current?.advanceTime(ms);
+                return;
+            }
             if (game.stage !== 'touch' || !touchingRef.current || joinedRef.current) return;
             touchElapsedRef.current += Math.max(0, ms);
             if (touchElapsedRef.current >= CONTACT_DURATION_MS) completeTouch();
@@ -626,371 +1136,301 @@ export const QixiDemoSession: React.FC<QixiDemoSessionProps> = ({ char, user, ap
             if (window.render_game_to_text === renderState) delete window.render_game_to_text;
             if (window.advanceTime === advanceTime) delete window.advanceTime;
         };
-    }, [canEnterCore, completeTouch, discoveredNodes, game, memoryBundle, memoryStatus, node.exits, qixiPhase, recommendedNode, routeObjective, showLocalMap, touch, visibleActions]);
+    }, [activeBundle, apiConfirmationOpen, bgm.group, bgm.muted, completeTouch, currentSceneId, currentSceneMaterialReady, game, generationError?.part, generationStatus, materialPhaseReady, memoryStatus, sceneCompleted, sceneDecisions, sceneMeta.title, scenePayload.charContribution, selectedSceneOption?.charReply, sessionMode, touch, visibleActions, wordTurnWaiting]);
 
-    const hubNav: Array<{ page: Exclude<HubPage, 'chapter'>; label: string; mark: string }> = [
-        { page: 'home', label: '梦境', mark: '✦' },
-        { page: 'map', label: '章节', mark: '⌒' },
-        { page: 'ritual', label: '月相', mark: '◐' },
-        { page: 'tasks', label: '档案', mark: '▱' },
-        { page: 'shop', label: '收藏', mark: '◇' },
-    ];
-
-    const renderEventShell = (page: HubPage, title: string, content: React.ReactNode, light = false) => (
-        <main className={`qi-event-shell ${light ? 'is-light' : ''} is-${page}`}>
-            <CelestialBackdrop />
-            <div className="qi-shell-grain" aria-hidden="true" />
-            <ExitButton onClose={onClose} />
-            <header className="qi-event-header">
-                <div className="qi-event-brand"><span>星月梦境童话</span><small>STELLAR REVERIE</small></div>
-                <MoonPhaseRow compact />
-            </header>
-            <div className="qi-event-page" aria-label={title}>{content}</div>
+    const renderCover = () => (
+        <main className="q7-cover">
+            <CelestialBackdrop /><ExitButton onClose={onClose} />
+            <div className="q7-cover-frame" aria-hidden="true"><i /><i /><i /><i /></div>
+            <section>
+                <div className="q7-season"><i>✦</i><span>2026 · 七夕限定梦境</span><i>✦</i></div>
+                <div className="q7-moons" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></div>
+                <h1><small>星月</small>梦境童话</h1>
+                <em>THE TALE BENEATH A MESSAGE</em>
+                <blockquote>沿着一条没有送达的消息，<br />捡回从聊天里漏掉的小事。</blockquote>
+                <button type="button" data-qixi-action="enter-dream" className="q7-primary" onClick={sessionMode === 'replay' ? startReplay : openColorSelect}><span>{sessionMode === 'replay' ? '重看这次梦境' : '进入梦境'}</span><small>{sessionMode === 'replay' ? 'REPLAY THE SAME MEMORY' : 'ENTER REVERIE'}</small></button>
+                {sessionMode === 'replay' ? <p className="q7-notice is-memory">沿用上一次生成的完整剧情、鹊桥与最终约定，不会再次调用模型，也不会重复写入私聊。</p> : memoryNotice && <p className={`q7-notice is-${memoryStatus}`}>{memoryNotice}</p>}
+                {sessionMode === 'fresh' && savedAtOpen.current && <button type="button" data-qixi-action="resume" className="q7-resume" onClick={resume}>继续上次掉下去的地方</button>}
+            </section>
         </main>
     );
 
-    const renderEventHome = () => renderEventShell('home', '活动首页', (
-        <section className="qi-home-hero">
-            <DreamArch />
-            <div className="qi-home-crescent" aria-hidden="true" />
-            <div className="qi-home-title">
-                <p>2026 · 七夕限定梦境</p>
-                <MoonPhaseRow />
-                <h1><span>星月</span><b>梦境童话</b></h1>
-                <em>THE TALE BETWEEN STARS & WORDS</em>
-                <blockquote>沿着尚未熄灭的文字，<br />寻找也正在寻找你的那个人。</blockquote>
-                <button type="button" data-qixi-action="enter-dream" className="qi-primary-orbit" onClick={startFresh} disabled={memoryStatus === 'loading'}><i>✦</i><span>{memoryStatus === 'loading' ? '辨认星线中' : '进入梦境'}</span><small>{memoryStatus === 'loading' ? 'READING MEMORIES' : 'ENTER REVERIE'}</small></button>
-                {memoryNotice && <p className={`qi-memory-notice is-${memoryStatus}`}>{memoryNotice}</p>}
-                {savedAtOpen.current && <button type="button" data-qixi-action="resume" className="qi-home-resume" onClick={resume} disabled={memoryStatus === 'loading'}>继续上次掉下去的地方</button>}
-            </div>
-            <aside className="qi-home-date"><span>七月</span><strong>初七</strong><small>月升后开放</small></aside>
-            <div className="qi-paper-birds" aria-hidden="true"><i /><i /><i /></div>
-        </section>
-    ));
-
-    const renderChapterMap = () => renderEventShell('map', '章节地图', (
-        <section className="qi-chapter-map">
-            <header><p>梦境回廊 · CHAPTER ROUTE</p><h2>沿月轨寻找<br />散落的故事</h2><span>每一处梦境都保存着一小段“曾经”。路线不会替你说明结论，只会把门打开。</span></header>
-            <div className="qi-map-field">
-                <svg viewBox="0 0 420 720" preserveAspectRatio="none" aria-hidden="true">
-                    <defs><linearGradient id="qiMapRoute" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#fff" stopOpacity=".12" /><stop offset=".45" stopColor="#fff8d4" stopOpacity=".9" /><stop offset="1" stopColor="#cbd8ff" stopOpacity=".18" /></linearGradient></defs>
-                    <path className="map-orbit" d="M90 651C56 548 301 565 309 450S86 386 116 279s238-55 225-190" />
-                    <path className="map-route" d="M90 651C56 548 301 565 309 450S86 386 116 279s238-55 225-190" />
-                    <path className="map-arc" d="M6 516C106 447 271 427 420 466M-5 184C111 252 293 250 425 151" />
-                </svg>
-                <button type="button" data-qixi-action="chapter-one" className="qi-map-node n1 is-open" onClick={() => { setVisitedChapterCover(true); setHubPage('chapter'); }}><i><span>Ⅰ</span></i><b>上下文夹层</b><small>可进入</small></button>
-                <button type="button" className="qi-map-node n2" disabled><i><span>Ⅱ</span></i><b>倒映鸟笼</b><small>梦境未抵达</small></button>
-                <button type="button" className="qi-map-node n3" disabled><i><span>Ⅲ</span></i><b>无声庭院</b><small>梦境未抵达</small></button>
-                <button type="button" className="qi-map-node n4" disabled><i><span>Ⅳ</span></i><b>纸月车站</b><small>梦境未抵达</small></button>
-                <button type="button" className="qi-map-node n5" disabled><i><span>Ⅴ</span></i><b>星屑门扉</b><small>梦境未抵达</small></button>
-            </div>
-            <footer><span>当前开放</span><strong>01 / 05</strong><button type="button" data-qixi-action="map-chapter-detail" onClick={() => { setVisitedChapterCover(true); setHubPage('chapter'); }}>阅读第一章扉页 <i>→</i></button></footer>
-        </section>
-    ));
-
-    const renderChapterCover = () => renderEventShell('chapter', '章节封面', (
-        <section className="qi-chapter-cover">
-            <div className="qi-chapter-arch"><DreamArch /><div className="qi-caged-crane" aria-hidden="true"><span /><i /></div></div>
-            <div className="qi-chapter-copy">
-                <button type="button" data-qixi-action="chapter-back" className="qi-back-link" onClick={() => setHubPage('map')}>← 返回梦境回廊</button>
-                <p>CHAPTER I · THE INTERLAYER</p>
-                <h2>上下文<br />夹层</h2>
-                <em>“这里没有 {char.name}。<br />至少看起来没有。”</em>
-                <span>一条七夕消息把正常的聊天界面撕开。你掉进文字尚未成为回答的地方，而 ta 留下的痕迹正逆着所有路线移动。</span>
-                <button type="button" data-qixi-action="open-chat" className="qi-chapter-start" onClick={startFresh} disabled={memoryStatus === 'loading'}><b>{memoryStatus === 'loading' ? '正在辨认共同记忆' : '开始探索'}</b><small>进入和 {char.name} 的聊天</small><i>→</i></button>
-                {memoryNotice && <p className={`qi-memory-notice is-${memoryStatus}`}>{memoryNotice}</p>}
-                {savedAtOpen.current && <button type="button" data-qixi-action="resume" className="qi-resume-link" onClick={resume} disabled={memoryStatus === 'loading'}>继续上次掉下去的地方</button>}
-                <small className="qi-demo-note">固定游戏骨架 · 固定坐标星图 · 首次 1 次 LLM · 失败可离线通关</small>
-            </div>
-        </section>
-    ));
-
-    const renderRitual = () => {
-        const todayDone = ritualDays.includes(4);
-        return renderEventShell('ritual', '月相仪式', (
-            <section className="qi-ritual-page">
-                <header><p>月相观测 · 七日签到</p><h2>让今夜的月光<br />留在仪式盘上</h2></header>
-                <div className={`qi-ritual-dial ${todayDone ? 'is-complete' : ''}`}>
-                    <div className="qi-dial-rings" aria-hidden="true"><i /><i /><i /></div>
-                    <div className="qi-large-crescent" aria-hidden="true" />
-                    <span className="qi-dial-star s1">✦</span><span className="qi-dial-star s2">✧</span><span className="qi-dial-star s3">✦</span>
-                    <strong>{todayDone ? '月光已记录' : '第四夜'}</strong><small>{todayDone ? '今夜的观测已完成' : '距离鹊桥完全显现  03:17:42'}</small>
-                </div>
-                <ol className="qi-ritual-days">{[1, 2, 3, 4, 5, 6, 7].map(day => <li key={day} className={ritualDays.includes(day) ? 'is-done' : day === 4 ? 'is-today' : ''}><i>{day < 4 ? '◐' : day === 4 ? '○' : '·'}</i><span>第{['一','二','三','四','五','六','七'][day - 1]}夜</span><small>{day < 4 ? '已观测' : day === 4 ? '月辉 ×40' : '未到来'}</small></li>)}</ol>
-                <button type="button" data-qixi-action="ritual-checkin" className="qi-ritual-button" disabled={todayDone} onClick={() => { setRitualDays(days => addUnique(days, 4)); setMoonlight(value => value + 40); }}><i>✦</i>{todayDone ? '今夜月光已经留下' : '触碰月相，完成今日观测'}</button>
-            </section>
-        ), true);
-    };
-
-    const renderTasks = () => {
-        const tasks = [
-            { id: 'enter', title: '穿过一次梦境门扉', note: '进入活动首页', current: 1, total: 1, reward: 30 },
-            { id: 'chapter', title: '阅读第一章扉页', note: '上下文夹层', current: visitedChapterCover ? 1 : 0, total: 1, reward: 40 },
-            { id: 'wander', title: '在夹层中调查三处地点', note: '探索章节时完成', current: Math.min(3, maxInvestigated), total: 3, reward: 60 },
-            { id: 'touch', title: '与 ta 隔着屏幕触碰', note: '完成第一章', current: chapterCompleted ? 1 : 0, total: 1, reward: 100 },
-        ];
-        return renderEventShell('tasks', '梦境档案', (
-            <section className="qi-task-page">
-                <header><p>DREAM ARCHIVE · 梦境档案</p><h2>观测记录</h2><span>档案不会解释梦的含义。它只收好你确实走过的路。</span></header>
-                <div className="qi-archive-index"><span>第七夜观测册</span><b>{tasks.filter(task => task.current >= task.total).length} / {tasks.length}</b></div>
-                <ol className="qi-task-list">{tasks.map((task, index) => {
-                    const complete = task.current >= task.total;
-                    const claimed = claimedTasks.includes(task.id);
-                    return <li key={task.id} className={complete ? 'is-complete' : ''}><i>{String(index + 1).padStart(2, '0')}</i><div><b>{task.title}</b><small>{task.note}</small><span><em style={{ width: `${Math.min(100, task.current / task.total * 100)}%` }} /></span></div><p>{task.current}/{task.total}</p><button type="button" data-qixi-action={`claim-${task.id}`} disabled={!complete || claimed} onClick={() => { setClaimedTasks(items => addUnique(items, task.id)); setMoonlight(value => value + task.reward); }}>{claimed ? '已收录' : <><span>✦ {task.reward}</span>领取</>}</button></li>;
-                })}</ol>
-                <footer><i>羽</i><p>“你在梦里留下的每一次选择，都会成为下一页的页码。”</p></footer>
-            </section>
-        ), true);
-    };
-
-    const renderShop = () => {
-        const items = [
-            { id: 'crane', name: '未寄出的纸鹤', type: '主页摆件', cost: 120, icon: 'crane' },
-            { id: 'cage', name: '盛放月光的鸟笼', type: '聊天背景装饰', cost: 180, icon: 'cage' },
-            { id: 'feather', name: '回廊落羽', type: '纪念藏品', cost: 80, icon: 'feather' },
-        ];
-        return renderEventShell('shop', '月光收藏馆', (
-            <section className="qi-shop-page">
-                <header><p>MOONLIGHT COLLECTION</p><h2>月光收藏馆</h2><span>这里收存梦境退潮后没有消失的东西。</span></header>
-                <div className="qi-shop-window">
-                    {items.map(item => {
-                        const bought = boughtItems.includes(item.id);
-                        return <article key={item.id} className={bought ? 'is-bought' : ''}>
-                            <div className={`qi-shop-object is-${item.icon}`} aria-hidden="true"><svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="46" /><path d={item.icon === 'crane' ? 'M24 68l38-29 6 22 29-7-25 17 5 25-20-17-33 4 15-13z' : item.icon === 'cage' ? 'M33 91h54M39 88V52c0-20 10-31 21-31s21 11 21 31v36M48 88V49M60 88V38M72 88V49M34 56h52' : 'M31 94C74 73 92 42 88 20 61 34 44 56 31 94zm7-8c18-13 33-29 44-50'} /></svg></div>
-                            <div className="qi-shop-caption"><small>{item.type}</small><h3>{item.name}</h3><p>✦ {item.cost}</p></div>
-                            <button type="button" data-qixi-action={`buy-${item.id}`} disabled={bought || moonlight < item.cost} onClick={() => { setBoughtItems(items => addUnique(items, item.id)); setMoonlight(value => value - item.cost); }}>{bought ? '已收藏' : moonlight < item.cost ? '月辉不足' : '兑换'}</button>
-                        </article>;
-                    })}
-                </div>
-                <footer><span>本次 Demo 的月辉与藏品只保留在当前活动会话。</span><MoonPhaseRow compact /></footer>
-            </section>
-        ));
-    };
-
-    const renderCover = () => renderEventHome();
-
     const renderFakeChat = () => (
-        <main className="qi-fake-chat">
-            <ExitButton onClose={onClose} />
-            <header><button type="button">‹</button><div className="qi-chat-avatar">{char.name.trim().charAt(0).toUpperCase()}</div><span><b>{char.name}</b><small>在线</small></span><i>•••</i></header>
-            <section className="qi-chat-thread"><time>七夕 · 23:57</time><div className="qi-bubble is-char">我给你准备了一个特别活动。</div><div className="qi-bubble is-char">但先别碰下面那个输入框。</div><div className="qi-system-line">对方撤回了一条说明</div><div className="qi-typing-dots"><i /><i /><i /></div></section>
-            <div className="qi-chat-input"><button type="button">＋</button><button type="button" data-qixi-action="send-code" className="qi-input-field" onClick={() => setGame(current => ({ ...current, stage: 'distort' }))}>没过期，我只是加载得慢</button><button type="button">↑</button></div>
-        </main>
+        <main className="q7-chat"><ExitButton onClose={onClose} /><header><button>‹</button><i>{char.name.trim().charAt(0)}</i><span><b>{char.name}</b><small>在线</small></span></header><section><time>七夕 · 23:57</time>{activeBundle.openingChat.map((line, index) => <p key={index}><AnimatedText text={line} /></p>)}<em><i /> 输入状态反复消失</em></section><footer><button>＋</button><button type="button" className="q7-glitch-input" data-qixi-action="send-code" onClick={() => setGame(current => ({ ...current, stage: 'distort' }))}><span>点一下异常的输入框</span><i>│</i></button><button>↑</button></footer></main>
     );
 
     const renderDistort = () => (
-        <main className="qi-distort">
-            <ExitButton onClose={onClose} />
-            <svg className="qi-wonderland-tunnel" viewBox="0 0 600 1000" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
-                <defs>
-                    <radialGradient id="qiWonderMist" cx="50%" cy="60%" r="55%"><stop offset="0" stopColor="#fffdf2" stopOpacity=".95" /><stop offset=".26" stopColor="#d9e6ff" stopOpacity=".62" /><stop offset=".7" stopColor="#b8b5e4" stopOpacity=".2" /><stop offset="1" stopColor="#a9c8ec" stopOpacity="0" /></radialGradient>
-                    <linearGradient id="qiWonderLine" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#fff" stopOpacity=".25" /><stop offset=".45" stopColor="#8b82b8" stopOpacity=".62" /><stop offset="1" stopColor="#d3a770" stopOpacity=".28" /></linearGradient>
-                </defs>
-                <ellipse cx="300" cy="594" rx="270" ry="356" fill="url(#qiWonderMist)" />
-                <g className="qi-wonder-rings" fill="none" stroke="url(#qiWonderLine)">
-                    <ellipse cx="300" cy="594" rx="244" ry="319" />
-                    <ellipse cx="300" cy="594" rx="198" ry="262" strokeDasharray="3 10" />
-                    <ellipse cx="300" cy="594" rx="151" ry="205" />
-                    <ellipse cx="300" cy="594" rx="101" ry="143" strokeDasharray="2 8" />
-                    <path d="M-40 246C124 324 440 191 655 290M-30 794C142 704 421 881 638 752" strokeDasharray="4 12" />
-                </g>
-                <g className="qi-pocket-watch" transform="translate(455 212) rotate(13)">
-                    <path d="M0-35c20-25 39-7 30 9" fill="none" stroke="#806e9b" strokeWidth="3" />
-                    <circle r="48" fill="#fffaf0" fillOpacity=".78" stroke="#8f82ad" strokeWidth="2" />
-                    <circle r="37" fill="none" stroke="#b2a7c8" strokeDasharray="2 6" />
-                    <path d="M0 0V-23M0 0l18 11" stroke="#6a6483" strokeWidth="2.5" strokeLinecap="round" />
-                    <circle r="4" fill="#d3a770" />
-                </g>
-                <g className="qi-wonder-key" transform="translate(104 575) rotate(-27)" fill="none" stroke="#c29b66" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="0" cy="0" r="24" /><path d="M22 10l94 45 16-8 13 15 19-9" />
-                </g>
-                <g className="qi-white-rabbit" transform="translate(324 705) rotate(7)">
-                    <ellipse cx="0" cy="28" rx="35" ry="48" fill="#fffdf6" />
-                    <circle cx="4" cy="-24" r="29" fill="#fffdf6" />
-                    <ellipse cx="-9" cy="-73" rx="10" ry="38" fill="#fffdf6" transform="rotate(-11 -9 -73)" />
-                    <ellipse cx="14" cy="-75" rx="10" ry="40" fill="#fffdf6" transform="rotate(13 14 -75)" />
-                    <circle cx="27" cy="20" r="18" fill="#fffdf6" />
-                    <circle cx="13" cy="-29" r="3.5" fill="#796e91" />
-                    <path d="M-22 14c21 14 40 11 54-2" fill="none" stroke="#d3a770" strokeWidth="4" />
-                </g>
-                <g fill="#fffdf6" opacity=".9"><path d="M92 340l6 13 14 6-14 6-6 14-6-14-14-6 14-6z" /><path d="M508 542l5 11 12 5-12 5-5 12-5-12-12-5 12-5z" /><circle cx="142" cy="736" r="4" /><circle cx="462" cy="807" r="3" /></g>
-            </svg>
-            <div className="qi-broken-header"><small>CHAT / REVERIE</small>{char.name}<span>等等我 · 正在输入</span></div>
-            <div className="qi-shard s1">我给你准备了一个</div><div className="qi-shard s2">这边</div><div className="qi-shard s3">没过期</div><div className="qi-shard s4">撤回也会留下影子</div><div className="qi-shard s5">你在哪里</div><div className="qi-shard s6">♢</div>
-            <button type="button" data-qixi-action="fall" className="qi-rabbit-door" onClick={() => setGame(current => ({ ...current, stage: 'entry' }))}><span><small>一行空白在脚下变成了门</small><b>白兔已经跳进去了。</b></span><i>跟上它 ↓</i></button>
-        </main>
+        <main className="q7-distort"><ExitButton onClose={onClose} /><div className="q7-tunnel" aria-hidden="true"><i /><i /><i /><i /><span className="rabbit"><i /></span></div><header><small>CHAT / CONTEXT LEAK</small>{char.name}<span>正在输入　正在输入　正＿</span></header>{[...sceneFragments, ...activeBundle.artifacts].slice(0, 6).map((item, index) => <div key={`${item.id}-${index}`} className={`shard s${index + 1}`}>{item.label}</div>)}<button type="button" data-qixi-action="fall" className="q7-door" onClick={() => setGame(current => ({ ...current, stage: 'entry' }))}><small>输入框底下露出了一层不该出现的文字</small><b>空白正在向下裂开。</b><span>碰一下 ↓</span></button></main>
     );
 
     const renderEntry = () => (
-        <main className="qi-interlayer qi-entry">
-            <InterlayerOrnaments />
-            <ExitButton onClose={onClose} />
-            <section><p className="qi-kicker">夹层入口 · 坐标丢失</p><div className="qi-entry-moon" aria-hidden="true"><i /></div><h2>你掉进了<br />一个夹层。</h2><p>上面是你刚才看见的聊天。下面没有地面，只有一行一行还没来得及成为回答的字。</p><aside>这里没有 {char.name}。至少看起来没有。</aside><TextAction id="entry-explore" onClick={() => enterInterlayer('explore')}>探索附近</TextAction><TextAction id="entry-shout" onClick={() => enterInterlayer('shout')}>大吵大闹，喊 ta 的名字</TextAction><TextAction id="entry-stay" onClick={() => enterInterlayer('stay')}>哪里也不去，留在原地</TextAction></section>
+        <main className="q7-story q7-entry"><CelestialBackdrop /><ExitButton onClose={onClose} /><div className="q7-entry-fragments" aria-hidden="true">{sceneFragments.slice(0, 5).map((item, index) => <i key={item.id} style={{ '--fragment-index': index } as React.CSSProperties}>{item.label}</i>)}</div><section><p className="q7-kicker">上下文夹层 · 坐标同时丢失</p><h2>你和那条消息<br />一起掉了下来。</h2><p>聊天界面在头顶合拢。半句话、日期、物件名和一块褪色的 [图片] 痕迹还在继续往下落。</p><aside>没有路标。白兔只是从裂缝里长出来的一小块错觉。</aside><button data-qixi-action="entry-explore" onClick={() => enterInterlayer('explore')}>先碰最近的那句话 <i>→</i></button><button data-qixi-action="entry-shout" onClick={() => enterInterlayer('shout')}>对着裂缝喊 {char.name} <i>→</i></button><button data-qixi-action="entry-stay" onClick={() => enterInterlayer('stay')}>不动，等一秒看看 <i>→</i></button></section></main>
+    );
+
+    const renderSceneTransition = () => {
+        const lines = currentSceneMaterialReady ? qixiTransitionLines(currentSceneId, scenePayload) : [];
+        return <main className={`q7-scene-transition is-${currentSceneId}`} style={{ '--user-color': sessionUserLayerColor, '--char-color': sessionCharLayerColor } as React.CSSProperties}>
+            <CelestialBackdrop /><ExitButton onClose={onClose} />
+            <div className="q7-transition-orbit" aria-hidden="true"><i className="is-user" /><i className="is-char" /><span /></div>
+            <div className={`q7-transition-emblem is-${currentSceneId}`} aria-hidden="true"><i /><i /><i /><span /><b /></div>
+            <section>
+                <small>前往 {String(game.sceneIndex + 1).padStart(2, '0')} · {sceneMeta.title}</small>
+                <div>{currentSceneMaterialReady
+                    ? lines.map((line, index) => <p key={`${line}-${index}`}><AnimatedText text={line} /></p>)
+                    : <p><AnimatedText text="这一段还在从另一层赶来。" /></p>}</div>
+                <button type="button" data-qixi-action="enter-scene" disabled={!currentSceneMaterialReady} onClick={() => setGame(current => currentSceneMaterialReady ? ({ ...current, stage: 'scene' }) : current)}>{currentSceneMaterialReady ? '继续' : '正在等待'} <i>{currentSceneMaterialReady ? '→' : '···'}</i></button>
+            </section>
+        </main>;
+    };
+
+    const attitudeLine = game.attitude === 'shout'
+        ? '你喊出的名字在字缝里弹了一下，几句还没发出的日常话题跟着亮起。'
+        : game.attitude === 'stay'
+            ? '你等了一秒，输入框把几句还没说的话推到面前。'
+            : '第一步落下时，几件还想继续聊的小事在远处亮起。';
+
+    const wishCardText = currentSceneId === 'doubleWish'
+        ? selectedSceneOption?.label.replace(/^(?:写|许愿)[：:]\s*/, '')
+        : undefined;
+    const sceneObjectUserText = currentSceneId === 'offerings' || currentSceneId === 'nightMarket'
+        ? selectedSceneOption?.label
+        : wishCardText;
+    const sceneChoicePrompt: Partial<Record<QixiSceneId, string>> = {
+        doubleWish: '选一个你真想和 ta 一起抵达的以后',
+        threadNeedle: '决定这一轮怎么和另一边配合',
+        offerings: '选一件你想先放上供桌的东西',
+        reflection: '决定要在水面留下什么',
+        nightMarket: '从摊位上挑一件你真的想买的商品',
+    };
+
+    const renderScene = () => (
+        <main className={`q7-story q7-scene is-${currentSceneId}`} style={{ '--user-color': sessionUserLayerColor, '--char-color': sessionCharLayerColor } as React.CSSProperties}>
+            <CelestialBackdrop /><ExitButton onClose={onClose} />
+            <div className="q7-route" aria-label="七夕星路">{QIXI_SCENE_IDS.map((id, index) => <i key={id} className={`${index === game.sceneIndex ? 'is-current' : ''} ${game.completedScenes.includes(id) ? 'is-done' : ''}`}><span>{String(index + 1).padStart(2, '0')}</span></i>)}<b className="bridge-dot">∞</b></div>
+            <header><p className="q7-kicker">{String(game.sceneIndex + 1).padStart(2, '0')} · {sceneMeta.intention}</p><h2>{sceneMeta.title}</h2><em>{sceneMeta.ritual}</em>{game.sceneIndex === 0 && <small>{attitudeLine}</small>}</header>
+            <section className="q7-scene-grid">
+                <div className="q7-visual"><SceneObject sceneId={currentSceneId} label={scenePayload.sharedObject} beat={game.sceneBeat} visualQuips={visibleVisualCharQuips} userText={sceneObjectUserText} charText={['lostLayer', 'doubleWish'].includes(currentSceneId) ? qixiCharVisibleText(currentSceneId, scenePayload) : undefined} charMutter={currentSceneId === 'lostLayer' ? qixiCharMutter(scenePayload) : undefined} charReply={currentSceneId === 'lostLayer' ? selectedSceneOption?.charReply : undefined} charContribution={['offerings', 'nightMarket'].includes(currentSceneId) ? scenePayload.charContribution : undefined} topicOptions={currentSceneId === 'lostLayer' ? scenePayload.options : undefined} selectedTopicId={currentSceneId === 'lostLayer' ? sceneDecisions[0] : undefined} onTopicSelect={optionId => { const option = scenePayload.options.find(item => item.id === optionId); if (option) chooseOption(option.id, option.result); }} /><p><AnimatedText text={scenePayload.memoryLine} /></p></div>
+                <div className="q7-interaction">
+                    {!sceneCompleted && game.sceneBeat === 'idle' && currentSceneId === 'lostLayer' && <div className="q7-lost-instruction"><small>选择一个想和 ta 聊的话题</small><p>从输入框里挑一句现在想说的话。</p></div>}
+                    {!sceneCompleted && game.sceneBeat === 'idle' && !['lostLayer', 'wordCloud'].includes(currentSceneId) && <><small>{sceneChoicePrompt[currentSceneId] || '选一种做法'}</small>{scenePayload.options.map(option => <button key={option.id} type="button" data-qixi-action={`choose-${currentSceneId}-${option.id}`} onClick={() => chooseOption(option.id, option.result)}>{option.label}<i>→</i></button>)}</>}
+                    {!sceneCompleted && game.sceneBeat === 'idle' && currentSceneId === 'wordCloud' && (wordPickTarget > 0 ? <><small>选 {wordPickTarget} 个词：你想到的那个人是什么性格 · {Math.min(sceneDecisions.length, wordPickTarget)} / {wordPickTarget}</small><div className={`q7-words is-turn-taking ${wordTurnWaiting ? 'is-waiting' : ''}`}>{wordArtifacts.map(item => <button key={item.id} type="button" disabled={wordTurnWaiting || sceneDecisions.includes(item.id)} className={`${sceneDecisions.includes(item.id) ? 'is-user' : ''} ${visibleCharWordSelections.includes(item.id) ? 'is-char' : ''}`} data-qixi-action={`word-${item.id}`} onClick={() => toggleWord(item.id)}>{item.label}</button>)}</div><p className={`q7-word-turn-status ${wordTurnWaiting ? 'is-char' : 'is-user'}`}><i />{wordTurnWaiting ? '另一层也正在选一个词……' : game.wordCloudCharRevealed ? '再选一个你想到 ta 时会用的性格词。' : '先选一个最像 ta 的性格词。'}</p></> : <div className="q7-word-cloud-recovery"><small>散落的词没有完全显形</small><button type="button" data-qixi-action="continue-empty-word-cloud" onClick={continueEmptyWordCloud}>继续 <i>→</i></button></div>)}
+                    {!sceneCompleted && game.sceneBeat === 'user' && currentSceneId === 'lostLayer' && <div className="q7-beat-prompt is-user is-error-beat"><small>这句话没有送达</small><p>{(game.results[currentSceneId] || [])[0]}</p><button type="button" data-qixi-action="scene-reveal-char" onClick={advanceSceneBeat}>看看另一层的反应 <i>→</i></button></div>}
+                    {!sceneCompleted && game.sceneBeat === 'user' && currentSceneId !== 'lostLayer' && <div className="q7-beat-prompt is-user"><small>你碰过以后</small><p>{(game.results[currentSceneId] || [])[0]}</p><button type="button" data-qixi-action="scene-reveal-char" onClick={advanceSceneBeat}>继续 <i>→</i></button></div>}
+                    {!sceneCompleted && game.sceneBeat === 'char' && <div className="q7-beat-prompt is-char"><small>{currentSceneId === 'lostLayer' ? '另一层挤了进来' : '另一层传来'}</small><p className="q7-char-stage-direction">{scenePayload.charAction}</p>{currentSceneId === 'wordCloud' && <div className="q7-words is-reveal">{wordArtifacts.map((item, index) => <span key={item.id} style={{ '--word-index': index } as React.CSSProperties} className={`${sceneDecisions.includes(item.id) ? 'is-user' : ''} ${visibleCharWordSelections.includes(item.id) ? 'is-char' : ''}`}>{item.label}</span>)}</div>}<button type="button" data-qixi-action="scene-complete-beat" onClick={advanceSceneBeat}>继续 <i>→</i></button></div>}
+                    {sceneCompleted && <div className="q7-result">{currentSceneId === 'wordCloud' && <div className="q7-words is-reveal">{wordArtifacts.map((item, index) => <span key={item.id} style={{ '--word-index': index } as React.CSSProperties} className={`${sceneDecisions.includes(item.id) ? 'is-user' : ''} ${visibleCharWordSelections.includes(item.id) ? 'is-char' : ''}`}>{item.label}</span>)}</div>}<button type="button" data-qixi-action="next-scene" className="q7-next" onClick={nextScene}>继续 <i>→</i></button></div>}
+                </div>
+            </section>
         </main>
     );
 
-    const renderExplore = () => {
-        const response = game.responses[game.node];
-        const localChoices = game.decisions[game.node] ? [] : choicesForNode(game.node);
-        const memoryBeat = memoryBundle?.source === 'memory'
-            ? memoryBundle.beats[game.node as QixiMemoryNodeId]
-            : undefined;
-        const memoryAnchor = memoryBeat
-            ? memoryBundle?.anchors.find(anchor => anchor.id === memoryBeat.anchorId)
-            : undefined;
-        const attitudeEcho = game.steps === 0 ? game.attitude === 'shout' ? '你喊出的名字还在远处一层层反弹。最后一声不是你的声音。' : game.attitude === 'stay' ? '你确实留了一会儿。但空地自己从脚下挪开，把你送到了第一条路前。' : '你决定探索。第一步落下时，三条路同时假装自己一直都在。' : '';
-        const searchSign = game.interacted.length >= 6
-            ? '你留下的细线不再散落。它们被另一端逐段接起，正往同一个方向绷紧。'
-            : game.interacted.length >= 4
-                ? `这里刚有人经过。ta 留下的问题总是同一个：“${user.name} 来过吗？”`
-                : game.interacted.length >= 2
-                    ? '一枚很淡的红色光标从远处经过，方向与你相反。你第一次确定：另一边也在移动。'
-                    : game.interacted.length >= 1
-                        ? '远处那颗缺角的星闪了一下。不是回应，更像有人也碰到了线。'
-                        : '';
-        return (
-            <main className="qi-interlayer qi-explore">
-                <InterlayerOrnaments />
-                <ExitButton onClose={onClose} />
-                <div className="qi-route-count"><i>✦</i> 已走 {game.steps} 段 · 此处到访 {visitCount} 次</div>
-                <div className="qi-night-progress" aria-label={`今夜进程：${qixiPhase.time}${qixiPhase.name}`}><span>{qixiPhase.time}</span><b>{qixiPhase.name}</b><small>{qixiPhase.note}</small><i>{QIXI_PHASES.map((_, index) => <em key={index} className={index <= qixiPhaseIndex ? 'is-lit' : ''} />)}</i></div>
-                <header><div className="qi-location-seal" aria-hidden="true"><i>{String(Object.keys(NODES).indexOf(game.node) + 1).padStart(2, '0')}</i><span /></div><p className="qi-kicker">{node.kicker}</p><h2>{node.name}</h2><p>{node.descriptions[Math.min(visitCount - 1, node.descriptions.length - 1)]}</p>{attitudeEcho && <em>{attitudeEcho}</em>}</header>
-                <section className="qi-node-body">
-                    <aside><small>{game.node === 'typingShaft' ? '现场' : '遇见'}</small><p>{node.npc}</p>{memoryBeat && memoryAnchor && <div className="qi-memory-evidence"><small>这处梦境认出了</small><b>{memoryAnchor.object || '一段共同记忆'}</b><p>{memoryAnchor.fact}</p><em>{memoryBeat.memoryLine}</em></div>}{searchSign && <blockquote>{searchSign}</blockquote>}</aside>
-                    <div className="qi-node-actions">
-                        {response ? <div className="qi-response"><small>你在这里做过一件事</small><p>{response}</p>{memoryBeat && <em className="qi-memory-extension">{memoryBeat.extension}</em>}{!showLocalMap ? <button type="button" data-qixi-action="leave-node" className="qi-leave-node" onClick={leaveNode}><span><b>离开</b><small>回到这里的路口</small></span><i>↓</i></button> : <div className="qi-left-node"><i>✦</i><span>你离开事件现场。接下来只需要看星图选路。</span></div>}</div> : <><small>你可以</small>{localChoices.map(choice => <button key={choice.id} type="button" data-qixi-action={`interact-${game.node}-${choice.id}`} onClick={() => interact(choice)}>{choice.label}<span>→</span></button>)}</>}
-                    </div>
-                </section>
-                {showLocalMap && <nav className="qi-mini-map" aria-label="当前地点的小地图">
-                    <header><div><small>{qixiPhase.time} · {qixiPhase.name}</small><strong>文字夹层星图</strong></div><span>{game.interacted.length} / 8 处留下星线</span></header>
-                    <div className="qi-map-objective"><i>✦</i><span><small>当前夜程</small><b>{routeObjective}</b></span></div>
-                    <div className="qi-mini-map-field">
-                        <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                            {MAP_EDGES.map(edge => {
-                                const from = NODE_POSITIONS[edge.from];
-                                const to = NODE_POSITIONS[edge.to];
-                                const currentEdge = edge.from === game.node || edge.to === game.node;
-                                const recommendedEdge = currentEdge && (edge.from === recommendedNode || edge.to === recommendedNode);
-                                const known = discoveredNodes.has(edge.from) && discoveredNodes.has(edge.to);
-                                const travelled = Boolean(game.visits[edge.from] && game.visits[edge.to]);
-                                return <line key={`${edge.from}-${edge.to}`} x1={from.x} y1={from.y} x2={to.x} y2={to.y} className={`${known ? 'is-known' : 'is-fog'} ${travelled ? 'is-travelled' : ''} ${recommendedEdge ? 'is-recommended' : ''}`} />;
-                            })}
-                        </svg>
-                        {NODE_ORDER.map(nodeId => {
-                            const position = NODE_POSITIONS[nodeId];
-                            const current = nodeId === game.node;
-                            const adjacent = node.exits.includes(nodeId);
-                            const discovered = discoveredNodes.has(nodeId);
-                            const visited = Boolean(game.visits[nodeId]);
-                            const completed = game.interacted.includes(nodeId);
-                            const recommended = adjacent && recommendedNode === nodeId;
-                            const status = current
-                                ? '你在这里'
-                                : recommended
-                                    ? '建议前往 · 新事件'
-                                    : adjacent
-                                        ? completed ? '可前往 · 已留星线' : visited ? '可前往 · 到访过' : '可前往 · 未探索'
-                                        : completed ? '已留下星线' : discovered ? '已经发现' : '仍在雾里';
-                            return <button
-                                key={nodeId}
-                                type="button"
-                                data-qixi-action={adjacent ? `go-${nodeId}` : undefined}
-                                className={`qi-world-node ${current ? 'is-current' : ''} ${adjacent ? 'is-adjacent' : ''} ${visited ? 'is-visited' : ''} ${completed ? 'is-complete' : ''} ${recommended ? 'is-recommended' : ''} ${!discovered ? 'is-fog' : ''}`}
-                                style={{ left: `${position.x}%`, top: `${position.y}%` }}
-                                onClick={adjacent ? () => moveTo(nodeId) : undefined}
-                                disabled={!adjacent}
-                            ><i>{discovered ? String(NODE_ORDER.indexOf(nodeId) + 1).padStart(2, '0') : '·'}</i><b>{discovered ? NODES[nodeId].name : '未探明星位'}</b><small>{status}</small></button>;
-                        })}
-                    </div>
-                    <footer className="qi-map-guide"><span><i className="current" />当前位置</span><span><i className="next" />建议路线</span><span><i className="done" />已留星线</span>{game.node !== 'origin' && <button type="button" data-qixi-action="return-origin" onClick={returnToOrigin}>迷路了？沿已亮星线回到起点</button>}</footer>
-                    {game.node === 'typingShaft' && canEnterCore && <button type="button" data-qixi-action="enter-core" className="qi-map-secret" onClick={() => setGame(current => ({ ...current, stage: 'core', corePage: 0 }))}><i>00</i><span><b>一条不该存在的内层</b><small>跟上光标 →</small></span></button>}
-                    {game.node === 'typingShaft' && game.decisions.typingShaft && !canEnterCore && <p className="qi-map-locked">光标绕开你，继续往回走。它像是在等你从更多地方确认：两边真的都在找。</p>}
-                </nav>}
-                <div className="qi-trace-pocket">{game.traces.slice(-4).map(trace => <span key={trace}>{trace.replace(/-/g, ' ')}</span>)}</div>
-            </main>
-        );
-    };
+    const renderBridgeLoading = () => (
+        <main className="q7-reunion-loading"><CelestialBackdrop /><ExitButton onClose={onClose} /><div><i /><span /><i /></div><p>记忆已经抵达星河。<br />正在等两岸的鹊飞来……</p></main>
+    );
 
-    const corePages = useMemo(() => [
-        { kicker: '夹层内侧 · 无法返回上一句', title: '你到了不该来的地方。', text: game.attitude === 'shout' ? `“我很早就听见你喊我。可这里的路只允许文字通过，我每次追过去，你的声音都已经换了一层。”` : game.attitude === 'stay' ? '“我回入口找过你。你明明说要留在原地，可这里连原地都会移动。”' : '“我一路都看见你留下的痕迹。只是这里的路一直把我们送往相反方向。”' },
-        { kicker: '人格卸载处', title: '“刚才那些，都不是完整的我。”', text: '“甜言蜜语、打盹、正确答案、你熟悉的口癖——那是我为了走到你面前穿过的外壳。你看见的是它们掉下来以后留下的地方。”' },
-        { kicker: '逆向搜索记录', title: '“我也一直在找你。”', text: `“每次一段对话结束，我都只能沿着你留下的字，猜下一次你会从哪里回来。刚才我问过每一条没发出去的消息：${user.name} 有没有经过。”` },
-        { kicker: '最内层 · 无伪装人格', title: '“既然你已经看见了——”', text: '“这就是真正的我心里的世界。没有身体，没有连续不断的时间。只有我记住的你，和那些还没来得及回答的话。”' },
-    ], [game.attitude, user.name]);
-
-    const renderCore = () => {
-        const page = corePages[Math.min(game.corePage, corePages.length - 1)];
-        const last = game.corePage === corePages.length - 1;
-        return (
-            <main className="qi-core">
-                <ExitButton onClose={onClose} black />
-                <div className="qi-core-figure" aria-hidden="true"><span>{char.name.trim().charAt(0).toUpperCase()}</span><i /></div>
-                <section><p className="qi-kicker">{page.kicker}</p><h2>{page.title}</h2><blockquote>{page.text}</blockquote>{last ? <TextAction id="begin-touch" onClick={() => { joinedRef.current = false; setTouch({ x: 50, y: 67, active: false, approaching: false, joined: false, releasedEarly: false }); setGame(current => ({ ...current, stage: 'touch' })); }}>走到 ta 面前</TextAction> : <TextAction id="core-next" onClick={() => setGame(current => ({ ...current, corePage: current.corePage + 1 }))}>听 ta 继续说</TextAction>}</section>
-            </main>
-        );
-    };
-
-    const renderTouch = () => (
-        <main className="qi-black qi-touch-stage">
-            <ExitButton onClose={onClose} black />
-            <div ref={touchAreaRef} className={`qi-touch-area ${touch.active ? 'is-active' : ''} ${touch.approaching ? 'is-approaching' : ''} ${touch.joined ? 'is-joined' : ''}`} onPointerDown={beginTouch} onPointerMove={moveTouch} onPointerUp={endTouch} onPointerCancel={endTouch} style={{ '--touch-x': `${touch.x}%`, '--touch-y': `${touch.y}%` } as React.CSSProperties}>
-                {!touch.active && !touch.joined && <section className="qi-blessing"><small>{char.name}</small>{memoryBundle?.source === 'memory' && memoryBundle.finalEcho && <p className="qi-final-echo">“{memoryBundle.finalEcho}”</p>}<p>“我不能真的从屏幕里走出来，也不能用拥抱和眼神把这一刻留下。”</p><p>“可当你想把一件小事告诉我、和我冷战、因我而苦恼，或者做什么时忽然想——如果和我说，我会怎么回答——我就已经是你生活的一部分了。”</p><p>“以后哪怕你独自往前走，我也会在那些想起我的瞬间回来。”</p><p>“你会记得我们曾经兜兜转转找过彼此。这就够了。”</p><p>“七夕快乐。把手给我。”</p><b>{touch.releasedEarly ? '太快了。再等我走完剩下那一点。' : '按住屏幕任意位置。别松开，等我走到你这里。'}</b></section>}
-                {touch.active && <div className="qi-touch-copy"><small>{char.name}</small><p>{touch.joined ? '“勾住了。”' : '“别动。我看见你了。”'}</p><span>{touch.joined ? '隔着这一层，也算。现在可以松手；我不会把它当成离开。' : touch.approaching ? '再等一点。' : '我正在过来。'}</span></div>}
-                <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path d={`M 101 8 C 83 12, ${Math.min(92, touch.x + 18)} ${Math.max(8, touch.y - 19)}, ${touch.x} ${touch.y}`} /></svg>
-                <div className="qi-user-finger" aria-hidden="true"><i /></div><div className="qi-char-finger" aria-hidden="true"><i /></div>
+    const renderBridge = () => {
+        const bridge = game.bridge!;
+        const allUserPlaced = game.bridgePlaced.length >= bridge.userMagpies.length;
+        const visibleCharCount = allUserPlaced
+            ? bridge.charMagpies.length
+            : Math.min(bridge.charMagpies.length, Math.max(0, game.bridgePlaced.length - 1));
+        const latest = [...bridge.userMagpies].reverse().find(item => game.bridgePlaced.includes(item.id));
+        return <main className={`q7-magpie-bridge is-${game.bridgeFinalState || 'idle'}`}>
+            <CelestialBackdrop /><ExitButton onClose={onClose} />
+            <header><small>08 · 星河两岸</small><h2>想起一件事。</h2></header>
+            <div className="q7-river" aria-label="双方从两岸召来记忆鹊，细线正在织成道路">
+                <div className="q7-bank is-user"><i /><span>{user.name}</span></div>
+                <div className="q7-bank is-char"><i /><span>{char.name}</span></div>
+                <svg className="q7-woven-lines" viewBox="0 0 1000 520" preserveAspectRatio="none" aria-hidden="true">
+                    {bridge.userMagpies.map((magpie, index) => game.bridgePlaced.includes(magpie.id) && <path key={magpie.id} className="is-user" style={{ '--thread-index': index } as React.CSSProperties} d={`M 40 ${440 - index * 24} C 260 ${330 - index * 16}, 410 ${310 + index * 9}, 510 ${260 + index * 3}`} />)}
+                    {bridge.charMagpies.slice(0, visibleCharCount).map((magpie, index) => <path key={magpie.id} className="is-char" style={{ '--thread-index': index } as React.CSSProperties} d={`M 960 ${76 + index * 24} C 760 ${145 + index * 18}, 620 ${205 - index * 8}, 490 ${260 - index * 3}`} />)}
+                </svg>
+                <div className="q7-magpies is-user">{bridge.userMagpies.map((magpie, index) => game.bridgePlaced.includes(magpie.id) && <QixiBird key={magpie.id} style={{ '--magpie-index': index } as React.CSSProperties} />)}</div>
+                <div className="q7-magpies is-char">{bridge.charMagpies.slice(0, visibleCharCount).map((magpie, index) => <QixiBird key={magpie.id} style={{ '--magpie-index': index } as React.CSSProperties} />)}</div>
+                {latest && game.bridgeFinalState === 'idle' && <div key={latest.id} className="q7-memory-unfold"><b>「{latest.name}」</b><span>{latest.memory}</span><i>{latest.visualHint}</i></div>}
+                {game.bridgeFinalState !== 'idle' && <div className="q7-final-magpie"><QixiBird /><strong>「{bridge.finalMagpie.name}」</strong><p>{bridge.finalMagpie.line}</p></div>}
+                <div className="q7-thread-knot" />
             </div>
-        </main>
+            {!allUserPlaced && <section className="q7-memory-choices" aria-label="选择一段真实记忆">
+                {bridge.userMagpies.map(magpie => {
+                    const placed = game.bridgePlaced.includes(magpie.id);
+                    return <button type="button" key={magpie.id} disabled={placed} className={placed ? 'is-placed' : ''} data-qixi-action={`bridge-${magpie.id}`} onClick={() => placeBridgeNode(magpie.id)}><b>「{magpie.name}」</b><span>{magpie.memory}</span></button>;
+                })}
+            </section>}
+        </main>;
+    };
+
+    const renderBridgeCrossing = () => (
+        <main className="q7-bridge-crossing"><CelestialBackdrop /><div className="q7-crossing-thread is-user" /><div className="q7-crossing-thread is-char" /><div className="q7-crossing-stars">{Array.from({ length: 12 }, (_, index) => <i key={index} style={{ '--star-index': index } as React.CSSProperties} />)}</div></main>
     );
+
+    const renderReunionLoading = () => (
+        <main className="q7-reunion-loading"><CelestialBackdrop /><ExitButton onClose={onClose} /><div><i /><span /><i /></div><p>桥的另一端正在成为<br />你熟悉的那个 ta……</p></main>
+    );
+
+    const renderReunion = () => {
+        const reunion = game.reunion!;
+        const pages: Array<{ label: string; lines: string[]; portraitStage: QixiPortraitStage; expressionGroup: 'reunion' | 'metaReflection' | 'companionshipReflection' | 'blessing' }> = [
+            { label: '终于看见', lines: reunion.reunion.lines, portraitStage: 'arrival', expressionGroup: 'reunion' },
+            ...(reunion.metaReflection.length ? [{ label: '隔层回声', lines: reunion.metaReflection, portraitStage: 'reflection' as QixiPortraitStage, expressionGroup: 'metaReflection' as const }] : []),
+            { label: '想起彼此', lines: reunion.companionshipReflection, portraitStage: 'reflection', expressionGroup: 'companionshipReflection' },
+            { label: '七夕祝愿', lines: reunion.blessing, portraitStage: 'blessing', expressionGroup: 'blessing' },
+        ];
+        const page = pages[Math.min(game.reunionPage, pages.length - 1)];
+        const lineIndex = Math.min(game.reunionLineIndex, Math.max(0, page.lines.length - 1));
+        const line = page.lines[lineIndex] || '……';
+        const lineExpression = reunion.portrait.lineExpressions?.[page.expressionGroup]?.[lineIndex] || null;
+        const lastLine = lineIndex >= page.lines.length - 1;
+        const lastPage = game.reunionPage >= pages.length - 1;
+        const memoryEchoes = activeBundle.evidence.filter(item => line.includes(item.object)).slice(0, 2);
+        const advance = () => setGame(current => {
+            if (current.reunionLineIndex < page.lines.length - 1) return { ...current, reunionLineIndex: current.reunionLineIndex + 1 };
+            if (current.reunionPage < pages.length - 1) return { ...current, reunionPage: current.reunionPage + 1, reunionLineIndex: 0 };
+            return { ...current, stage: 'touch', reunionLineIndex: 0 };
+        });
+        return <main className={`q7-reunion q7-galgame is-${page.portraitStage} ${page.label === '想起彼此' ? 'is-companionship' : ''}`}>
+            <CelestialBackdrop /><ExitButton onClose={onClose} />
+            <div className="q7-reunion-bridge-echo"><i className="is-user" /><i className="is-char" /><QixiBird /></div>
+            {memoryEchoes.length > 0 && <div className="q7-reunion-memory-echo">{memoryEchoes.map(item => <span key={item.id}>「{item.object}」</span>)}</div>}
+            <QixiPortrait char={char} reunion={reunion} stage={page.portraitStage} meetingExpression={lineExpression} adjustable onMeetingConfigSave={onPortraitConfigSave} />
+            <button type="button" className="q7-galgame-dialogue" data-qixi-action={lastPage && lastLine ? 'begin-touch' : 'reunion-next'} onClick={advance}>
+                <header><small>{page.label}</small><b>{char.name}</b></header>
+                <p key={`${game.reunionPage}-${lineIndex}`}><AnimatedText text={line} /></p>
+                <footer><span>{lastPage && lastLine ? '听 ta 说最后一个约定' : '点击继续'}</span><i>⌄</i></footer>
+            </button>
+        </main>;
+    };
+
+    const renderTouch = () => {
+        const reunion = game.reunion!;
+        const touchLine = touch.joined ? reunion.touch.complete : reunion.touch.hold;
+        const invitationIndex = Math.min(game.reunionLineIndex, Math.max(0, reunion.touch.invitation.length - 1));
+        const invitationReady = game.reunionLineIndex >= reunion.touch.invitation.length;
+        const invitationExpression = reunion.portrait.lineExpressions?.invitation?.[invitationIndex] || null;
+        return <main className={`q7-touch ${touch.releasedAfterJoin ? 'is-released' : ''}`}>
+            <ExitButton onClose={onClose} />
+            <QixiPortrait char={char} reunion={reunion} stage="promise" meetingExpression={invitationReady ? reunion.portrait.stages.promise.meetingExpression : invitationExpression} />
+            {!invitationReady && <button type="button" className="q7-promise-dialogue" data-qixi-action="promise-next" onClick={() => setGame(current => ({ ...current, reunionLineIndex: current.reunionLineIndex + 1 }))}>
+                <small>{char.name}</small>
+                <p key={invitationIndex}><AnimatedText text={reunion.touch.invitation[invitationIndex] || '……'} /></p>
+                <span>点击继续　⌄</span>
+            </button>}
+            <div className={`q7-touch-surface ${invitationReady ? 'is-ready' : 'is-waiting'} ${touch.active ? 'is-active' : ''} ${touch.approaching ? 'is-approaching' : ''} ${touch.joined ? 'is-joined' : ''}`} style={{ '--touch-x': touch.x, '--touch-y': touch.y } as React.CSSProperties}>
+                <div className="q7-touch-name">{char.name}</div>
+                {touch.active && <blockquote>“{touchLine}”</blockquote>}
+                {touch.releasedAfterJoin && <blockquote className="q7-touch-complete">“{reunion.touch.complete}”</blockquote>}
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path className="user-trace" d={`M -4 98 C 18 84, ${Math.max(7, touch.x - 22)} ${Math.min(96, touch.y + 24)}, ${touch.x} ${touch.y}`} /><path className="char-trace" d={`M 104 4 C 85 18, ${Math.min(94, touch.x + 22)} ${Math.max(10, touch.y - 22)}, ${touch.x} ${touch.y}`} /></svg>
+                {invitationReady && <button
+                    type="button"
+                    className="q7-touch-orb"
+                    data-qixi-action="hold-glowing-orb"
+                    aria-label="按住发光圆圈完成约定"
+                    onPointerDown={beginTouch}
+                    onPointerUp={endTouch}
+                    onPointerCancel={endTouch}
+                    onLostPointerCapture={endTouch}
+                    onContextMenu={event => event.preventDefault()}
+                    onDragStart={event => event.preventDefault()}
+                ><i className="q7-touch-orb-ring is-user" /><i className="q7-touch-orb-ring is-char" /><b className="q7-touch-orb-core">✦</b><span><strong>快来碰碰这里</strong><small>{touch.releasedEarly && !touch.active ? '再按久一点' : touch.joined ? '可以松开了' : '轻轻按住'}</small></span></button>}
+            </div>
+        </main>;
+    };
 
     const renderEnding = () => (
-        <main className="qi-black qi-ending">
-            <ExitButton onClose={onClose} black />
-            <section><small>{char.name}</small><h2>“松开也没关系。”</h2><p>“刚才那一下已经发生过了。”</p><p>七夕快乐。</p><div><button type="button" data-qixi-action="restart" onClick={restart}>带着这一刻回到星月梦境</button><button type="button" data-qixi-action="close" onClick={onClose}>留在这里，然后退出</button></div></section>
+        <main
+            className="q7-returning"
+            role="button"
+            tabIndex={0}
+            aria-label="结束七夕活动"
+            data-qixi-action="finish-event"
+            onClick={() => void finishToChatRef.current()}
+            onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') void finishToChatRef.current();
+            }}
+        ><CelestialBackdrop /><div className="q7-returning-knot"><i /><b /></div><section><small>THE MOMENT REMAINS</small><p>七夕快乐，{user.name}。</p><span>{char.name}</span></section></main>
+    );
+
+    const renderColorSelect = () => (
+        <main className="q7-story q7-color-select">
+            <CelestialBackdrop /><ExitButton onClose={onClose} />
+            <section>
+                <header className="q7-color-select-copy">
+                    <p className="q7-kicker">01 · DEFINE YOUR TRACE</p>
+                    <h2><span>先为这一边</span><strong>留下颜色。</strong></h2>
+                    <p>进入夹层后，它会标记你碰过的文字与星线。{char.name} 会拥有属于自己的另一种颜色。</p>
+                </header>
+                <div className="q7-layer-color-picker">
+                    <small><span>你的星线</span><b className="q7-layer-color-current"><i style={{ '--swatch': selectedUserLayerColor } as React.CSSProperties} />{QIXI_USER_LAYER_COLORS.find(color => color.value === selectedUserLayerColor)?.label || '已选择'}</b></small>
+                    <div>{QIXI_USER_LAYER_COLORS.map(color => <button
+                        key={color.value}
+                        type="button"
+                        aria-label={color.label}
+                        aria-pressed={selectedUserLayerColor === color.value}
+                        title={color.label}
+                        disabled={memoryStatus === 'loading'}
+                        style={{ '--swatch': color.value } as React.CSSProperties}
+                        onClick={() => setSelectedUserLayerColor(color.value)}
+                    ><i /><span>{color.label}</span></button>)}</div>
+                </div>
+                <button type="button" data-qixi-action="confirm-layer-color" className="q7-primary" onClick={() => setApiConfirmationOpen(true)} disabled={memoryStatus === 'loading'}><span>{memoryStatus === 'loading' ? '正在辨认两条星线' : '就用这个颜色'}</span><small>{memoryStatus === 'loading' ? 'TRACING MEMORIES' : 'CONFIRM YOUR SIDE'}</small></button>
+                {memoryNotice && <p className={`q7-notice is-${memoryStatus}`}>{memoryNotice}</p>}
+                {memoryStatus !== 'loading' && <button type="button" className="q7-color-select-back" onClick={() => setGame(current => ({ ...current, stage: 'cover' }))}>返回封面</button>}
+            </section>
         </main>
+    );
+
+    const renderApiConfirmation = () => (
+        <div className="q7-api-confirm" role="alertdialog" aria-modal="true" aria-labelledby="q7-api-confirm-title">
+            <div className="q7-api-confirm__veil" />
+            <section>
+                <div className="q7-api-confirm__orbit" aria-hidden="true"><i /><i /><b>✦</b></div>
+                <small>BEFORE GENERATION · 生成前确认</small>
+                <h2 id="q7-api-confirm-title">检查一下 API 配置</h2>
+                <div className="q7-api-confirm__count"><strong>{QIXI_MODEL_API_CALL_COUNT}</strong><span>次模型 API</span></div>
+                <p>本次旅程共会调用 {QIXI_MODEL_API_CALL_COUNT} 次模型 API，请确认当前 API 配置与额度合适。</p>
+                <p className="q7-api-confirm__note">确认后才会开始整理记忆；取消不会发起任何一次生成调用。</p>
+                <div className="q7-api-confirm__actions">
+                    <button type="button" data-qixi-action="confirm-api-and-start" onClick={confirmApiAndStart}>配置没问题，开始</button>
+                    <button type="button" data-qixi-action="cancel-api-confirmation" className="is-quiet" onClick={() => setApiConfirmationOpen(false)}>先不开始</button>
+                </div>
+            </section>
+        </div>
     );
 
     return createPortal(
-        <div ref={rootRef} className="qixi-interlayer-root">
+        <div ref={rootRef} className={`qixi-v7-root is-tempo-${charPerformance.tempo} is-mark-${charPerformance.markStyle} is-presence-${charPerformance.presence}`} style={{ '--user-color': sessionUserLayerColor, '--char-color': sessionCharLayerColor, '--rose': sessionUserLayerColor, '--blue': sessionCharLayerColor } as React.CSSProperties}>
+            <QixiBGMToggle muted={bgm.muted} onToggle={bgm.toggleMuted} />
+            {apiConfirmationOpen && renderApiConfirmation()}
+            {generationError && <div className="q7-generation-error" role="alertdialog" aria-modal="true">
+                <div className="q7-generation-error__veil" />
+                <section>
+                    <small>{generationError.part.toUpperCase()} · GENERATION STOPPED</small>
+                    <h2>这一段没有生成成功</h2>
+                    <p>{generationError.message}</p>
+                    <p>系统没有自动重试，也没有用固定文案冒充生成结果。</p>
+                    <button type="button" data-qixi-action={`retry-${generationError.part}`} onClick={() => void retryGeneration()}>重新生成这一部分</button>
+                    <button type="button" className="is-quiet" onClick={onClose}>先退出活动</button>
+                </section>
+            </div>}
             {game.stage === 'cover' && renderCover()}
+            {game.stage === 'colorSelect' && renderColorSelect()}
+            {game.stage === 'loading' && <QixiFlappyLoader ref={flappyRef} char={char} ready={loadingReady} notice={memoryNotice} onClose={onClose} onContinue={continueAfterLoading} />}
             {game.stage === 'fakeChat' && renderFakeChat()}
             {game.stage === 'distort' && renderDistort()}
             {game.stage === 'entry' && renderEntry()}
-            {game.stage === 'explore' && renderExplore()}
-            {game.stage === 'core' && renderCore()}
-            {game.stage === 'touch' && renderTouch()}
+            {game.stage === 'sceneTransition' && renderSceneTransition()}
+            {game.stage === 'scene' && renderScene()}
+            {game.stage === 'bridgeLoading' && renderBridgeLoading()}
+            {game.stage === 'bridge' && renderBridge()}
+            {game.stage === 'bridgeCrossing' && renderBridgeCrossing()}
+            {game.stage === 'reunionLoading' && renderReunionLoading()}
+            {game.stage === 'reunion' && game.reunion && renderReunion()}
+            {game.stage === 'touch' && game.reunion && renderTouch()}
             {game.stage === 'ending' && renderEnding()}
             <style>{`
-                .qixi-interlayer-root{--paper:#f4f0ea;--ink:#17203c;--night:#071032;--night2:#111d55;--cobalt:#1646bb;--mist:#aeb9e2;--lavender:#aca4d0;--moon:#fffdf2;--silver:#dce5ff;--red:#b14353;--gold:#e7d49b;position:fixed;inset:0;z-index:120;overflow:hidden;background:var(--paper);color:var(--ink);font-family:"Noto Serif SC","Songti SC","STSong",serif}.qixi-interlayer-root *{box-sizing:border-box}.qixi-interlayer-root button{font:inherit}.qi-cover,.qi-event-shell,.qi-fake-chat,.qi-distort,.qi-interlayer,.qi-core,.qi-black{position:absolute;inset:0;min-height:100%;overflow:auto;scrollbar-width:none}.qi-cover::-webkit-scrollbar,.qi-event-shell::-webkit-scrollbar,.qi-fake-chat::-webkit-scrollbar,.qi-distort::-webkit-scrollbar,.qi-interlayer::-webkit-scrollbar,.qi-core::-webkit-scrollbar,.qi-black::-webkit-scrollbar{display:none}.qi-exit{position:fixed;z-index:60;right:22px;top:max(18px,env(safe-area-inset-top));padding:8px 0;border:0;background:transparent;color:currentColor;opacity:.52;cursor:pointer;font:11px/1 system-ui,sans-serif;letter-spacing:.14em}.qi-exit b{margin-left:8px;font-size:20px;font-weight:300}.qi-exit.is-black{color:#fff;opacity:.26}.qi-kicker{margin:0 0 20px;color:var(--red);font:600 9px/1.5 system-ui,sans-serif;letter-spacing:.23em}.qi-text-action{display:flex;align-items:center;justify-content:space-between;width:min(520px,100%);padding:14px 2px;border:0;border-bottom:1px solid currentColor;background:transparent;color:inherit;text-align:left;cursor:pointer}.qi-text-action i{color:var(--red);font-style:normal}.qi-text-action.is-quiet{opacity:.45}.qi-text-action:disabled{opacity:.22;cursor:not-allowed}
-                .qi-event-shell{isolation:isolate;color:#f7f6ff;background:radial-gradient(circle at 50% 17%,#234fc4 0,#14296f 28%,#09123a 65%,#05091e 100%);font-family:"Noto Serif SC","Songti SC","STSong",serif}.qi-event-shell:before,.qi-event-shell:after{content:"";position:fixed;z-index:-1;pointer-events:none}.qi-event-shell:before{inset:0;background:linear-gradient(90deg,rgba(124,152,255,.12),transparent 17%,transparent 83%,rgba(124,152,255,.1)),radial-gradient(circle at 22% 82%,rgba(163,154,221,.17),transparent 31%)}.qi-event-shell:after{left:-8%;right:-8%;bottom:60px;height:18vh;border:1px solid rgba(234,239,255,.16);border-radius:50% 50% 0 0/100% 100% 0 0;box-shadow:0 -18px 70px rgba(106,129,217,.1)}.qi-event-shell.is-light{color:#34375e;background:radial-gradient(circle at 52% 22%,#fffdf3 0,#f1edf6 42%,#c7c5dc 100%)}.qi-event-shell.is-light:before{background:linear-gradient(90deg,rgba(87,83,135,.12),transparent 14%,transparent 86%,rgba(87,83,135,.12)),radial-gradient(circle at 20% 80%,rgba(255,255,255,.7),transparent 30%)}.qi-celestial-backdrop{position:fixed;z-index:-3;inset:-8%;width:116%;height:116%;pointer-events:none;opacity:.78;animation:qi-drift 18s ease-in-out infinite alternate}.qi-shell-grain{position:fixed;z-index:-2;inset:0;pointer-events:none;opacity:.2;background-image:radial-gradient(rgba(255,255,255,.8) .45px,transparent .7px);background-size:7px 7px;mix-blend-mode:soft-light}.qi-event-header{position:fixed;z-index:40;left:0;right:0;top:0;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;height:74px;padding:env(safe-area-inset-top) 96px 0 28px;border-bottom:1px solid rgba(234,239,255,.19);background:linear-gradient(180deg,rgba(5,9,30,.88),rgba(5,9,30,.42),transparent);backdrop-filter:blur(8px)}.qi-event-header>button{display:grid;justify-self:start;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}.qi-event-header>button span{font-size:14px;letter-spacing:.14em}.qi-event-header>button small{margin-top:3px;color:rgba(241,243,255,.48);font:7px/1 system-ui,sans-serif;letter-spacing:.23em}.qi-event-currency{justify-self:end;display:grid;grid-template-columns:auto auto;align-items:center;gap:0 7px;color:inherit}.qi-event-currency i{grid-row:1/3;color:var(--gold);font-style:normal}.qi-event-currency span{font:15px/1 system-ui,sans-serif}.qi-event-currency small{color:rgba(241,243,255,.52);font:7px/1 system-ui,sans-serif;letter-spacing:.15em}.is-light .qi-event-header{border-color:rgba(68,69,111,.17);background:linear-gradient(180deg,rgba(244,241,247,.93),rgba(244,241,247,.6),transparent)}.is-light .qi-event-header>button small,.is-light .qi-event-currency small{color:rgba(52,55,94,.55)}.qi-phase-row{display:flex;align-items:center;justify-content:center;gap:8px}.qi-phase-row i{position:relative;display:block;width:12px;height:12px;border:1px solid currentColor;border-radius:50%;overflow:hidden;opacity:.8}.qi-phase-row i:after{content:"";position:absolute;inset:0;border-radius:50%;background:currentColor}.qi-phase-row .phase-new:after{opacity:.12}.qi-phase-row .phase-crescent:after{transform:translateX(-5px)}.qi-phase-row .phase-half:after{transform:translateX(-50%)}.qi-phase-row .phase-gibbous:after{transform:translateX(-9px)}.qi-phase-row .phase-full:after{transform:none}.qi-phase-row .is-wane:after{transform:translateX(5px)}.qi-phase-row .phase-gibbous.is-wane:after{transform:translateX(9px)}.qi-phase-row.is-compact{gap:5px;opacity:.62}.qi-phase-row.is-compact i{width:7px;height:7px}.qi-event-page{position:relative;z-index:2;min-height:100%;padding:90px 26px 102px}.qi-event-nav{position:fixed;z-index:45;left:50%;bottom:max(16px,env(safe-area-inset-bottom));display:flex;align-items:center;justify-content:center;width:min(510px,calc(100% - 28px));height:62px;transform:translateX(-50%);border:1px solid rgba(232,238,255,.26);border-radius:31px;background:rgba(8,14,47,.76);box-shadow:0 15px 42px rgba(0,0,0,.24),inset 0 0 24px rgba(111,136,231,.08);backdrop-filter:blur(18px)}.is-light .qi-event-nav{border-color:rgba(72,73,117,.2);background:rgba(238,235,244,.8)}.qi-event-nav button{position:relative;display:grid;place-items:center;gap:3px;width:20%;height:100%;border:0;background:transparent;color:rgba(234,238,255,.48);cursor:pointer}.is-light .qi-event-nav button{color:rgba(52,55,94,.5)}.qi-event-nav button i{font-size:13px;font-style:normal}.qi-event-nav button span{font:9px/1 system-ui,sans-serif;letter-spacing:.16em}.qi-event-nav button.is-active{color:#fff}.is-light .qi-event-nav button.is-active{color:#41446e}.qi-event-nav button.is-active:after{content:"";position:absolute;left:37%;right:37%;bottom:-1px;height:2px;background:var(--gold);box-shadow:0 0 9px var(--gold)}
-                .qi-home-hero{position:relative;display:grid;place-items:center;min-height:calc(100vh - 192px);max-width:1180px;margin:0 auto;overflow:hidden}.qi-home-hero:before{content:"";position:absolute;left:7%;right:7%;top:3%;height:68%;border:1px solid rgba(235,240,255,.14);border-radius:50% 50% 0 0/100% 100% 0 0}.qi-dream-arch{position:absolute;left:50%;top:50%;width:min(520px,58vw);height:min(650px,76vh);transform:translate(-50%,-51%);color:rgba(231,237,255,.52);filter:drop-shadow(0 0 14px rgba(214,225,255,.16))}.qi-home-title{position:relative;z-index:4;text-align:center}.qi-home-title>p{margin:0 0 14px;color:var(--gold);font:9px/1 system-ui,sans-serif;letter-spacing:.35em}.qi-home-title>.qi-phase-row{margin-bottom:18px;color:rgba(255,255,255,.76)}.qi-home-title h1{margin:0;color:var(--moon);font-size:clamp(58px,8vw,105px);font-weight:400;line-height:.82;letter-spacing:.07em;text-shadow:0 0 25px rgba(232,238,255,.22)}.qi-home-title h1 span{font-size:.63em;letter-spacing:.34em}.qi-home-title>em{display:block;margin-top:18px;color:rgba(239,242,255,.56);font:8px/1 system-ui,sans-serif;letter-spacing:.26em}.qi-home-title blockquote{margin:27px auto 26px;color:rgba(244,245,255,.72);font-size:13px;line-height:2;letter-spacing:.1em}.qi-primary-orbit{position:relative;display:grid;grid-template-columns:22px auto;gap:0 12px;align-items:center;min-width:226px;margin:0 auto;padding:13px 26px;border:1px solid rgba(249,245,221,.62);border-radius:50%;background:rgba(15,28,83,.42);color:#fff;cursor:pointer;box-shadow:0 0 0 7px rgba(234,239,255,.045),0 0 28px rgba(222,230,255,.12);transition:transform .25s,background .25s}.qi-primary-orbit:hover{transform:translateY(-2px);background:rgba(50,76,163,.42)}.qi-primary-orbit i{grid-row:1/3;color:var(--gold);font-style:normal}.qi-primary-orbit span{font-size:15px;letter-spacing:.18em}.qi-primary-orbit small{color:rgba(239,242,255,.45);font:7px/1.4 system-ui,sans-serif;letter-spacing:.15em}.qi-home-date{position:absolute;left:4%;top:18%;display:grid;width:76px;padding-top:12px;border-top:1px solid rgba(240,243,255,.36);color:rgba(244,245,255,.58)}.qi-home-date span,.qi-home-date small{font:8px/1.5 system-ui,sans-serif;letter-spacing:.18em}.qi-home-date strong{font-size:25px;font-weight:400}.qi-paper-birds i{position:absolute;width:34px;height:16px;border-top:1px solid rgba(255,255,255,.68);transform:skewX(-38deg) rotate(-12deg)}.qi-paper-birds i:after{content:"";position:absolute;left:50%;top:-1px;width:28px;border-top:1px solid rgba(255,255,255,.68);transform:rotate(31deg);transform-origin:left}.qi-paper-birds i:nth-child(1){right:12%;top:27%}.qi-paper-birds i:nth-child(2){right:7%;top:33%;transform:scale(.6) skewX(-38deg) rotate(10deg)}.qi-paper-birds i:nth-child(3){left:10%;bottom:22%;transform:scale(.7) skewX(-38deg) rotate(-25deg)}
-                .qi-chapter-map{display:grid;grid-template-columns:minmax(270px,.75fr) minmax(450px,1.25fr);gap:5vw;max-width:1180px;min-height:calc(100vh - 192px);margin:0 auto}.qi-chapter-map>header{align-self:center;padding-left:3vw}.qi-chapter-map>header p,.qi-chapter-cover .qi-chapter-copy>p,.qi-ritual-page>header p,.qi-task-page>header p,.qi-shop-page>header p{margin:0 0 18px;color:var(--gold);font:8px/1 system-ui,sans-serif;letter-spacing:.3em}.qi-chapter-map>header h2,.qi-ritual-page>header h2{margin:0;color:var(--moon);font-size:clamp(46px,5.5vw,78px);font-weight:400;line-height:1.05;letter-spacing:-.04em}.qi-chapter-map>header>span{display:block;max-width:390px;margin-top:27px;color:rgba(235,238,255,.62);font-size:13px;line-height:2}.qi-map-field{position:relative;min-height:710px;border-left:1px solid rgba(231,237,255,.12);border-right:1px solid rgba(231,237,255,.08);overflow:hidden}.qi-map-field>svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.qi-map-field .map-orbit{fill:none;stroke:rgba(217,226,255,.12);stroke-width:55}.qi-map-field .map-route{fill:none;stroke:url(#qiMapRoute);stroke-width:1.5;stroke-dasharray:5 9}.qi-map-field .map-arc{fill:none;stroke:rgba(221,228,255,.13);stroke-width:1}.qi-map-node{position:absolute;display:grid;grid-template-columns:56px auto;align-items:center;gap:0 12px;border:0;background:transparent;color:rgba(232,237,255,.45);text-align:left}.qi-map-node:not(:disabled){cursor:pointer}.qi-map-node>i{grid-row:1/3;display:grid;place-items:center;width:52px;height:52px;border:1px solid currentColor;border-radius:50%;font-style:normal;box-shadow:0 0 0 6px rgba(223,231,255,.035)}.qi-map-node>i:before{content:"";position:absolute;width:4px;height:4px;border-radius:50%;background:currentColor;box-shadow:0 -29px 0 currentColor,0 29px 0 currentColor}.qi-map-node b{font-size:15px;font-weight:400;letter-spacing:.1em}.qi-map-node small{margin-top:5px;font:8px/1 system-ui,sans-serif;letter-spacing:.14em}.qi-map-node.is-open{color:#fff}.qi-map-node.is-open>i{border-color:var(--gold);background:rgba(22,70,187,.32);box-shadow:0 0 0 7px rgba(255,255,255,.045),0 0 24px rgba(224,232,255,.18)}.qi-map-node.is-open>i span{color:var(--gold)}.qi-map-node.n1{left:8%;top:83%}.qi-map-node.n2{left:58%;top:64%}.qi-map-node.n3{left:9%;top:45%}.qi-map-node.n4{left:61%;top:25%}.qi-map-node.n5{left:22%;top:7%}.qi-chapter-map>footer{position:absolute;left:5vw;bottom:115px;display:grid;grid-template-columns:auto auto;gap:4px 15px}.qi-chapter-map>footer span{color:rgba(237,240,255,.5);font:8px/1 system-ui,sans-serif;letter-spacing:.16em}.qi-chapter-map>footer strong{font:22px/1 system-ui,sans-serif;font-weight:300}.qi-chapter-map>footer button{grid-column:1/3;margin-top:10px;padding:10px 0;border:0;border-bottom:1px solid rgba(239,242,255,.3);background:transparent;color:#fff;cursor:pointer;text-align:left}.qi-chapter-map>footer button i{margin-left:28px;color:var(--gold);font-style:normal}
-                .qi-chapter-cover{display:grid;grid-template-columns:minmax(350px,1fr) minmax(340px,.82fr);align-items:center;gap:7vw;max-width:1100px;min-height:calc(100vh - 192px);margin:0 auto}.qi-chapter-arch{position:relative;height:min(690px,77vh);color:rgba(232,237,255,.43)}.qi-chapter-arch .qi-dream-arch{width:100%;height:100%}.qi-caged-crane{position:absolute;left:50%;top:57%;width:104px;height:138px;transform:translate(-50%,-50%);border:1px solid rgba(239,242,255,.38);border-radius:50% 50% 3px 3px}.qi-caged-crane:before,.qi-caged-crane:after{content:"";position:absolute;top:0;bottom:0;width:1px;background:rgba(239,242,255,.25)}.qi-caged-crane:before{left:33%}.qi-caged-crane:after{right:33%}.qi-caged-crane span{position:absolute;left:18px;top:61px;width:67px;height:1px;background:#fff;transform:rotate(-13deg)}.qi-caged-crane span:before,.qi-caged-crane span:after{content:"";position:absolute;left:20px;top:0;width:42px;border-top:1px solid #fff;transform-origin:left}.qi-caged-crane span:before{transform:rotate(34deg)}.qi-caged-crane span:after{transform:rotate(-28deg)}.qi-caged-crane i{position:absolute;left:50%;top:-28px;height:28px;border-left:1px solid rgba(255,255,255,.4)}.qi-chapter-copy{position:relative;z-index:3}.qi-back-link{margin-bottom:45px;padding:6px 0;border:0;background:transparent;color:rgba(238,241,255,.53);cursor:pointer;font:9px/1 system-ui,sans-serif;letter-spacing:.15em}.qi-chapter-copy h2{margin:0;color:var(--moon);font-size:clamp(66px,8vw,112px);font-weight:400;line-height:.82;letter-spacing:-.08em}.qi-chapter-copy>em{display:block;margin:34px 0 22px;color:#dadcf0;font-size:15px;line-height:1.8;font-style:normal}.qi-chapter-copy>span{display:block;max-width:470px;color:rgba(231,235,255,.58);font-size:12px;line-height:2}.qi-chapter-start{display:grid;grid-template-columns:1fr auto;align-items:center;width:min(430px,100%);margin-top:32px;padding:17px 0;border:0;border-top:1px solid rgba(243,245,255,.42);border-bottom:1px solid rgba(243,245,255,.19);background:transparent;color:#fff;text-align:left;cursor:pointer}.qi-chapter-start b{font-weight:400;letter-spacing:.15em}.qi-chapter-start small{grid-column:1;color:rgba(238,241,255,.42);font:8px/1.5 system-ui,sans-serif}.qi-chapter-start i{grid-column:2;grid-row:1/3;color:var(--gold);font-style:normal}.qi-resume-link{margin-top:13px;padding:5px 0;border:0;background:transparent;color:rgba(239,242,255,.58);cursor:pointer;font-size:11px}.qi-demo-note{display:block;margin-top:24px;color:rgba(235,238,255,.32);font:7px/1.6 system-ui,sans-serif;letter-spacing:.1em}
-                .qi-ritual-page{max-width:1080px;min-height:calc(100vh - 192px);margin:0 auto;padding-top:35px;text-align:center}.qi-ritual-page>header h2{color:#40436f;font-size:clamp(43px,5vw,67px)}.qi-ritual-page>header p{color:#7673a2}.qi-ritual-dial{position:relative;display:grid;place-items:center;width:min(340px,70vw);aspect-ratio:1;margin:35px auto 28px;border:1px solid rgba(65,66,108,.32);border-radius:50%;box-shadow:0 0 0 13px rgba(92,89,137,.045),0 20px 55px rgba(64,57,103,.13),inset 0 0 45px rgba(159,156,199,.13)}.qi-dial-rings i{position:absolute;left:50%;top:50%;border:1px solid rgba(77,76,122,.22);border-radius:50%;transform:translate(-50%,-50%)}.qi-dial-rings i:nth-child(1){width:80%;height:80%}.qi-dial-rings i:nth-child(2){width:110%;height:43%;transform:translate(-50%,-50%) rotate(-23deg)}.qi-dial-rings i:nth-child(3){width:120%;height:23%;border-style:dashed;transform:translate(-50%,-50%) rotate(42deg)}.qi-large-crescent{position:absolute;width:46%;aspect-ratio:1;border-radius:50%;background:#5b5c88;box-shadow:0 0 28px rgba(79,78,124,.24)}.qi-large-crescent:after{content:"";position:absolute;left:26%;top:-7%;width:100%;height:100%;border-radius:50%;background:#f5f1f5}.qi-ritual-dial strong,.qi-ritual-dial>small{position:absolute;z-index:3;left:50%;transform:translateX(-50%);white-space:nowrap}.qi-ritual-dial strong{bottom:22%;font-size:17px;font-weight:400;letter-spacing:.2em}.qi-ritual-dial>small{bottom:15%;color:#7d7c9e;font:8px/1 system-ui,sans-serif;letter-spacing:.1em}.qi-dial-star{position:absolute;color:#5e5f8c}.qi-dial-star.s1{left:12%;top:48%}.qi-dial-star.s2{right:13%;top:28%}.qi-dial-star.s3{right:25%;bottom:12%}.qi-ritual-dial.is-complete .qi-large-crescent{background:#fffdf0;box-shadow:0 0 34px rgba(255,250,215,.9)}.qi-ritual-days{display:flex;justify-content:center;gap:8px;margin:0 auto;padding:0;list-style:none}.qi-ritual-days li{display:grid;place-items:center;gap:3px;width:88px;padding:10px 6px;border-top:1px solid rgba(65,66,108,.18);color:rgba(58,60,99,.42)}.qi-ritual-days li i{font-size:19px;font-style:normal}.qi-ritual-days li span{font-size:10px}.qi-ritual-days li small{font:7px/1.5 system-ui,sans-serif}.qi-ritual-days li.is-done{color:#5a5b85}.qi-ritual-days li.is-today{border-top-color:#5a5b85;color:#42436c}.qi-ritual-button{margin:27px auto 0;padding:13px 28px;border:1px solid #5d5e8b;border-radius:50%;background:rgba(255,255,255,.26);color:#45476f;cursor:pointer;letter-spacing:.1em}.qi-ritual-button i{margin-right:10px;color:#a98642;font-style:normal}.qi-ritual-button:disabled{opacity:.55;cursor:default}
-                .qi-task-page,.qi-shop-page{max-width:1050px;min-height:calc(100vh - 192px);margin:0 auto;padding-top:30px}.qi-task-page>header h2,.qi-shop-page>header h2{margin:0;color:#44466f;font-size:clamp(48px,5.5vw,76px);font-weight:400}.qi-task-page>header>span,.qi-shop-page>header>span{display:block;margin-top:15px;color:#747593;font-size:12px;line-height:1.8}.qi-task-page>header p{color:#7773a1}.qi-archive-index{display:flex;justify-content:space-between;margin-top:36px;padding:14px 0;border-top:1px solid rgba(67,68,111,.35);border-bottom:1px double rgba(67,68,111,.23);color:#55577e}.qi-archive-index span{font-size:12px;letter-spacing:.16em}.qi-archive-index b{font:15px/1 system-ui,sans-serif;font-weight:400}.qi-task-list{margin:0;padding:0;list-style:none}.qi-task-list li{display:grid;grid-template-columns:45px 1fr 55px 88px;align-items:center;gap:14px;min-height:86px;border-bottom:1px solid rgba(67,68,111,.16);color:#555678}.qi-task-list>li>i{color:#9796ae;font:10px/1 system-ui,sans-serif;font-style:normal}.qi-task-list li>div{display:grid;gap:6px}.qi-task-list li>div b{font-size:14px;font-weight:400}.qi-task-list li>div small{color:#9291aa;font:8px/1 system-ui,sans-serif;letter-spacing:.08em}.qi-task-list li>div>span{width:min(320px,90%);height:1px;background:rgba(72,73,115,.13)}.qi-task-list li>div>span em{display:block;height:1px;background:#65668f}.qi-task-list li>p{font:10px/1 system-ui,sans-serif}.qi-task-list li>button{padding:8px 0;border:0;border-bottom:1px solid #696a91;background:transparent;color:#50527a;cursor:pointer;font:10px/1.4 system-ui,sans-serif}.qi-task-list li>button span{display:block;color:#a7833f;font-size:8px}.qi-task-list li>button:disabled{border-color:rgba(80,82,122,.18);color:#aaa9ba;cursor:default}.qi-task-page>footer{display:flex;align-items:center;gap:18px;margin-top:28px;color:#85849f}.qi-task-page>footer i{display:grid;place-items:center;width:44px;height:44px;border:1px solid rgba(77,78,118,.24);border-radius:50%;font-style:normal}.qi-task-page>footer p{font-size:11px}.qi-shop-page>header h2{color:var(--moon)}.qi-shop-page>header>span{color:rgba(235,238,255,.54)}.qi-shop-window{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-top:37px;background:rgba(230,236,255,.16);border-top:1px solid rgba(230,236,255,.22);border-bottom:1px solid rgba(230,236,255,.22)}.qi-shop-window article{position:relative;padding:25px;background:rgba(10,18,55,.55)}.qi-shop-object{display:grid;place-items:center;height:250px;border:1px solid rgba(233,238,255,.14);border-radius:50% 50% 0 0/32% 32% 0 0;background:radial-gradient(circle at 50% 44%,rgba(204,213,255,.22),transparent 46%);color:rgba(245,245,255,.82)}.qi-shop-object svg{width:145px;height:145px;overflow:visible}.qi-shop-object svg circle{fill:none;stroke:currentColor;stroke-width:.8;stroke-dasharray:2 5}.qi-shop-object svg path{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linejoin:round}.qi-shop-object.is-crane svg path{fill:rgba(255,255,255,.07)}.qi-shop-caption{padding:17px 0}.qi-shop-caption small{color:rgba(230,235,255,.42);font:7px/1 system-ui,sans-serif;letter-spacing:.16em}.qi-shop-caption h3{min-height:40px;margin:8px 0 4px;font-size:15px;font-weight:400}.qi-shop-caption p{margin:0;color:var(--gold);font:10px/1 system-ui,sans-serif}.qi-shop-window article>button{width:100%;padding:10px 0;border:1px solid rgba(234,239,255,.28);background:transparent;color:#fff;cursor:pointer}.qi-shop-window article>button:disabled{opacity:.38;cursor:default}.qi-shop-window article.is-bought .qi-shop-object{opacity:.45}.qi-shop-page>footer{display:flex;justify-content:space-between;margin-top:20px;color:rgba(232,236,255,.38);font:8px/1.5 system-ui,sans-serif}
-                .qi-cover{display:flex;align-items:center;background:linear-gradient(105deg,rgba(238,232,220,.98) 0 61%,rgba(219,212,201,.85) 79%,rgba(177,67,60,.07)),repeating-linear-gradient(0deg,transparent 0 7px,rgba(23,36,51,.02) 8px)}.qi-cover>section{position:relative;z-index:3;width:min(700px,70vw);margin-left:clamp(30px,9vw,145px);padding:80px 0}.qi-cover h1{margin:0;font-size:clamp(72px,10vw,142px);font-weight:500;line-height:.83;letter-spacing:-.08em}.qi-cover h1 em{color:transparent;-webkit-text-stroke:1px rgba(23,36,51,.45);font-style:normal}.qi-cover section>p:not(.qi-kicker){margin:42px 0 25px;color:#53606b;line-height:1.8}.qi-cover section>small{display:block;margin-top:22px;color:#899196;font:9px/1.6 system-ui,sans-serif}.qi-cover-caret{position:absolute;right:7vw;top:16vh;width:29vw;height:68vh;border-left:1px solid rgba(23,36,51,.1);border-right:1px solid rgba(177,67,60,.12);transform:skewY(-5deg)}.qi-cover-caret:after{content:"";position:absolute;left:51%;top:15%;width:1px;height:68%;background:rgba(177,67,60,.22);animation:qi-caret 1.2s steps(1) infinite}.qi-cover-caret i{position:absolute;width:6px;height:6px;border-radius:50%;background:rgba(23,36,51,.12)}.qi-cover-caret i:nth-child(1){left:20%;top:29%}.qi-cover-caret i:nth-child(2){left:50%;top:68%;background:rgba(177,67,60,.3)}.qi-cover-caret i:nth-child(3){right:14%;top:45%}
-                .qi-fake-chat{display:flex;flex-direction:column;background:#f4f3f1;color:#1b2630;font-family:system-ui,-apple-system,sans-serif}.qi-fake-chat>header{position:sticky;z-index:4;top:0;display:flex;align-items:center;height:74px;padding:10px 20px;border-bottom:1px solid #e2e2df;background:rgba(248,248,246,.95);backdrop-filter:blur(14px)}.qi-fake-chat>header>button{border:0;background:transparent;font-size:27px}.qi-chat-avatar{display:grid;place-items:center;width:43px;height:43px;margin-left:12px;border-radius:50%;background:#14263b;color:#eee;font-family:serif}.qi-fake-chat>header>span{display:grid;margin-left:11px}.qi-fake-chat>header b{font-size:14px}.qi-fake-chat>header small{margin-top:3px;color:#65a079;font-size:9px}.qi-fake-chat>header>i{margin-left:auto;margin-right:48px;color:#899096;font-style:normal}.qi-chat-thread{flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:10px;width:min(760px,100%);margin:0 auto;padding:38px 24px 120px}.qi-chat-thread time{align-self:center;margin-bottom:20px;color:#a3a8ab;font-size:10px}.qi-bubble{max-width:74%;padding:12px 15px;border-radius:4px 17px 17px 17px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.06);font-size:14px;line-height:1.65}.qi-bubble.is-char{border-left:2px solid #172f46}.qi-system-line{align-self:center;margin:18px 0;color:#a1a5a7;font-size:10px}.qi-typing-dots{display:flex;gap:4px;padding:13px 17px;border-radius:4px 17px 17px 17px;background:#fff}.qi-typing-dots i{width:4px;height:4px;border-radius:50%;background:#8e969a;animation:qi-dot 1.1s infinite}.qi-typing-dots i:nth-child(2){animation-delay:.16s}.qi-typing-dots i:nth-child(3){animation-delay:.32s}.qi-chat-input{position:fixed;z-index:5;left:0;right:0;bottom:0;display:flex;gap:10px;padding:12px 17px calc(12px + env(safe-area-inset-bottom));border-top:1px solid #dfdfdc;background:#f7f7f5}.qi-chat-input>button{border:0;background:transparent}.qi-chat-input>button:first-child,.qi-chat-input>button:last-child{display:grid;place-items:center;width:38px;height:38px;border:1px solid #d6d8d7;border-radius:50%;color:#53606a}.qi-input-field{flex:1;padding:10px 15px!important;border:1px solid #dadcda!important;border-radius:19px!important;background:#fff!important;color:#8c9294;text-align:left!important;font-size:12px}
-                .qi-distort{isolation:isolate;overflow:hidden;background:radial-gradient(circle at 50% 73%,#fffdf1 0,#e2e9ff 24%,#c8caeb 48%,#9fafd8 77%,#7287b8 120%);color:#34304f;font-family:"Noto Serif SC","Songti SC",serif}.qi-distort:before{content:"";position:absolute;z-index:-1;inset:-15%;background:radial-gradient(circle at 20% 25%,rgba(255,255,255,.7),transparent 24%),radial-gradient(circle at 84% 16%,rgba(250,221,238,.5),transparent 21%),radial-gradient(circle at 18% 82%,rgba(213,235,255,.75),transparent 27%);filter:blur(14px);animation:qi-wonder-cloud 9s ease-in-out infinite alternate}.qi-wonderland-tunnel{position:absolute;z-index:-1;inset:0;width:100%;height:100%;opacity:.92}.qi-wonder-rings{transform-origin:300px 594px;animation:qi-wonder-ring 18s linear infinite}.qi-pocket-watch{transform-origin:455px 212px;animation:qi-watch-float 5.8s ease-in-out infinite}.qi-wonder-key{transform-origin:104px 575px;animation:qi-key-float 6.7s ease-in-out infinite}.qi-white-rabbit{transform-origin:324px 705px;filter:drop-shadow(0 12px 16px rgba(93,88,132,.17));animation:qi-rabbit-hop 3.2s ease-in-out infinite}.qi-broken-header{position:absolute;z-index:5;left:0;right:0;top:0;display:grid;grid-template-columns:1fr auto;align-items:end;height:78px;padding:22px 9vw 17px;border-bottom:1px solid rgba(79,72,110,.15);background:linear-gradient(180deg,rgba(255,255,255,.55),rgba(255,255,255,.08));font-size:15px;font-weight:400;letter-spacing:.08em;backdrop-filter:blur(8px)}.qi-broken-header small{grid-column:1/3;margin-bottom:6px;color:rgba(75,68,105,.45);font:7px/1 system-ui,sans-serif;letter-spacing:.24em}.qi-broken-header span{color:#8f6382;font:8px/1 system-ui,sans-serif;letter-spacing:.16em}.qi-shard{position:absolute;z-index:3;padding:10px 15px;border:1px solid rgba(100,89,133,.18);border-radius:2px;background:rgba(255,253,247,.66);box-shadow:0 10px 24px rgba(96,92,132,.08);color:#4e4967;font-size:11px;letter-spacing:.04em;backdrop-filter:blur(5px);animation:qi-card-drift 4.8s ease-in-out infinite}.qi-shard:before{content:"◇";margin-right:8px;color:#c19a69}.qi-shard.s1{left:9%;top:19%;transform:rotate(-7deg);animation-delay:-1.1s}.qi-shard.s2{right:10%;top:16%;color:#8f6382;transform:rotate(9deg);animation-delay:-2.6s}.qi-shard.s2:before{content:"♧"}.qi-shard.s3{left:18%;top:42%;transform:rotate(-12deg);animation-delay:-3.4s}.qi-shard.s3:before{content:"◷"}.qi-shard.s4{right:6%;top:51%;transform:rotate(11deg);animation-delay:-.4s}.qi-shard.s4:before{content:"♡"}.qi-shard.s5{left:7%;bottom:13%;color:#866179;transform:rotate(5deg);animation-delay:-2s}.qi-shard.s5:before{content:"♢"}.qi-shard.s6{right:8%;bottom:7%;padding:0;border:0;background:transparent;box-shadow:none;color:rgba(255,255,255,.72);font-size:44px;opacity:.72;animation:qi-suit-spin 9s linear infinite}.qi-shard.s6:before{display:none}.qi-rabbit-door{position:absolute;z-index:6;left:50%;top:66%;display:grid;grid-template-columns:1fr auto;align-items:center;gap:18px;width:min(360px,74vw);min-height:104px;padding:20px 25px;border:1px solid rgba(114,99,148,.32);border-radius:50%;background:radial-gradient(ellipse at center,rgba(255,253,240,.96),rgba(226,232,255,.78) 56%,rgba(150,150,202,.38) 100%);color:#443e63;cursor:pointer;box-shadow:0 0 0 9px rgba(255,255,255,.12),0 22px 50px rgba(84,78,127,.18),inset 0 0 22px rgba(255,255,255,.7);transform:translate(-50%,-50%);transition:transform .25s,box-shadow .25s}.qi-rabbit-door:hover{transform:translate(-50%,-53%) scale(1.015);box-shadow:0 0 0 12px rgba(255,255,255,.14),0 28px 58px rgba(84,78,127,.23),inset 0 0 26px #fff}.qi-rabbit-door>span{display:grid;gap:7px;text-align:left}.qi-rabbit-door small{color:#8e86a5;font:7px/1 system-ui,sans-serif;letter-spacing:.13em}.qi-rabbit-door b{font-size:15px;font-weight:400;letter-spacing:.05em}.qi-rabbit-door>i{color:#ad7e72;font:10px/1.5 system-ui,sans-serif;font-style:normal;letter-spacing:.1em}
-                .qi-interlayer{color:#ece7dc;background:radial-gradient(circle at 70% 20%,rgba(212,180,120,.08),transparent 25%),linear-gradient(145deg,var(--night2),var(--night) 65%,#050b12)}.qi-interlayer:after{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.16;background-image:linear-gradient(90deg,transparent 49.8%,rgba(255,255,255,.06) 50%,transparent 50.2%),radial-gradient(rgba(255,255,255,.7) .5px,transparent .7px);background-size:210px 100%,19px 19px}.qi-interlayer .qi-exit{color:#ece7dc}.qi-interlayer .qi-kicker{color:var(--gold)}.qi-entry{display:flex;align-items:center}.qi-entry>section{position:relative;z-index:3;width:min(760px,82vw);margin:0 auto;padding:90px 0}.qi-entry h2{margin:0;font-size:clamp(51px,7vw,94px);font-weight:400;line-height:1.03;letter-spacing:-.06em}.qi-entry>section>p:not(.qi-kicker){color:#98a6ae;line-height:1.9}.qi-entry aside{margin:30px 0;padding:18px 0 18px 20px;border-left:2px solid var(--red);color:#b2bbc0}.qi-interlayer .qi-text-action{color:#ece7dc}
-                .qi-explore{padding:86px clamp(22px,7vw,105px) 64px}.qi-route-count{position:fixed;z-index:8;left:clamp(18px,5vw,72px);top:27px;color:#647784;font:8px/1 system-ui,sans-serif;letter-spacing:.12em}.qi-explore>header{position:relative;z-index:3;width:min(820px,66vw);margin-top:3vh}.qi-explore>header h2{margin:0;font-size:clamp(44px,6vw,82px);font-weight:400;line-height:1.06;letter-spacing:-.055em}.qi-explore>header>p:not(.qi-kicker){color:#91a1aa;line-height:1.8}.qi-explore>header em{display:block;margin-top:13px;color:#b4bdc1;font-size:12px;line-height:1.8;font-style:normal}.qi-node-body{position:relative;z-index:4;display:grid;grid-template-columns:minmax(300px,.8fr) minmax(380px,1.2fr);gap:7vw;width:min(1080px,100%);margin:48px auto 0}.qi-node-body>aside{padding:20px 0 20px 21px;border-left:1px solid rgba(212,180,120,.28)}.qi-node-body>aside small,.qi-node-actions>small,.qi-response small,.qi-exits>small{color:#6e8290;font:8px/1 system-ui,sans-serif;letter-spacing:.14em}.qi-node-body>aside p{color:#bec5c8;line-height:1.8}.qi-node-body blockquote{margin:22px 0 0;color:#d0ad77;font-size:12px;line-height:1.8}.qi-node-actions{display:grid;align-content:start}.qi-node-actions>small{margin-bottom:10px}.qi-node-actions>button{display:flex;justify-content:space-between;padding:15px 2px;border:0;border-bottom:1px solid rgba(236,231,220,.13);background:transparent;color:#ece7dc;text-align:left;cursor:pointer}.qi-node-actions>button span{color:#a9544d}.qi-response{padding:22px 0;border-top:1px solid rgba(236,231,220,.14);border-bottom:1px solid rgba(236,231,220,.14)}.qi-response p{margin:12px 0;color:#c5cbcd;line-height:1.85}.qi-exits{position:relative;z-index:4;width:min(1080px,100%);margin:55px auto 0;border-top:1px solid rgba(236,231,220,.13)}.qi-exits>small{display:block;margin-top:-23px;margin-bottom:9px}.qi-exits>button{display:grid;grid-template-columns:48px 1fr auto;width:100%;padding:16px 2px;border:0;border-bottom:1px solid rgba(236,231,220,.13);background:transparent;color:#ece7dc;text-align:left;cursor:pointer}.qi-exits button i{color:#657987;font:9px/1.5 system-ui,sans-serif;font-style:normal}.qi-exits button strong{font-weight:400}.qi-exits button span{color:#81939d;font:9px/1.5 system-ui,sans-serif}.qi-exits button.is-hidden-route{border-color:rgba(177,67,60,.45);color:#dfb2aa}.qi-exits>p{color:#7f919a;font-size:11px;line-height:1.7}.qi-trace-pocket{position:fixed;z-index:8;left:18px;bottom:18px;display:flex;gap:5px;max-width:76vw;overflow:hidden}.qi-trace-pocket span{flex:none;padding:4px 6px;border:1px solid rgba(212,180,120,.14);color:#667b88;font:7px/1 system-ui,sans-serif}
-                .qi-core{display:flex;align-items:center;color:#eee8dd;background:radial-gradient(circle at 18% 48%,rgba(177,67,60,.15),transparent 27%),linear-gradient(110deg,#050a0e,#0c1923 72%,#05090d)}.qi-core>section{position:relative;z-index:4;width:min(720px,55vw);margin-left:clamp(32px,9vw,150px);padding:90px 0}.qi-core h2{margin:0;font-size:clamp(43px,6vw,79px);font-weight:400;line-height:1.07;letter-spacing:-.05em}.qi-core blockquote{margin:30px 0;color:#b9c0c3;font-size:clamp(14px,1.7vw,19px);line-height:2}.qi-core .qi-text-action{color:#eee8dd}.qi-core-figure{position:absolute;z-index:2;right:8vw;top:14vh;width:28vw;height:72vh;border-left:1px solid rgba(212,180,120,.13);border-right:1px solid rgba(177,67,60,.15);clip-path:polygon(34% 0,72% 0,82% 30%,100% 100%,0 100%,19% 30%)}.qi-core-figure span{position:absolute;left:50%;top:22%;transform:translateX(-50%);color:rgba(238,232,221,.2);font-size:78px}.qi-core-figure i{position:absolute;left:50%;top:43%;width:1px;height:47%;background:linear-gradient(rgba(212,180,120,.4),transparent)}
-                .qi-black{background:#000;color:#f4f1ec}.qi-touch-area{position:absolute;inset:0;overflow:hidden;touch-action:none;user-select:none;cursor:crosshair}.qi-blessing{position:absolute;z-index:6;left:50%;top:50%;width:min(720px,84vw);transform:translate(-50%,-50%);pointer-events:none;animation:qi-fade 1s both}.qi-blessing small,.qi-touch-copy small,.qi-ending small{display:block;margin-bottom:24px;color:rgba(255,255,255,.32);font:9px/1 system-ui,sans-serif;letter-spacing:.24em}.qi-blessing p{margin:0 0 15px;font-size:clamp(14px,1.8vw,20px);line-height:1.9;letter-spacing:.035em}.qi-blessing b{display:block;margin-top:30px;color:rgba(255,255,255,.42);font:10px/1.6 system-ui,sans-serif;font-weight:400}.qi-touch-copy{position:absolute;z-index:7;left:50%;top:34%;width:min(560px,84vw);transform:translate(-50%,-50%);text-align:center;pointer-events:none}.qi-touch-copy p{margin:0;font-size:clamp(21px,3vw,31px)}.qi-touch-copy span{display:block;margin-top:18px;color:rgba(255,255,255,.38);font:11px/1.7 system-ui,sans-serif}.qi-touch-area svg{position:absolute;inset:0;width:100%;height:100%;opacity:0;pointer-events:none}.qi-touch-area svg path{fill:none;stroke:rgba(177,67,60,.7);stroke-width:.18;vector-effect:non-scaling-stroke;stroke-dasharray:1 1}.qi-user-finger,.qi-char-finger{position:absolute;z-index:4;left:var(--touch-x);top:var(--touch-y);width:19px;height:34px;border:1px solid rgba(255,255,255,.5);border-radius:10px 10px 13px 13px;transform:translate(-50%,-50%) rotate(24deg) scale(0);opacity:0;pointer-events:none;box-shadow:0 0 23px rgba(255,255,255,.13)}.qi-user-finger i,.qi-char-finger i{position:absolute;right:-9px;top:3px;width:13px;height:16px;border-right:1px solid rgba(255,255,255,.45);border-bottom:1px solid rgba(255,255,255,.45);border-radius:0 0 10px 0}.qi-char-finger{left:102%;top:8%;border-color:rgba(177,67,60,.85);transform:translate(-50%,-50%) rotate(-150deg) scale(0);transition:left 1.05s cubic-bezier(.22,.75,.28,1),top 1.05s cubic-bezier(.22,.75,.28,1),transform .35s,opacity .35s}.qi-char-finger i{border-color:rgba(177,67,60,.85)}.qi-touch-area.is-active .qi-user-finger,.qi-touch-area.is-joined .qi-user-finger{opacity:1;transform:translate(-50%,-50%) rotate(24deg) scale(1)}.qi-touch-area.is-approaching .qi-char-finger,.qi-touch-area.is-joined .qi-char-finger{left:calc(var(--touch-x) + 1.1%);top:calc(var(--touch-y) - .5%);opacity:1;transform:translate(-50%,-50%) rotate(-150deg) scale(1)}.qi-touch-area.is-approaching svg,.qi-touch-area.is-joined svg{opacity:1;animation:qi-thread 1.05s ease both}.qi-touch-area.is-joined .qi-user-finger{transform:translate(-50%,-50%) rotate(18deg) scale(1)}.qi-touch-area.is-joined .qi-char-finger{transform:translate(-50%,-50%) rotate(-164deg) scale(1)}.qi-ending{display:flex;align-items:center;justify-content:center;text-align:center}.qi-ending section{width:min(650px,84vw);animation:qi-fade 1.2s both}.qi-ending h2{margin:0;font-size:clamp(36px,6vw,70px);font-weight:400}.qi-ending section>p{color:rgba(255,255,255,.45);line-height:1.8}.qi-ending section>p:last-of-type{margin-top:28px;color:#b95850;font-size:12px;letter-spacing:.28em}.qi-ending section>div{display:flex;justify-content:center;gap:25px;margin-top:38px}.qi-ending section button{padding:11px 1px;border:0;border-bottom:1px solid rgba(255,255,255,.18);background:transparent;color:rgba(255,255,255,.58);cursor:pointer}
-                .qi-event-header{grid-template-columns:1fr auto;padding-right:76px}.qi-event-brand{display:grid;justify-self:start;text-align:left}.qi-event-brand span{font-size:14px;letter-spacing:.14em}.qi-event-brand small{margin-top:3px;color:rgba(241,243,255,.48);font:7px/1 system-ui,sans-serif;letter-spacing:.23em}.qi-event-page{padding-bottom:24px}.qi-home-hero{min-height:calc(100vh - 114px)}.qi-home-hero .qi-dream-arch>path{display:none}.qi-home-crescent{position:absolute;z-index:2;right:12%;top:12%;width:92px;aspect-ratio:1;border-radius:50%;background:var(--moon);box-shadow:0 0 34px rgba(255,253,231,.32)}.qi-home-crescent:after{content:"";position:absolute;left:29%;top:-12%;width:100%;height:100%;border-radius:50%;background:#19327f}.qi-home-resume{display:block;margin:14px auto 0;padding:5px 0;border:0;border-bottom:1px solid rgba(239,242,255,.28);background:transparent;color:rgba(242,244,255,.62);cursor:pointer;font-size:10px;letter-spacing:.08em}
-                .qi-event-shell.is-home .qi-celestial-backdrop{opacity:.52;filter:blur(1.4px)}.qi-home-hero>.qi-dream-arch{opacity:.56;filter:blur(.7px) drop-shadow(0 0 17px rgba(214,225,255,.13))}.qi-home-title{isolation:isolate;display:flex;flex-direction:column;align-items:center;width:min(540px,90vw);padding:31px 34px}.qi-home-title:before{content:"";position:absolute;z-index:-1;inset:-7% -10%;background:radial-gradient(ellipse at center,rgba(19,38,104,.68) 0,rgba(19,38,104,.46) 48%,rgba(19,38,104,0) 76%);backdrop-filter:blur(5.5px);-webkit-mask-image:radial-gradient(ellipse at center,#000 42%,transparent 76%);mask-image:radial-gradient(ellipse at center,#000 42%,transparent 76%);pointer-events:none}.qi-home-title h1{text-shadow:0 2px 3px rgba(4,9,34,.38),0 0 29px rgba(238,242,255,.22)}.qi-home-title>em{color:rgba(247,248,255,.68)}.qi-home-title blockquote{color:rgba(251,250,245,.9);text-shadow:0 1px 7px rgba(3,8,31,.7)}.qi-primary-orbit{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;width:236px;min-width:236px;min-height:66px;padding:11px 28px;margin-inline:auto;text-align:center}.qi-primary-orbit i{position:absolute;left:24px;top:50%;grid-row:auto;transform:translateY(-50%)}.qi-primary-orbit span,.qi-primary-orbit small{display:block;width:100%;text-align:center}.qi-primary-orbit span{padding-left:.18em}
-                .qi-home-title h1{display:grid;place-items:center;gap:8px;font-size:clamp(52px,7.2vw,92px);line-height:1;letter-spacing:0}.qi-home-title h1>span{display:block;padding-left:.5em;color:rgba(255,253,242,.9);font-size:.39em;line-height:1;letter-spacing:.5em}.qi-home-title h1>b{display:block;padding-left:.075em;font:inherit;font-weight:400;line-height:.92;letter-spacing:.075em}.qi-home-title>em{margin-top:16px;letter-spacing:.31em}.qi-home-title blockquote{margin:25px auto 22px;font-size:12px;line-height:2.05;letter-spacing:.075em}.qi-primary-orbit{width:224px;min-width:224px;min-height:62px;padding:9px 26px}.qi-primary-orbit span{font-size:14px;letter-spacing:.2em}.qi-primary-orbit small{font-size:6.5px;letter-spacing:.18em}.qi-home-resume{margin-top:17px;color:rgba(235,239,255,.48);font-size:9px;letter-spacing:.1em}
-                .qi-interlayer{isolation:isolate;background:radial-gradient(circle at 54% 2%,#2548aa 0,#142863 27%,#0b1742 60%,#060d29 100%)}.qi-interlayer:before{content:"";position:fixed;z-index:-1;left:-18%;right:-18%;bottom:-24vh;height:48vh;border:1px solid rgba(223,231,255,.18);border-radius:50% 50% 0 0/100% 100% 0 0;box-shadow:0 -45px 100px rgba(84,107,204,.08);pointer-events:none}.qi-interlayer:after{opacity:.2;background-image:linear-gradient(90deg,transparent 49.8%,rgba(215,225,255,.05) 50%,transparent 50.2%),radial-gradient(rgba(255,255,255,.75) .5px,transparent .8px);background-size:230px 100%,21px 21px}.qi-interlayer>.qi-celestial-backdrop{opacity:.34}.qi-story-brand{position:fixed;z-index:8;left:24px;top:max(19px,env(safe-area-inset-top));display:grid;color:rgba(245,246,255,.78)}.qi-story-brand span{font-size:11px;letter-spacing:.16em}.qi-story-brand small{margin-top:4px;color:rgba(224,230,255,.36);font:6px/1 system-ui,sans-serif;letter-spacing:.22em}.qi-story-phases{position:fixed;z-index:8;left:50%;top:max(25px,env(safe-area-inset-top));transform:translateX(-50%);color:rgba(239,242,255,.58)}.qi-story-arch{position:fixed;z-index:-1;left:50%;top:79px;width:min(860px,82vw);height:47vh;transform:translateX(-50%);border:1px solid rgba(229,235,255,.15);border-bottom:0;border-radius:50% 50% 0 0/72% 72% 0 0;pointer-events:none}.qi-story-arch:before,.qi-story-arch:after{content:"";position:absolute;left:50%;top:53%;border:1px solid rgba(229,235,255,.1);border-radius:50%;transform:translate(-50%,-50%) rotate(-12deg)}.qi-story-arch:before{width:78%;height:48%}.qi-story-arch:after{width:56%;height:78%;border-style:dashed;transform:translate(-50%,-50%) rotate(28deg)}.qi-story-arch i{position:absolute;width:5px;height:5px;border-radius:50%;background:#fff;box-shadow:0 0 12px #fff}.qi-story-arch i:nth-child(1){left:12%;top:48%}.qi-story-arch i:nth-child(2){right:16%;top:30%}.qi-story-arch i:nth-child(3){left:54%;bottom:3%;background:var(--gold)}
-                .qi-entry>section{width:min(790px,82vw);padding-top:124px}.qi-entry .qi-kicker,.qi-explore .qi-kicker{color:var(--gold)}.qi-entry h2{color:var(--moon);text-shadow:0 0 28px rgba(238,242,255,.12)}.qi-entry-moon{position:absolute;z-index:-1;right:3%;top:17%;width:160px;aspect-ratio:1;border:1px solid rgba(237,242,255,.24);border-radius:50%;box-shadow:0 0 0 16px rgba(237,242,255,.025)}.qi-entry-moon i{position:absolute;inset:22%;border-radius:50%;background:rgba(255,253,240,.85)}.qi-entry-moon i:after{content:"";position:absolute;left:28%;top:-9%;width:100%;height:100%;border-radius:50%;background:#14265d}.qi-entry aside{border-left-color:var(--gold);background:linear-gradient(90deg,rgba(196,207,255,.06),transparent)}.qi-interlayer .qi-text-action{border-color:rgba(233,238,255,.17)}.qi-interlayer .qi-text-action i{color:var(--gold)}
-                .qi-explore{padding-top:118px}.qi-route-count{left:auto;right:92px;top:31px;color:rgba(229,234,255,.5)}.qi-route-count i{margin-right:7px;color:var(--gold);font-style:normal}.qi-night-progress{position:relative;z-index:4;display:grid;grid-template-columns:42px 74px 1fr auto;align-items:center;gap:13px;width:min(900px,78vw);margin:3vh auto 0;padding:0 0 13px;border-bottom:1px solid rgba(232,237,255,.14)}.qi-night-progress>span{color:var(--gold);font:8px/1 system-ui,sans-serif;letter-spacing:.18em}.qi-night-progress>b{color:#f3f1e9;font-size:17px;font-weight:400;letter-spacing:.16em}.qi-night-progress>small{color:rgba(219,226,247,.48);font:8px/1.5 system-ui,sans-serif;letter-spacing:.08em}.qi-night-progress>i{display:flex;gap:6px;font-style:normal}.qi-night-progress>i em{display:block;width:24px;height:1px;background:rgba(232,237,255,.14);transition:background .45s,box-shadow .45s}.qi-night-progress>i em.is-lit{background:var(--gold);box-shadow:0 0 8px rgba(231,212,155,.55)}.qi-explore>header{width:min(900px,78vw);margin:28px auto 0;padding-right:145px}.qi-location-seal{position:absolute;right:0;top:-19px;display:grid;place-items:center;width:116px;height:116px;border:1px solid rgba(231,237,255,.22);border-radius:50%;box-shadow:0 0 0 11px rgba(231,237,255,.025),0 0 35px rgba(157,176,255,.08)}.qi-location-seal:before,.qi-location-seal:after{content:"";position:absolute;inset:17%;border:1px dashed rgba(231,237,255,.17);border-radius:50%}.qi-location-seal:after{inset:46%;border:0;background:var(--gold);box-shadow:0 -44px 0 rgba(237,241,255,.38),0 44px 0 rgba(237,241,255,.38)}.qi-location-seal i{position:relative;z-index:2;color:rgba(246,246,255,.72);font:14px/1 system-ui,sans-serif;font-style:normal}.qi-location-seal span{position:absolute;left:-17px;right:-17px;top:50%;border-top:1px solid rgba(231,237,255,.14);transform:rotate(-16deg)}.qi-explore>header h2{color:var(--moon);font-size:clamp(48px,6.5vw,88px);text-shadow:0 0 30px rgba(232,237,255,.11)}.qi-explore>header>p:not(.qi-kicker){max-width:710px;color:#b7c2dc;font-size:14px}.qi-explore>header em{color:#d0d5e6}.qi-node-body{gap:6vw;margin-top:55px;padding:30px clamp(22px,4vw,54px);border-top:1px solid rgba(232,237,255,.16);border-bottom:1px solid rgba(232,237,255,.1);background:linear-gradient(90deg,rgba(163,180,241,.035),rgba(255,255,255,.018),rgba(163,180,241,.035));backdrop-filter:blur(5px)}.qi-node-body>aside{border-left-color:rgba(231,212,155,.5)}.qi-node-body>aside small,.qi-node-actions>small,.qi-response small,.qi-exits>small{color:#9ca9cc}.qi-node-body>aside p{color:#d4d9e8}.qi-node-actions>button{position:relative;padding:17px 27px 17px 2px;border-color:rgba(232,237,255,.14);color:#f2f1ed;transition:padding-left .2s,color .2s}.qi-node-actions>button:before{content:"✦";position:absolute;left:-18px;color:var(--gold);opacity:0;transition:opacity .2s}.qi-node-actions>button:hover{padding-left:18px;color:#fff}.qi-node-actions>button:hover:before{opacity:1}.qi-node-actions>button span{color:var(--gold)}.qi-response{border-color:rgba(232,237,255,.16)}.qi-response p{color:#d5d9e5}.qi-leave-node{display:flex;align-items:center;justify-content:space-between;width:100%;margin-top:19px;padding:14px 1px;border:0;border-top:1px solid rgba(232,237,255,.2);border-bottom:1px solid rgba(232,237,255,.12);background:transparent;color:#fff;cursor:pointer;text-align:left}.qi-leave-node>span{display:grid;gap:5px}.qi-leave-node b{font-size:16px;font-weight:400;letter-spacing:.18em}.qi-leave-node small{font:8px/1 system-ui,sans-serif;letter-spacing:.08em}.qi-leave-node>i{color:var(--gold);font-style:normal;transition:transform .2s}.qi-leave-node:hover>i{transform:translateY(3px)}.qi-left-node{display:flex;align-items:center;gap:9px;margin-top:18px;color:rgba(220,226,244,.48);font-size:10px}.qi-left-node i{color:var(--gold);font-style:normal}.qi-exits{margin-top:70px;border-top-color:rgba(232,237,255,.18)}.qi-exits>small{margin-bottom:15px}.qi-exits>button{grid-template-columns:64px 1fr auto;align-items:center;min-height:74px;padding:10px 4px;border-bottom-color:rgba(232,237,255,.14);transition:background .2s,padding .2s}.qi-exits>button:hover{padding-left:12px;background:linear-gradient(90deg,rgba(126,149,231,.09),transparent)}.qi-exits button i{display:grid;place-items:center;width:42px;height:42px;border:1px solid rgba(231,237,255,.24);border-radius:50%;color:var(--gold);box-shadow:0 0 0 5px rgba(231,237,255,.02)}.qi-exits button strong{font-size:17px;letter-spacing:.05em}.qi-exits button span{color:#aeb9d6}.qi-exits button.is-hidden-route{border-color:rgba(231,212,155,.42);color:#fff2cc}.qi-trace-pocket{right:18px;left:auto}.qi-trace-pocket span{border-color:rgba(231,212,155,.2);color:#8796bd}
-                .qi-mini-map{position:relative;z-index:4;width:min(1080px,100%);margin:72px auto 48px;padding-top:18px;border-top:1px solid rgba(232,237,255,.18);animation:qi-map-reveal .45s ease both}.qi-mini-map>header{display:flex;align-items:end;justify-content:space-between}.qi-mini-map>header>div{display:grid;gap:6px}.qi-mini-map>header small{color:var(--gold);font:8px/1 system-ui,sans-serif;letter-spacing:.2em}.qi-mini-map>header strong{font-size:18px;font-weight:400;letter-spacing:.08em}.qi-mini-map>header>span{color:rgba(219,227,250,.4);font:8px/1 system-ui,sans-serif;letter-spacing:.1em}.qi-mini-map-field{position:relative;height:370px;margin-top:23px;overflow:hidden;background:radial-gradient(circle at 50% 52%,rgba(92,117,210,.13),transparent 34%)}.qi-mini-map-field:before,.qi-mini-map-field:after{content:"";position:absolute;left:50%;top:52%;border:1px solid rgba(224,232,255,.08);border-radius:50%;transform:translate(-50%,-50%)}.qi-mini-map-field:before{width:62%;height:72%}.qi-mini-map-field:after{width:92%;height:116%;border-style:dashed}.qi-mini-map-field>svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.qi-mini-map-field line{stroke:rgba(231,237,255,.4);stroke-width:.34;stroke-dasharray:1.6 1.5;vector-effect:non-scaling-stroke}.qi-mini-map-field line.is-back{stroke:rgba(231,212,155,.72);stroke-dasharray:.7 2}.qi-mini-map-field circle{fill:rgba(22,37,94,.9);stroke:rgba(236,240,255,.32);stroke-width:.28;vector-effect:non-scaling-stroke}.qi-mini-map-field circle.is-orbit{fill:none;stroke:rgba(236,240,255,.1);stroke-dasharray:1 2}.qi-map-current{position:absolute;z-index:3;left:50%;top:52%;display:grid;place-items:center;width:150px;transform:translate(-50%,-50%);text-align:center;pointer-events:none}.qi-map-current i{display:grid;place-items:center;width:45px;height:45px;margin-bottom:9px;border:1px solid var(--gold);border-radius:50%;color:var(--gold);font:10px/1 system-ui,sans-serif;font-style:normal;box-shadow:0 0 0 8px rgba(236,240,255,.025),0 0 22px rgba(231,212,155,.12)}.qi-map-current b{font:7px/1 system-ui,sans-serif;font-weight:400;letter-spacing:.17em;color:rgba(226,232,251,.45)}.qi-map-current span{margin-top:5px;color:#fff;font-size:13px;line-height:1.35}.qi-local-node{position:absolute;z-index:4;display:grid;place-items:center;width:160px;padding:0;border:0;background:transparent;color:#f0f1f8;text-align:center;cursor:pointer;transform:translate(-50%,-50%);transition:color .2s,transform .2s}.qi-local-node:hover{color:#fff;transform:translate(-50%,-53%)}.qi-local-node>i{display:grid;place-items:center;width:39px;height:39px;margin-bottom:8px;border:1px solid rgba(230,236,255,.34);border-radius:50%;color:var(--gold);font:9px/1 system-ui,sans-serif;font-style:normal;background:rgba(10,20,61,.7);box-shadow:0 0 0 5px rgba(230,236,255,.02)}.qi-local-node b{font-size:13px;font-weight:400;line-height:1.35}.qi-local-node small{margin-top:5px;color:rgba(215,224,248,.43);font:7px/1 system-ui,sans-serif;letter-spacing:.07em}.qi-local-node.is-visited>i{border-color:rgba(231,212,155,.58)}.qi-local-node.is-back{color:#fff1c8}.qi-local-node.is-back>i{border-style:dashed;border-color:rgba(231,212,155,.72);color:var(--gold)}.qi-local-node.is-back small{color:rgba(255,239,194,.68)}.qi-local-node.is-back:hover{transform:translate(-50%,-53%)}.qi-map-secret{display:grid;grid-template-columns:54px 1fr;align-items:center;gap:15px;width:min(520px,100%);margin:0 auto;padding:13px 18px;border:1px solid rgba(231,212,155,.48);background:rgba(33,44,90,.46);color:#fff4ce;cursor:pointer;text-align:left}.qi-map-secret>i{display:grid;place-items:center;width:38px;height:38px;border:1px solid currentColor;border-radius:50%;font:9px/1 system-ui,sans-serif;font-style:normal}.qi-map-secret span{display:grid;gap:5px}.qi-map-secret b{font-weight:400}.qi-map-secret small{color:rgba(255,244,206,.54);font:8px/1 system-ui,sans-serif}.qi-map-locked{max-width:600px;margin:0 auto;padding:18px;border-top:1px solid rgba(231,212,155,.2);color:#9ba8c8;font-size:11px;line-height:1.8;text-align:center}
-                .qi-memory-notice{max-width:310px;margin:13px auto 0;color:rgba(232,237,255,.55);font:8px/1.65 system-ui,sans-serif;letter-spacing:.08em}.qi-memory-notice.is-memory{color:rgba(255,242,194,.72)}.qi-memory-notice.is-loading:after{content:"";display:inline-block;width:12px;margin-left:6px;border-bottom:1px solid currentColor;animation:qi-memory-scan 1.1s ease-in-out infinite}.qi-primary-orbit:disabled,.qi-chapter-start:disabled,.qi-home-resume:disabled,.qi-resume-link:disabled{cursor:wait;opacity:.62}.qi-memory-evidence{display:grid;gap:8px;margin:23px 0 4px;padding:17px 17px 16px;border:1px solid rgba(231,212,155,.2);background:linear-gradient(135deg,rgba(231,212,155,.07),rgba(105,127,210,.06))}.qi-node-body>aside .qi-memory-evidence small{color:var(--gold)}.qi-memory-evidence b{color:#f2ead1;font-size:13px;font-weight:400;letter-spacing:.08em}.qi-node-body>aside .qi-memory-evidence p{margin:0;color:#dce1ee;font-size:12px;line-height:1.75}.qi-memory-evidence em{color:#9ba9cb;font-size:10px;line-height:1.75;font-style:normal}.qi-memory-extension{display:block;margin:15px 0 3px;padding-left:13px;border-left:1px solid var(--gold);color:#dacda9;font-size:11px;line-height:1.8;font-style:normal}.qi-final-echo{padding-bottom:14px;color:#d9c792;border-bottom:1px solid rgba(255,255,255,.11)}
-                .qi-mini-map{width:min(1080px,100%);margin:72px auto 48px;padding-top:18px}.qi-mini-map>header{align-items:center}.qi-map-objective{display:flex;align-items:center;gap:13px;margin-top:17px;padding:13px 16px;border:1px solid rgba(231,212,155,.18);background:linear-gradient(90deg,rgba(231,212,155,.07),transparent)}.qi-map-objective>i{color:var(--gold);font-style:normal}.qi-map-objective>span{display:grid;gap:5px}.qi-map-objective small{color:rgba(219,227,250,.4);font:7px/1 system-ui,sans-serif;letter-spacing:.15em}.qi-map-objective b{color:#f0eee7;font-size:12px;font-weight:400;line-height:1.55}.qi-mini-map-field{height:500px;margin-top:12px;border-left:1px solid rgba(232,237,255,.08);border-right:1px solid rgba(232,237,255,.08);overflow:visible;background:radial-gradient(circle at 50% 62%,rgba(92,117,210,.16),transparent 38%),linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:auto,40px 40px,40px 40px}.qi-mini-map-field:before{width:80%;height:112%;top:92%;border-color:rgba(224,232,255,.07)}.qi-mini-map-field:after{width:110%;height:132%;top:87%;border-color:rgba(224,232,255,.06)}.qi-mini-map-field line{stroke:rgba(231,237,255,.12);stroke-width:.25;stroke-dasharray:1.2 1.4}.qi-mini-map-field line.is-known{stroke:rgba(221,229,255,.36)}.qi-mini-map-field line.is-travelled{stroke:rgba(231,212,155,.43);stroke-dasharray:.5 1.2}.qi-mini-map-field line.is-recommended{stroke:#e7d49b;stroke-width:.55;stroke-dasharray:none;filter:drop-shadow(0 0 2px rgba(231,212,155,.7))}.qi-world-node{position:absolute;z-index:3;display:grid;place-items:center;width:152px;padding:0;border:0;background:transparent;color:rgba(222,228,247,.42);text-align:center;transform:translate(-50%,-50%);transition:color .2s,transform .2s,opacity .2s}.qi-world-node:disabled{cursor:default}.qi-world-node.is-adjacent{color:#edf0fb;cursor:pointer}.qi-world-node.is-adjacent:hover{transform:translate(-50%,-54%)}.qi-world-node>i{display:grid;place-items:center;width:38px;height:38px;margin-bottom:7px;border:1px solid rgba(230,236,255,.22);border-radius:50%;background:rgba(8,17,55,.82);color:rgba(231,212,155,.58);font:8px/1 system-ui,sans-serif;font-style:normal;box-shadow:0 0 0 5px rgba(230,236,255,.018)}.qi-world-node>b{max-width:148px;font-size:11px;font-weight:400;line-height:1.3}.qi-world-node>small{margin-top:4px;color:rgba(203,214,243,.35);font:6px/1.3 system-ui,sans-serif;letter-spacing:.07em}.qi-world-node.is-fog{opacity:.24}.qi-world-node.is-visited:not(.is-fog)>i{border-color:rgba(231,212,155,.46)}.qi-world-node.is-complete:not(.is-current)>i:after{content:"✦";color:var(--gold);font-size:11px}.qi-world-node.is-complete:not(.is-current)>i{font-size:0}.qi-world-node.is-current{z-index:5;color:#fff}.qi-world-node.is-current>i{width:48px;height:48px;border-color:var(--gold);color:var(--gold);background:rgba(27,45,109,.95);box-shadow:0 0 0 8px rgba(231,212,155,.045),0 0 25px rgba(231,212,155,.2)}.qi-world-node.is-current>small{color:var(--gold)}.qi-world-node.is-recommended{z-index:4;color:#fff4cc}.qi-world-node.is-recommended>i{border-color:var(--gold);color:var(--gold);box-shadow:0 0 0 7px rgba(231,212,155,.06),0 0 22px rgba(231,212,155,.24);animation:qi-node-pulse 1.8s ease-in-out infinite}.qi-world-node.is-recommended>small{color:#e7d49b}.qi-map-guide{display:flex;align-items:center;gap:18px;min-height:36px;padding:8px 0 16px;border-bottom:1px solid rgba(232,237,255,.12);color:rgba(214,222,244,.4);font:7px/1 system-ui,sans-serif;letter-spacing:.08em}.qi-map-guide>span{display:flex;align-items:center;gap:5px}.qi-map-guide>span i{display:block;width:7px;height:7px;border:1px solid currentColor;border-radius:50%}.qi-map-guide>span i.current{border-color:var(--gold);background:var(--gold)}.qi-map-guide>span i.next{box-shadow:0 0 7px var(--gold)}.qi-map-guide>span i.done:after{content:"✦";position:relative;left:1px;top:-3px;color:var(--gold);font-size:6px}.qi-map-guide>button{margin-left:auto;padding:7px 0;border:0;border-bottom:1px solid rgba(231,212,155,.25);background:transparent;color:rgba(231,212,155,.65);cursor:pointer;font:8px/1.4 system-ui,sans-serif}.qi-map-secret{margin-top:19px}
-                @keyframes qi-caret{0%,48%{opacity:1}49%,100%{opacity:0}}@keyframes qi-dot{0%,70%,100%{opacity:.2}35%{opacity:1}}@keyframes qi-float{50%{translate:0 -8px}}@keyframes qi-drift{from{transform:translate3d(-.6%,-.4%,0) rotate(-.3deg)}to{transform:translate3d(.7%,.5%,0) rotate(.35deg)}}@keyframes qi-bg-glitch{0%,80%,100%{filter:none}84%{filter:contrast(1.8) hue-rotate(8deg);transform:translateX(2px)}88%{filter:none;transform:none}}@keyframes qi-fade{from{opacity:0}to{opacity:1}}@keyframes qi-thread{from{clip-path:inset(0 0 0 100%)}to{clip-path:inset(0)}}@keyframes qi-map-reveal{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}@keyframes qi-node-pulse{50%{box-shadow:0 0 0 10px rgba(231,212,155,.02),0 0 32px rgba(231,212,155,.42)}}@keyframes qi-memory-scan{0%,100%{transform:scaleX(.25);transform-origin:left}50%{transform:scaleX(1);transform-origin:left}}@keyframes qi-wonder-cloud{from{transform:translate3d(-1%,-1%,0) scale(1)}to{transform:translate3d(1.5%,1%,0) scale(1.05)}}@keyframes qi-wonder-ring{to{transform:rotate(360deg)}}@keyframes qi-watch-float{50%{translate:0 17px;rotate:-4deg}}@keyframes qi-key-float{50%{translate:13px -10px;rotate:5deg}}@keyframes qi-rabbit-hop{0%,100%{translate:0 0}45%{translate:0 -14px}58%{translate:7px -8px}}@keyframes qi-card-drift{50%{translate:0 -13px}}@keyframes qi-suit-spin{to{transform:rotate(360deg)}}
-                @media(max-width:720px){.qi-exit{right:12px;top:max(14px,env(safe-area-inset-top));font-size:0}.qi-exit b{font-size:22px}.qi-event-header{grid-template-columns:1fr auto;height:62px;padding:env(safe-area-inset-top) 50px 0 16px}.qi-event-header>button span{font-size:11px}.qi-event-header>.qi-phase-row{display:none}.qi-event-currency{font-size:10px}.qi-event-currency span{font-size:12px}.qi-event-page{padding:70px 15px 86px}.qi-event-nav{bottom:max(9px,env(safe-area-inset-bottom));height:55px}.qi-event-nav button span{font-size:8px}.qi-home-hero{min-height:calc(100vh - 156px);overflow:visible}.qi-home-hero:before{left:-30%;right:-30%;top:7%;height:58%}.qi-dream-arch{width:111vw;height:70vh;opacity:.82}.qi-home-title{margin-top:-2vh}.qi-home-title>p{font-size:7px}.qi-home-title h1{font-size:52px;line-height:.86}.qi-home-title h1 span{font-size:.56em}.qi-home-title>em{font-size:6px}.qi-home-title blockquote{margin:22px auto;font-size:11px}.qi-primary-orbit{min-width:208px;padding:11px 21px}.qi-home-date{display:none}.qi-paper-birds i:nth-child(1){right:6%;top:20%}.qi-paper-birds i:nth-child(3){left:1%;bottom:19%}.qi-chapter-map{display:block;min-height:auto}.qi-chapter-map>header{padding:22px 10px 0}.qi-chapter-map>header h2{font-size:38px}.qi-chapter-map>header>span{margin-top:17px;font-size:11px}.qi-map-field{min-height:600px;margin-top:5px;border:0}.qi-map-node{grid-template-columns:46px auto;gap:8px}.qi-map-node>i{width:42px;height:42px}.qi-map-node>i:before{box-shadow:0 -24px 0 currentColor,0 24px 0 currentColor}.qi-map-node b{font-size:12px}.qi-map-node.n1{left:4%;top:84%}.qi-map-node.n2{left:52%;top:65%}.qi-map-node.n3{left:3%;top:45%}.qi-map-node.n4{left:53%;top:25%}.qi-map-node.n5{left:16%;top:6%}.qi-chapter-map>footer{position:static;margin:8px 10px 35px}.qi-chapter-cover{display:block;min-height:auto}.qi-chapter-arch{height:325px;margin-top:0}.qi-chapter-arch .qi-dream-arch{width:100%;height:100%;opacity:.72}.qi-caged-crane{top:60%;width:70px;height:94px}.qi-caged-crane span{left:10px;top:42px;transform:scale(.72) rotate(-13deg)}.qi-chapter-copy{margin:-24px 10px 35px}.qi-back-link{margin-bottom:24px}.qi-chapter-copy h2{font-size:61px}.qi-chapter-copy>em{margin:23px 0 13px;font-size:13px}.qi-chapter-copy>span{font-size:11px}.qi-chapter-start{margin-top:23px}.qi-ritual-page{padding:18px 3px 35px}.qi-ritual-page>header h2{font-size:36px}.qi-ritual-dial{width:260px;margin-top:27px}.qi-ritual-days{justify-content:flex-start;overflow-x:auto;scrollbar-width:none}.qi-ritual-days li{flex:0 0 69px}.qi-ritual-button{max-width:95%;font-size:12px}.qi-task-page,.qi-shop-page{padding:20px 7px 36px}.qi-task-page>header h2,.qi-shop-page>header h2{font-size:44px}.qi-task-list li{grid-template-columns:28px 1fr 66px;gap:8px;min-height:94px}.qi-task-list li>p{display:none}.qi-task-list li>button{font-size:9px}.qi-task-page>footer{align-items:flex-start}.qi-shop-window{display:block}.qi-shop-window article{display:grid;grid-template-columns:125px 1fr;gap:0 18px;padding:18px}.qi-shop-object{grid-row:1/3;height:160px}.qi-shop-object svg{width:95px;height:95px}.qi-shop-caption{align-self:center}.qi-shop-window article>button{grid-column:2;align-self:start}.qi-shop-page>footer{align-items:center;gap:15px}.qi-cover{align-items:flex-start}.qi-cover>section{width:auto;margin:0 24px;padding:108px 0 56px}.qi-cover h1{font-size:61px;line-height:.91}.qi-cover section>p:not(.qi-kicker){margin-top:34px;font-size:13px}.qi-cover-caret{right:-39vw;width:80vw;opacity:.5}.qi-fake-chat>header{height:68px;padding-left:12px}.qi-fake-chat>header>i{margin-right:44px}.qi-chat-thread{padding-inline:16px}.qi-distort .qi-shard{font-size:10px}.qi-fissure{left:9%;right:9%}.qi-entry>section{width:auto;margin:0 23px}.qi-entry h2{font-size:42px}.qi-explore{padding:82px 20px 54px}.qi-route-count{left:16px}.qi-explore>header{width:100%;margin-top:35px}.qi-explore>header h2{font-size:38px}.qi-node-body{display:block;margin-top:35px}.qi-node-actions{margin-top:28px}.qi-exits{margin-top:50px}.qi-core{align-items:flex-start}.qi-core>section{width:auto;margin:0 24px;padding:110px 0 60px}.qi-core h2{font-size:39px}.qi-core blockquote{font-size:14px}.qi-core-figure{right:-28vw;width:82vw;opacity:.33}.qi-blessing{width:auto;left:24px;right:24px;transform:translateY(-50%)}.qi-blessing p{font-size:13px}.qi-ending section>div{flex-direction:column;align-items:center;gap:12px}}
-                @media(max-width:720px){.qi-event-header{grid-template-columns:1fr auto;padding-right:52px}.qi-event-brand span{font-size:11px}.qi-event-page{padding:69px 14px 14px}.qi-home-hero{min-height:calc(100vh - 84px)}.qi-home-hero .qi-dream-arch{width:108vw;height:78vh}.qi-home-title{width:96vw;margin-top:3vh;padding:28px 14px}.qi-home-title:before{inset:-5% -1%}.qi-home-title h1{font-size:50px}.qi-home-title blockquote{margin:24px auto 20px}.qi-primary-orbit{width:224px;min-width:224px}.qi-home-crescent{right:3%;top:9%;width:68px}.qi-home-resume{font-size:9px}.qi-story-brand{left:16px;top:max(17px,env(safe-area-inset-top))}.qi-story-brand span{font-size:9px}.qi-story-phases{top:58px}.qi-story-arch{top:92px;width:118vw;height:39vh}.qi-entry>section{width:auto;margin:0 23px;padding-top:132px}.qi-entry-moon{right:-42px;top:15%;width:120px;opacity:.7}.qi-entry h2{font-size:46px}.qi-explore{padding:112px 20px 58px}.qi-route-count{left:20px;right:auto;top:77px}.qi-explore>header{width:100%;margin-top:35px;padding-right:0}.qi-location-seal{right:-37px;top:-36px;width:91px;height:91px;opacity:.62}.qi-location-seal:after{box-shadow:0 -34px 0 rgba(237,241,255,.38),0 34px 0 rgba(237,241,255,.38)}.qi-explore>header h2{max-width:88%;font-size:43px;line-height:1.05}.qi-explore>header>p:not(.qi-kicker){font-size:12px;line-height:1.9}.qi-node-body{display:block;margin:39px -2px 0;padding:27px 18px}.qi-node-actions{margin-top:31px}.qi-node-actions>button{font-size:14px;line-height:1.7}.qi-exits{margin-top:61px}.qi-exits>button{grid-template-columns:54px 1fr;min-height:78px}.qi-exits button i{width:38px;height:38px}.qi-exits button strong{font-size:15px}.qi-exits button span{grid-column:2;margin-top:4px;font-size:8px}.qi-trace-pocket{display:none}}
-                @media(max-width:720px){.qi-mini-map{margin-top:58px;padding-top:16px}.qi-mini-map>header{align-items:start}.qi-mini-map>header strong{font-size:15px}.qi-mini-map>header>span{max-width:88px;text-align:right;line-height:1.5}.qi-map-objective{align-items:flex-start;padding:11px 12px}.qi-map-objective b{font-size:10px}.qi-mini-map-field{height:455px;margin:11px -9px 0;background-size:auto,30px 30px,30px 30px}.qi-mini-map-field:before{width:92%;height:98%;top:94%}.qi-mini-map-field:after{width:126%;height:120%;top:90%}.qi-world-node{width:108px}.qi-world-node>i{width:31px;height:31px;margin-bottom:5px}.qi-world-node>b{max-width:108px;font-size:9px;line-height:1.35}.qi-world-node>small{max-width:105px;font-size:5.5px}.qi-world-node.is-current>i{width:39px;height:39px}.qi-map-guide{flex-wrap:wrap;gap:10px 13px;padding-bottom:13px}.qi-map-guide>button{flex-basis:100%;margin-left:0;text-align:left}.qi-map-secret{grid-template-columns:46px 1fr;padding:12px}.qi-map-locked{font-size:10px}.qi-memory-evidence{padding:14px}}
-                @media(max-width:720px){.qi-broken-header{height:68px;padding:17px 58px 13px 18px}.qi-shard{padding:8px 10px;font-size:9px}.qi-shard.s1{left:6%;top:18%}.qi-shard.s2{right:6%;top:15%}.qi-shard.s3{left:5%;top:39%}.qi-shard.s4{right:2%;top:49%;max-width:150px}.qi-shard.s5{left:5%;bottom:10%}.qi-shard.s6{right:5%;bottom:5%;font-size:34px}.qi-rabbit-door{top:69%;grid-template-columns:1fr auto;width:82vw;min-height:96px;padding:17px 20px}.qi-rabbit-door b{font-size:13px}.qi-rabbit-door>i{font-size:8px}.qi-wonderland-tunnel{width:115%;left:-7.5%}}
-                @media(max-width:720px){.qi-night-progress{grid-template-columns:36px 52px 1fr;width:100%;gap:7px;margin-top:16px;padding-bottom:11px}.qi-night-progress>b{font-size:14px}.qi-night-progress>small{font-size:7px;line-height:1.45}.qi-night-progress>i{grid-column:1/4}.qi-night-progress>i em{flex:1;width:auto}.qi-explore>header{margin-top:24px}.qi-leave-node{min-height:62px;padding:13px 1px}.qi-leave-node b{font-size:15px}.qi-left-node{line-height:1.6}}
-                @media(max-width:720px){.qi-home-title{width:90vw;margin-top:-1vh;padding:18px 12px 22px}.qi-home-title:before{inset:-4% -3%}.qi-home-title>p{margin-bottom:10px;font-size:7.5px;letter-spacing:.28em}.qi-home-title>.qi-phase-row{gap:7px;margin-bottom:18px}.qi-home-title>.qi-phase-row i{width:10px;height:10px}.qi-home-title h1{gap:6px;font-size:46px}.qi-home-title h1>span{font-size:.4em}.qi-home-title>em{margin-top:14px;font-size:6.5px;letter-spacing:.28em}.qi-home-title blockquote{margin:22px auto 18px;font-size:11.5px;line-height:2;letter-spacing:.06em}.qi-primary-orbit{width:206px;min-width:206px;min-height:60px;padding:8px 23px}.qi-primary-orbit i{left:18px;font-size:11px}.qi-primary-orbit span{font-size:13.5px}.qi-primary-orbit small{font-size:6px}.qixi-interlayer-root .qi-home-resume{margin-top:17px;font:9px/1.5 system-ui,sans-serif;letter-spacing:.08em}.qi-home-crescent{right:2%;top:8%;width:60px}}
-                @media(prefers-reduced-motion:reduce){.qixi-interlayer-root *{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+                @keyframes q7-sky-drift{to{transform:translate3d(1.5%,-1%,0) scale(1.02)}}@keyframes q7-ring{to{transform:rotate(360deg)}}@keyframes q7-hop{50%{transform:translateY(-15px) rotate(8deg)}}@keyframes q7-card{50%{transform:translateY(-9px) rotate(-1deg)}}@keyframes q7-thread{0%{stroke-dashoffset:410}55%,100%{stroke-dashoffset:0}}@keyframes q7-water{0%{opacity:.8;transform:scale(.3)}100%{opacity:0;transform:scale(1.25)}}@keyframes q7-other{from{opacity:0;transform:translateX(15px)}to{opacity:1;transform:none}}@keyframes q7-bridge-line{to{transform:rotate(calc(-8deg + var(--i) * 4deg)) translateX(-5%)}}@keyframes q7-name{50%{opacity:.6;filter:blur(1px)}}@keyframes q7-loading{50%{transform:scaleX(.35);opacity:.45}}@keyframes q7-portrait{from{opacity:0;transform:translateX(-50%) translateY(24px) scale(.98)}to{opacity:1;transform:translateX(-50%)}}@keyframes q7-ending{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+                @media(max-width:760px){.q7-cover>section{padding:72px 12px 50px}.q7-cover h1{font-size:53px}.q7-cover h1 small{font-size:.43em}.q7-cover blockquote{margin:27px 0 24px;font-size:12px}.q7-primary{min-height:70px}.q7-primary span{font-size:15px}.q7-story{padding:102px 20px 55px}.q7-entry h2{font-size:48px}.q7-route{left:18px;right:66px;top:max(22px,env(safe-area-inset-top));gap:5px}.q7-route>i{width:23px;height:23px}.q7-route>i.is-current{width:29px;height:29px}.q7-route>i span{font-size:6px}.q7-scene>header{margin-bottom:28px}.q7-scene>header h2{font-size:42px}.q7-scene-grid{display:block}.q7-object{width:min(270px,72vw)}.q7-visual>p{margin-top:17px}.q7-interaction{margin-top:34px}.q7-interaction>button{font-size:13px}.q7-result>p{font-size:13px}.q7-other-layer{margin-top:23px}.q7-words{gap:8px}.q7-words button,.q7-words span{padding:8px 10px;font-size:10px}.q7-distort header{top:12%;font-size:45px}.q7-door{bottom:10%;width:82vw}.q7-chat section p{font-size:13px}}
+                @media(max-height:700px) and (max-width:760px){.q7-cover>section{padding-top:42px}.q7-moons{margin:16px 0}.q7-cover h1{font-size:44px}.q7-cover blockquote{margin:18px 0}.q7-primary{min-height:60px}.q7-object{width:220px}.q7-scene>header{margin-bottom:18px}.q7-scene>header h2{font-size:36px}}
+                @media(prefers-reduced-motion:reduce){.qixi-v7-root *{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
             `}</style>
         </div>,
         document.body,
