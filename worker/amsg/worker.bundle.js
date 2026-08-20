@@ -9219,6 +9219,4486 @@ var handleDeliveryMailboxRequest = async (request, env) => {
   return json(405, { success: false, error: { code: "METHOD_NOT_ALLOWED" } });
 };
 
+// node_modules/.pnpm/@rei-standard+amsg-shared@0.2.0/node_modules/@rei-standard/amsg-shared/dist/index.mjs
+var MESSAGE_KIND2 = Object.freeze({
+  CONTENT: "content",
+  REASONING: "reasoning",
+  TOOL_REQUEST: "tool_request",
+  ERROR: "error"
+});
+var MESSAGE_TYPE2 = Object.freeze({
+  INSTANT: "instant",
+  FIXED: "fixed",
+  PROMPTED: "prompted",
+  AUTO: "auto"
+});
+var PUSH_SOURCE2 = Object.freeze({
+  INSTANT: "instant",
+  SCHEDULED: "scheduled"
+});
+function requireField2(kind, field, value) {
+  if (value === void 0 || value === null || value === "") {
+    throw new Error(`[amsg-shared] ${kind}: '${field}' is required`);
+  }
+}
+function buildContentPush2(args) {
+  requireField2("ContentPush", "messageType", args.messageType);
+  requireField2("ContentPush", "source", args.source);
+  requireField2("ContentPush", "messageId", args.messageId);
+  requireField2("ContentPush", "sessionId", args.sessionId);
+  if (typeof args.message !== "string") {
+    throw new Error("[amsg-shared] ContentPush: 'message' must be a string");
+  }
+  validateNotificationArg2("ContentPush", args.notification);
+  const push = {
+    messageKind: "content",
+    messageType: args.messageType,
+    source: args.source,
+    messageId: args.messageId,
+    sessionId: args.sessionId,
+    timestamp: args.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
+    message: args.message
+  };
+  if (args.title !== void 0) push.title = args.title;
+  if (args.contactName !== void 0) push.contactName = args.contactName;
+  if (args.avatarUrl !== void 0) push.avatarUrl = args.avatarUrl;
+  if (args.messageSubtype !== void 0) push.messageSubtype = args.messageSubtype;
+  if (args.messageIndex !== void 0) push.messageIndex = args.messageIndex;
+  if (args.totalMessages !== void 0) push.totalMessages = args.totalMessages;
+  if (args.taskId !== void 0) push.taskId = args.taskId;
+  if (args.metadata !== void 0) push.metadata = args.metadata;
+  if (args.notification !== void 0) push.notification = args.notification;
+  return push;
+}
+function buildReasoningPush2(args) {
+  requireField2("ReasoningPush", "messageType", args.messageType);
+  requireField2("ReasoningPush", "source", args.source);
+  requireField2("ReasoningPush", "messageId", args.messageId);
+  requireField2("ReasoningPush", "sessionId", args.sessionId);
+  if (typeof args.reasoningContent !== "string" || !args.reasoningContent) {
+    throw new Error("[amsg-shared] ReasoningPush: 'reasoningContent' must be a non-empty string");
+  }
+  validateNotificationArg2("ReasoningPush", args.notification);
+  const push = {
+    messageKind: "reasoning",
+    messageType: args.messageType,
+    source: args.source,
+    messageId: args.messageId,
+    sessionId: args.sessionId,
+    timestamp: args.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
+    reasoningContent: args.reasoningContent
+  };
+  if (args.title !== void 0) push.title = args.title;
+  if (args.contactName !== void 0) push.contactName = args.contactName;
+  if (args.avatarUrl !== void 0) push.avatarUrl = args.avatarUrl;
+  if (args.messageSubtype !== void 0) push.messageSubtype = args.messageSubtype;
+  if (args.messageIndex !== void 0) push.messageIndex = args.messageIndex;
+  if (args.totalMessages !== void 0) push.totalMessages = args.totalMessages;
+  if (args.chunkIndex !== void 0) push.chunkIndex = args.chunkIndex;
+  if (args.totalChunks !== void 0) push.totalChunks = args.totalChunks;
+  if (args.metadata !== void 0) push.metadata = args.metadata;
+  if (args.notification !== void 0) push.notification = args.notification;
+  return push;
+}
+function buildToolRequestPush(args) {
+  requireField2("ToolRequestPush", "messageType", args.messageType);
+  requireField2("ToolRequestPush", "source", args.source);
+  requireField2("ToolRequestPush", "messageId", args.messageId);
+  requireField2("ToolRequestPush", "sessionId", args.sessionId);
+  if (!Array.isArray(args.toolCalls) || args.toolCalls.length === 0) {
+    throw new Error("[amsg-shared] ToolRequestPush: 'toolCalls' must be a non-empty array");
+  }
+  validateNotificationArg2("ToolRequestPush", args.notification);
+  const push = {
+    messageKind: "tool_request",
+    messageType: args.messageType,
+    source: args.source,
+    messageId: args.messageId,
+    sessionId: args.sessionId,
+    timestamp: args.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
+    toolCalls: args.toolCalls
+  };
+  if (args.title !== void 0) push.title = args.title;
+  if (args.contactName !== void 0) push.contactName = args.contactName;
+  if (args.message !== void 0) push.message = args.message;
+  if (args.messageSubtype !== void 0) push.messageSubtype = args.messageSubtype;
+  if (args.metadata !== void 0) push.metadata = args.metadata;
+  if (args.notification !== void 0) push.notification = args.notification;
+  return push;
+}
+function validateNotificationArg2(kind, value) {
+  if (value === void 0) return;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`[amsg-shared] ${kind}: 'notification' must be a plain object`);
+  }
+  const n = (
+    /** @type {Record<string, unknown>} */
+    value
+  );
+  if (n.show !== void 0 && !["auto", "always", "when-hidden", false].includes(n.show)) {
+    throw new Error(`[amsg-shared] ${kind}: 'notification.show' must be "auto", "always", "when-hidden", or false`);
+  }
+  for (const f of ["title", "body", "icon", "badge", "tag"]) {
+    if (n[f] !== void 0 && typeof n[f] !== "string") {
+      throw new Error(`[amsg-shared] ${kind}: 'notification.${f}' must be a string when present`);
+    }
+  }
+  for (const f of ["renotify", "requireInteraction", "silent"]) {
+    if (n[f] !== void 0 && typeof n[f] !== "boolean") {
+      throw new Error(`[amsg-shared] ${kind}: 'notification.${f}' must be a boolean when present`);
+    }
+  }
+  if (n.data !== void 0 && (n.data === null || typeof n.data !== "object" || Array.isArray(n.data))) {
+    throw new Error(`[amsg-shared] ${kind}: 'notification.data' must be a plain object when present`);
+  }
+}
+function buildErrorPush(args) {
+  requireField2("ErrorPush", "messageType", args.messageType);
+  requireField2("ErrorPush", "source", args.source);
+  requireField2("ErrorPush", "messageId", args.messageId);
+  requireField2("ErrorPush", "sessionId", args.sessionId);
+  requireField2("ErrorPush", "code", args.code);
+  if (typeof args.message !== "string") {
+    throw new Error("[amsg-shared] ErrorPush: 'message' must be a string");
+  }
+  validateNotificationArg2("ErrorPush", args.notification);
+  const push = {
+    messageKind: "error",
+    messageType: args.messageType,
+    source: args.source,
+    messageId: args.messageId,
+    sessionId: args.sessionId,
+    timestamp: args.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
+    code: args.code,
+    message: args.message
+  };
+  if (args.iteration !== void 0) push.iteration = args.iteration;
+  if (args.messageSubtype !== void 0) push.messageSubtype = args.messageSubtype;
+  if (args.metadata !== void 0) push.metadata = args.metadata;
+  if (args.notification !== void 0) push.notification = args.notification;
+  return push;
+}
+var REASONING_CHUNK_ENCODER2 = new TextEncoder();
+var REASONING_CHUNK_DECODER2 = new TextDecoder("utf-8", { fatal: true });
+function toUint82(buf) {
+  if (buf instanceof Uint8Array) return buf;
+  if (buf instanceof ArrayBuffer) return new Uint8Array(buf);
+  if (ArrayBuffer.isView(buf)) return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  throw new TypeError("Expected ArrayBuffer / Uint8Array");
+}
+function base64UrlToBytes2(input) {
+  const s = String(input).replace(/-/g, "+").replace(/_/g, "/");
+  const pad = (4 - s.length % 4) % 4;
+  const padded = s + "=".repeat(pad);
+  const bin = typeof atob === "function" ? atob(padded) : Buffer.from(padded, "base64").toString("binary");
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function concatBytes2(...chunks) {
+  let total = 0;
+  for (const c of chunks) total += c.byteLength;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c instanceof Uint8Array ? c : new Uint8Array(c.buffer || c), offset);
+    offset += c.byteLength;
+  }
+  return out;
+}
+
+// node_modules/.pnpm/@rei-standard+amsg-instant@0.9.1/node_modules/@rei-standard/amsg-instant/dist/adapters/cloudflare.mjs
+function isValidUrl2(s) {
+  if (typeof s !== "string") return false;
+  try {
+    new URL(s);
+    return true;
+  } catch {
+    return false;
+  }
+}
+var VALID_MESSAGE_ROLES = /* @__PURE__ */ new Set(["system", "user", "assistant", "tool"]);
+var AVATAR_URL_MAX_LENGTH2 = 2048;
+function validateAvatarUrl2(value) {
+  if (value === void 0 || value === null) return null;
+  if (typeof value !== "string") {
+    return "avatarUrl \u5FC5\u987B\u662F\u5B57\u7B26\u4E32";
+  }
+  if (/^data:/i.test(value)) {
+    return "\u5934\u50CF\u4E0D\u652F\u6301\u4F20\u5165 data: URI\uFF0C\u8BF7\u6539\u4E3A\u516C\u7F51\u53EF\u8BBF\u95EE\u7684 https:// \u56FE\u7247 URL";
+  }
+  if (value.length > AVATAR_URL_MAX_LENGTH2) {
+    return `\u5934\u50CF URL \u957F\u5EA6 ${value.length} \u5B57\u7B26\u8D85\u8FC7 ${AVATAR_URL_MAX_LENGTH2} \u4E0A\u9650\uFF0C\u8BF7\u6539\u4E3A\u66F4\u77ED\u7684\u56FE\u7247 URL`;
+  }
+  if (!isValidUrl2(value)) {
+    return "avatarUrl \u4E0D\u662F\u5408\u6CD5 URL";
+  }
+  return null;
+}
+function validateMessagesArray(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return "messages \u5FC5\u987B\u662F\u957F\u5EA6 \u2265 1 \u7684\u6570\u7EC4";
+  }
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (!m || typeof m !== "object" || Array.isArray(m)) {
+      return `messages[${i}] \u5FC5\u987B\u662F\u5BF9\u8C61`;
+    }
+    if (!VALID_MESSAGE_ROLES.has(m.role)) {
+      return `messages[${i}].role \u5FC5\u987B\u662F system / user / assistant / tool \u4E4B\u4E00`;
+    }
+    const isAssistantToolCallCarrier = m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0;
+    if (isAssistantToolCallCarrier) {
+      for (let j = 0; j < m.tool_calls.length; j++) {
+        const tc = m.tool_calls[j];
+        if (!tc || typeof tc !== "object" || typeof tc.id !== "string" || !tc.function) {
+          return `messages[${i}].tool_calls[${j}] \u5F62\u72B6\u975E\u6CD5 (\u9700\u8981 { id, type:'function', function:{ name, arguments } })`;
+        }
+      }
+      continue;
+    }
+    if (m.role === "tool") {
+      if (typeof m.content !== "string" && !Array.isArray(m.content)) {
+        return `messages[${i}].content (tool) \u5FC5\u987B\u662F\u5B57\u7B26\u4E32\u6216\u6570\u7EC4`;
+      }
+      if (typeof m.tool_call_id !== "string" || !m.tool_call_id) {
+        return `messages[${i}].tool_call_id \u5FC5\u586B (tool \u6D88\u606F\u5FC5\u987B\u5173\u8054\u5230\u4E00\u6B21 tool_call)`;
+      }
+      continue;
+    }
+    if (typeof m.content === "string") {
+      if (!m.content) {
+        return `messages[${i}].content \u4E0D\u80FD\u662F\u7A7A\u5B57\u7B26\u4E32`;
+      }
+    } else if (Array.isArray(m.content)) {
+      if (m.content.length === 0) {
+        return `messages[${i}].content \u6570\u7EC4\u4E0D\u80FD\u4E3A\u7A7A`;
+      }
+    } else {
+      return `messages[${i}].content \u5FC5\u987B\u662F\u975E\u7A7A\u5B57\u7B26\u4E32\u6216\u957F\u5EA6 \u2265 1 \u7684\u6570\u7EC4`;
+    }
+  }
+  return null;
+}
+function validateInstantPayload(payload, opts) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "payload \u5FC5\u987B\u662F JSON \u5BF9\u8C61"
+    };
+  }
+  if (payload.firstSendTime !== void 0) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "amsg-instant \u4E0D\u63A5\u53D7 firstSendTime\uFF1B\u8BE5\u5B57\u6BB5\u5C5E\u4E8E amsg-server \u7684\u5B9A\u65F6\u6D88\u606F",
+      details: { invalidFields: ["firstSendTime"] }
+    };
+  }
+  if (payload.recurrenceType !== void 0 && payload.recurrenceType !== "none") {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: 'amsg-instant \u4E0D\u652F\u6301 recurrenceType\uFF08\u5FC5\u987B\u7701\u7565\u6216\u4E3A "none"\uFF09',
+      details: { invalidFields: ["recurrenceType"] }
+    };
+  }
+  if (payload.messageType !== void 0 && payload.messageType !== "instant") {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: 'amsg-instant \u4EC5\u652F\u6301 messageType: "instant"\uFF08\u6216\u7701\u7565\uFF09',
+      details: { invalidFields: ["messageType"] }
+    };
+  }
+  if (typeof payload.contactName !== "string" || !payload.contactName.trim()) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "contactName \u5FC5\u586B",
+      details: { missingFields: ["contactName"] }
+    };
+  }
+  const hasCompletePrompt = payload.completePrompt !== void 0;
+  const hasMessages = payload.messages !== void 0;
+  const hookPath = !!(opts && opts.hookPath);
+  if (hookPath && hasCompletePrompt) {
+    return {
+      valid: false,
+      errorCode: "COMPLETE_PROMPT_NOT_SUPPORTED_ON_HOOK_PATH",
+      errorMessage: "completePrompt is not supported when onLLMOutput is configured; pass a `messages` array directly",
+      details: { invalidFields: ["completePrompt"], hint: "pass messages array directly" }
+    };
+  }
+  if (hasCompletePrompt && hasMessages) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "exactly one of `completePrompt` or `messages` must be provided\uFF08\u4E24\u8005\u4E0D\u80FD\u540C\u65F6\u51FA\u73B0\uFF09",
+      details: { invalidFields: ["completePrompt", "messages"] }
+    };
+  }
+  if (!hasCompletePrompt && !hasMessages) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "exactly one of `completePrompt` or `messages` must be provided",
+      details: { missingFields: ["completePrompt", "messages"] }
+    };
+  }
+  if (hasCompletePrompt) {
+    if (typeof payload.completePrompt !== "string" || !payload.completePrompt.trim()) {
+      return {
+        valid: false,
+        errorCode: "INVALID_PAYLOAD_FORMAT",
+        errorMessage: "completePrompt \u5FC5\u987B\u662F\u975E\u7A7A\u5B57\u7B26\u4E32",
+        details: { invalidFields: ["completePrompt"] }
+      };
+    }
+  } else {
+    const messagesError = validateMessagesArray(payload.messages);
+    if (messagesError) {
+      return {
+        valid: false,
+        errorCode: "INVALID_PAYLOAD_FORMAT",
+        errorMessage: messagesError,
+        details: { invalidFields: ["messages"] }
+      };
+    }
+  }
+  if (payload.temperature !== void 0 && payload.temperature !== null && (typeof payload.temperature !== "number" || !Number.isFinite(payload.temperature))) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "temperature \u5FC5\u987B\u662F\u6709\u9650\u6570\u5B57",
+      details: { invalidFields: ["temperature"] }
+    };
+  }
+  if (typeof payload.apiUrl !== "string" || !payload.apiUrl.trim()) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "apiUrl \u5FC5\u586B",
+      details: { missingFields: ["apiUrl"] }
+    };
+  }
+  if (typeof payload.apiKey !== "string" || !payload.apiKey.trim()) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "apiKey \u5FC5\u586B",
+      details: { missingFields: ["apiKey"] }
+    };
+  }
+  if (typeof payload.primaryModel !== "string" || !payload.primaryModel.trim()) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "primaryModel \u5FC5\u586B",
+      details: { missingFields: ["primaryModel"] }
+    };
+  }
+  if (payload.maxTokens !== void 0 && payload.maxTokens !== null && (!Number.isInteger(payload.maxTokens) || payload.maxTokens <= 0)) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "maxTokens \u5FC5\u987B\u662F\u6B63\u6574\u6570",
+      details: { invalidFields: ["maxTokens"] }
+    };
+  }
+  if (!payload.pushSubscription || typeof payload.pushSubscription !== "object" || typeof payload.pushSubscription.endpoint !== "string") {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "pushSubscription \u5FC5\u987B\u662F\u5408\u6CD5 Web Push \u8BA2\u9605\u5BF9\u8C61",
+      details: { missingFields: ["pushSubscription.endpoint"] }
+    };
+  }
+  const avatarErr = validateAvatarUrl2(payload.avatarUrl);
+  if (avatarErr) {
+    console.warn("[amsg-instant] avatarUrl \u4E0D\u5408\u6CD5\uFF0C\u5DF2\u7F6E\u7A7A\uFF1A", avatarErr);
+    payload.avatarUrl = null;
+  }
+  if (payload.messageSubtype !== void 0 && payload.messageSubtype !== null && typeof payload.messageSubtype !== "string") {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "messageSubtype \u5FC5\u987B\u662F\u5B57\u7B26\u4E32",
+      details: { invalidFields: ["messageSubtype"] }
+    };
+  }
+  const removedField = ["splitPattern", "reasoningSplitPattern", "errorSplitPattern"].find((field) => payload[field] !== void 0);
+  if (removedField) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: `${removedField} is removed in 0.8.0; caller is responsible for splitting (return decision.pushPayloads with the exact pushes you want sent)`,
+      details: { invalidFields: [removedField] }
+    };
+  }
+  const sharedErr = validateHookPathSharedFields(payload, opts);
+  if (sharedErr) return sharedErr;
+  return { valid: true };
+}
+function validateContinuePayload(payload, opts) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "payload \u5FC5\u987B\u662F JSON \u5BF9\u8C61"
+    };
+  }
+  if (typeof payload.sessionId !== "string" || !payload.sessionId.trim()) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "sessionId \u5FC5\u586B\u4E14\u4E3A\u975E\u7A7A\u5B57\u7B26\u4E32",
+      details: { missingFields: ["sessionId"] }
+    };
+  }
+  if (payload.completePrompt !== void 0) {
+    return {
+      valid: false,
+      errorCode: "COMPLETE_PROMPT_NOT_SUPPORTED_ON_HOOK_PATH",
+      errorMessage: "completePrompt is not accepted on /continue; pass a `messages` array directly",
+      details: { invalidFields: ["completePrompt"] }
+    };
+  }
+  if (payload.messages === void 0) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "`messages` is required on /continue",
+      details: { missingFields: ["messages"] }
+    };
+  }
+  const messagesError = validateMessagesArray(payload.messages);
+  if (messagesError) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: messagesError,
+      details: { invalidFields: ["messages"] }
+    };
+  }
+  if (typeof payload.contactName !== "string" || !payload.contactName.trim()) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "contactName \u5FC5\u586B",
+      details: { missingFields: ["contactName"] }
+    };
+  }
+  if (typeof payload.apiUrl !== "string" || !payload.apiUrl.trim()) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "apiUrl \u5FC5\u586B",
+      details: { missingFields: ["apiUrl"] }
+    };
+  }
+  if (typeof payload.apiKey !== "string" || !payload.apiKey.trim()) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "apiKey \u5FC5\u586B",
+      details: { missingFields: ["apiKey"] }
+    };
+  }
+  if (typeof payload.primaryModel !== "string" || !payload.primaryModel.trim()) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "primaryModel \u5FC5\u586B",
+      details: { missingFields: ["primaryModel"] }
+    };
+  }
+  if (payload.maxTokens !== void 0 && payload.maxTokens !== null && (!Number.isInteger(payload.maxTokens) || payload.maxTokens <= 0)) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "maxTokens \u5FC5\u987B\u662F\u6B63\u6574\u6570",
+      details: { invalidFields: ["maxTokens"] }
+    };
+  }
+  if (payload.temperature !== void 0 && payload.temperature !== null && (typeof payload.temperature !== "number" || !Number.isFinite(payload.temperature))) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "temperature \u5FC5\u987B\u662F\u6709\u9650\u6570\u5B57",
+      details: { invalidFields: ["temperature"] }
+    };
+  }
+  if (!payload.pushSubscription || typeof payload.pushSubscription !== "object" || typeof payload.pushSubscription.endpoint !== "string") {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: "pushSubscription \u5FC5\u987B\u662F\u5408\u6CD5 Web Push \u8BA2\u9605\u5BF9\u8C61",
+      details: { missingFields: ["pushSubscription.endpoint"] }
+    };
+  }
+  const avatarErr = validateAvatarUrl2(payload.avatarUrl);
+  if (avatarErr) {
+    console.warn("[amsg-instant] /continue avatarUrl \u4E0D\u5408\u6CD5\uFF0C\u5DF2\u7F6E\u7A7A\uFF1A", avatarErr);
+    payload.avatarUrl = null;
+  }
+  const removedField = ["splitPattern", "reasoningSplitPattern", "errorSplitPattern"].find((field) => payload[field] !== void 0);
+  if (removedField) {
+    return {
+      valid: false,
+      errorCode: "INVALID_PAYLOAD_FORMAT",
+      errorMessage: `${removedField} is removed in 0.8.0; caller is responsible for splitting (return decision.pushPayloads with the exact pushes you want sent)`,
+      details: { invalidFields: [removedField] }
+    };
+  }
+  return validateHookPathSharedFields(payload, opts) || { valid: true };
+}
+function validateHookPathSharedFields(payload, opts) {
+  if (payload.sessionId !== void 0) {
+    if (typeof payload.sessionId !== "string" || !payload.sessionId.trim()) {
+      return {
+        valid: false,
+        errorCode: "INVALID_PAYLOAD_FORMAT",
+        errorMessage: "sessionId \u5FC5\u987B\u662F\u975E\u7A7A\u5B57\u7B26\u4E32",
+        details: { invalidFields: ["sessionId"] }
+      };
+    }
+  }
+  if (payload.charId !== void 0) {
+    if (typeof payload.charId !== "string" || !payload.charId.trim()) {
+      return {
+        valid: false,
+        errorCode: "INVALID_PAYLOAD_FORMAT",
+        errorMessage: "charId \u5FC5\u987B\u662F\u975E\u7A7A\u5B57\u7B26\u4E32",
+        details: { invalidFields: ["charId"] }
+      };
+    }
+  }
+  if (payload.iteration !== void 0) {
+    const maxLoop = opts && Number.isInteger(opts.maxLoopIterations) && opts.maxLoopIterations > 0 ? opts.maxLoopIterations : 10;
+    if (typeof payload.iteration !== "number" || !Number.isInteger(payload.iteration) || payload.iteration < 0 || payload.iteration >= maxLoop) {
+      return {
+        valid: false,
+        errorCode: "INVALID_PAYLOAD_FORMAT",
+        errorMessage: `iteration \u5FC5\u987B\u662F 0..${maxLoop - 1} \u8303\u56F4\u5185\u7684\u6574\u6570`,
+        details: { invalidFields: ["iteration"] }
+      };
+    }
+  }
+  if (payload.metadata !== void 0 && payload.metadata !== null) {
+    if (typeof payload.metadata !== "object" || Array.isArray(payload.metadata)) {
+      return {
+        valid: false,
+        errorCode: "INVALID_PAYLOAD_FORMAT",
+        errorMessage: "metadata \u5FC5\u987B\u662F\u666E\u901A\u5BF9\u8C61",
+        details: { invalidFields: ["metadata"] }
+      };
+    }
+  }
+  return null;
+}
+var TEXT_ENCODER2 = new TextEncoder();
+var TEXT_DECODER2 = new TextDecoder("utf-8", { fatal: false });
+function utf84(str) {
+  return TEXT_ENCODER2.encode(String(str));
+}
+function utf8Decode2(buf) {
+  return TEXT_DECODER2.decode(toUint82(buf));
+}
+function bytesToBase64Url2(buf) {
+  const bytes = toUint82(buf);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i]);
+  }
+  const b64 = typeof btoa === "function" ? btoa(bin) : Buffer.from(bin, "binary").toString("base64");
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+function jsonToBase64Url2(value) {
+  return bytesToBase64Url2(utf84(JSON.stringify(value)));
+}
+function timingSafeEqualBytes2(a, b) {
+  const x = toUint82(a);
+  const y = toUint82(b);
+  if (x.length !== y.length) return false;
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) {
+    diff |= x[i] ^ y[i];
+  }
+  return diff === 0;
+}
+async function hmacSha2562(keyBytes2, data) {
+  const key = await globalThis.crypto.subtle.importKey(
+    "raw",
+    toUint82(keyBytes2),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await globalThis.crypto.subtle.sign("HMAC", key, toUint82(data));
+  return new Uint8Array(sig);
+}
+function randomUUID2() {
+  return globalThis.crypto.randomUUID();
+}
+function randomBytes2(n) {
+  const out = new Uint8Array(n);
+  globalThis.crypto.getRandomValues(out);
+  return out;
+}
+var KEY_INFO_PREFIX2 = utf84("WebPush: info\0");
+var CEK_INFO2 = utf84("Content-Encoding: aes128gcm\0");
+var NONCE_INFO2 = utf84("Content-Encoding: nonce\0");
+var VAPID_DEFAULT_TTL2 = 60;
+var VAPID_TOKEN_LIFETIME2 = 12 * 3600;
+var RECORD_SIZE2 = 4096;
+async function sendWebPush3({ subscription, payload, vapid, ttl, fetch: fetchImpl }) {
+  if (!subscription || typeof subscription.endpoint !== "string") {
+    throw new Error("sendWebPush: invalid subscription");
+  }
+  if (typeof payload !== "string") {
+    throw new Error("sendWebPush: payload must be a string");
+  }
+  if (!vapid || !vapid.email || !vapid.publicKey || !vapid.privateKey) {
+    throw new Error("VAPID_CONFIG_MISSING");
+  }
+  const subscriptionKeys = subscription.keys || {};
+  if (typeof subscriptionKeys.p256dh !== "string" || typeof subscriptionKeys.auth !== "string") {
+    throw new Error("sendWebPush: subscription.keys.p256dh and .auth are required");
+  }
+  const encryptedBody = await encryptPushPayload2({
+    plaintext: utf84(payload),
+    uaPublicKey: base64UrlToBytes2(subscriptionKeys.p256dh),
+    authSecret: base64UrlToBytes2(subscriptionKeys.auth)
+  });
+  const jwt = await buildVapidJwt2({
+    audience: originOf2(subscription.endpoint),
+    subject: normalizeVapidSubject2(vapid.email),
+    publicKey: vapid.publicKey,
+    privateKey: vapid.privateKey
+  });
+  const fetchFn = fetchImpl || globalThis.fetch;
+  if (typeof fetchFn !== "function") {
+    throw new Error("sendWebPush: no fetch implementation available");
+  }
+  const res = await fetchFn(subscription.endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Content-Encoding": "aes128gcm",
+      "TTL": String(Number.isFinite(ttl) ? ttl : VAPID_DEFAULT_TTL2),
+      "Authorization": `vapid t=${jwt}, k=${vapid.publicKey}`
+    },
+    body: encryptedBody
+  });
+  if (!res.ok) {
+    const text = await safeReadText2(res);
+    const err3 = new Error(
+      `Web Push delivery failed: ${res.status} ${res.statusText || ""}${text ? ` \u2014 ${text}` : ""}`
+    );
+    err3.code = "PUSH_SEND_FAILED";
+    err3.statusCode = res.status;
+    throw err3;
+  }
+  return {
+    statusCode: res.status,
+    body: await safeReadText2(res),
+    headers: res.headers
+  };
+}
+async function encryptPushPayload2({ plaintext, uaPublicKey, authSecret }) {
+  const asKeyPair = await globalThis.crypto.subtle.generateKey(
+    { name: "ECDH", namedCurve: "P-256" },
+    true,
+    ["deriveBits"]
+  );
+  const asPublicRaw = new Uint8Array(
+    await globalThis.crypto.subtle.exportKey("raw", asKeyPair.publicKey)
+  );
+  const uaPublicCryptoKey = await globalThis.crypto.subtle.importKey(
+    "raw",
+    uaPublicKey,
+    { name: "ECDH", namedCurve: "P-256" },
+    false,
+    []
+  );
+  const ecdhSecret = new Uint8Array(
+    await globalThis.crypto.subtle.deriveBits(
+      { name: "ECDH", public: uaPublicCryptoKey },
+      asKeyPair.privateKey,
+      256
+    )
+  );
+  const keyInfo = concatBytes2(KEY_INFO_PREFIX2, uaPublicKey, asPublicRaw);
+  const ikm = await hkdfSha2562(authSecret, ecdhSecret, keyInfo, 32);
+  const salt = randomBytes2(16);
+  const cekBytes = await hkdfSha2562(salt, ikm, CEK_INFO2, 16);
+  const cek = await globalThis.crypto.subtle.importKey(
+    "raw",
+    cekBytes,
+    { name: "AES-GCM" },
+    false,
+    ["encrypt"]
+  );
+  const nonce = await hkdfSha2562(salt, ikm, NONCE_INFO2, 12);
+  const padded = concatBytes2(plaintext, new Uint8Array([2]));
+  const ciphertext = new Uint8Array(
+    await globalThis.crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, cek, padded)
+  );
+  const header = new Uint8Array(16 + 4 + 1 + asPublicRaw.byteLength);
+  header.set(salt, 0);
+  writeUint32BE2(header, 16, RECORD_SIZE2);
+  header[20] = asPublicRaw.byteLength;
+  header.set(asPublicRaw, 21);
+  return concatBytes2(header, ciphertext);
+}
+async function hkdfSha2562(salt, ikm, info, length) {
+  const baseKey = await globalThis.crypto.subtle.importKey(
+    "raw",
+    toUint82(ikm),
+    { name: "HKDF" },
+    false,
+    ["deriveBits"]
+  );
+  const bits = await globalThis.crypto.subtle.deriveBits(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: toUint82(salt),
+      info: toUint82(info)
+    },
+    baseKey,
+    length * 8
+  );
+  return new Uint8Array(bits);
+}
+async function buildVapidJwt2({ audience, subject, publicKey, privateKey }) {
+  const header = jsonToBase64Url2({ typ: "JWT", alg: "ES256" });
+  const payload = jsonToBase64Url2({
+    aud: audience,
+    exp: Math.floor(Date.now() / 1e3) + VAPID_TOKEN_LIFETIME2,
+    sub: subject
+  });
+  const signingInput = utf84(`${header}.${payload}`);
+  const pubBytes = base64UrlToBytes2(publicKey);
+  const privBytes = base64UrlToBytes2(privateKey);
+  if (pubBytes.length !== 65 || pubBytes[0] !== 4) {
+    throw new Error("VAPID publicKey must be a 65-byte uncompressed P-256 point (base64url).");
+  }
+  if (privBytes.length !== 32) {
+    throw new Error("VAPID privateKey must be a 32-byte scalar (base64url).");
+  }
+  const jwk = {
+    kty: "EC",
+    crv: "P-256",
+    d: bytesToBase64Url2(privBytes),
+    x: bytesToBase64Url2(pubBytes.subarray(1, 33)),
+    y: bytesToBase64Url2(pubBytes.subarray(33, 65)),
+    ext: true
+  };
+  const key = await globalThis.crypto.subtle.importKey(
+    "jwk",
+    jwk,
+    { name: "ECDSA", namedCurve: "P-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await globalThis.crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    key,
+    signingInput
+  );
+  return `${header}.${payload}.${bytesToBase64Url2(sig)}`;
+}
+function normalizeVapidSubject2(email) {
+  const trimmed = String(email || "").trim();
+  if (!trimmed) return "";
+  return /^mailto:/i.test(trimmed) || /^https?:/i.test(trimmed) ? trimmed : `mailto:${trimmed}`;
+}
+function originOf2(endpoint) {
+  return new URL(endpoint).origin;
+}
+function writeUint32BE2(buf, offset, value) {
+  buf[offset] = value >>> 24 & 255;
+  buf[offset + 1] = value >>> 16 & 255;
+  buf[offset + 2] = value >>> 8 & 255;
+  buf[offset + 3] = value & 255;
+}
+async function safeReadText2(res) {
+  try {
+    return await res.text();
+  } catch {
+    return "";
+  }
+}
+var HookError = class extends Error {
+  /**
+   * @param {string} message
+   * @param {{ cause?: unknown }} [opts]
+   */
+  constructor(message, opts) {
+    super(message, opts);
+    this.name = "HookError";
+    this.code = "HOOK_THREW";
+  }
+};
+var PayloadTooLargeError = class extends Error {
+  /**
+   * @param {number} byteLength  - UTF-8 byte length of the serialized payload.
+   * @param {number} maxInlineBytes
+   * @param {{ cause?: unknown }} [opts]
+   */
+  constructor(byteLength, maxInlineBytes, opts) {
+    super(`pushPayload UTF-8 byte length ${byteLength} exceeds maxInlineBytes ${maxInlineBytes}`, opts);
+    this.name = "PayloadTooLargeError";
+    this.code = "PAYLOAD_TOO_LARGE";
+    this.byteLength = byteLength;
+    this.maxInlineBytes = maxInlineBytes;
+  }
+};
+var LlmCallError = class extends Error {
+  /**
+   * @param {string} message
+   * @param {{ cause?: unknown }} [opts]
+   */
+  constructor(message, opts) {
+    super(message, opts);
+    this.name = "LlmCallError";
+    this.code = "LLM_CALL_FAILED";
+  }
+};
+function buildSessionContext2({
+  sessionId,
+  messages,
+  llmResponse,
+  iteration,
+  contactName,
+  avatarUrl,
+  charId,
+  metadata
+}) {
+  const llmOutputText = readLlmOutputText2(llmResponse);
+  const ctx = {
+    sessionId,
+    charId,
+    messages,
+    llmResponse,
+    llmOutputText,
+    iteration,
+    metadata: metadata && typeof metadata === "object" ? metadata : {},
+    contactName,
+    avatarUrl: avatarUrl || void 0
+  };
+  return Object.freeze(ctx);
+}
+function readLlmOutputText2(llmResponse) {
+  if (!llmResponse || typeof llmResponse !== "object") return "";
+  const choices = (
+    /** @type {{ choices?: unknown }} */
+    llmResponse.choices
+  );
+  if (!Array.isArray(choices) || choices.length === 0) return "";
+  const message = (
+    /** @type {{ message?: { content?: unknown } }} */
+    choices[0]?.message
+  );
+  const content = message?.content;
+  return typeof content === "string" ? content : "";
+}
+function extractAssistantMessage2(llmResponse) {
+  const message = llmResponse && typeof llmResponse === "object" && Array.isArray(
+    /** @type {{ choices?: unknown }} */
+    llmResponse.choices
+  ) && /** @type {{ choices: Array<{ message?: unknown }> }} */
+  llmResponse.choices[0]?.message;
+  if (message && typeof message === "object") {
+    return (
+      /** @type {ChatMessage} */
+      message
+    );
+  }
+  return { role: "assistant", content: "" };
+}
+var MULTIPART_MESSAGE_KIND = "_multipart";
+var MULTIPART_ENCODING = "json-utf8-base64url";
+var DEFAULT_MULTIPART_CHUNK_BYTES = 1800;
+var DEFAULT_MULTIPART_TTL_MS = 6e4;
+var DEFAULT_MULTIPART_MAX_CHUNKS = 128;
+var DEFAULT_MULTIPART_MAX_TOTAL_BYTES = 256e3;
+function buildMultipartPushPayloads(payload, options = {}) {
+  const maxChunkBytes = resolvePositiveInteger(
+    options.maxChunkBytes,
+    DEFAULT_MULTIPART_CHUNK_BYTES,
+    "maxChunkBytes"
+  );
+  const ttlMs = resolvePositiveInteger(options.ttlMs, DEFAULT_MULTIPART_TTL_MS, "ttlMs");
+  const id = typeof options.id === "string" && options.id.trim() ? options.id.trim() : `mp_${randomUUID2()}`;
+  let serialized = typeof options.serializedPayload === "string" ? options.serializedPayload : void 0;
+  if (serialized === void 0) {
+    try {
+      serialized = JSON.stringify(payload);
+    } catch (error) {
+      throw new TypeError(`buildMultipartPushPayloads: payload is not JSON-serializable: ${error?.message ?? error}`);
+    }
+  }
+  if (typeof serialized !== "string") {
+    throw new TypeError("buildMultipartPushPayloads: payload serialized to a non-string");
+  }
+  const bytes = utf84(serialized);
+  const total = Math.max(1, Math.ceil(bytes.byteLength / maxChunkBytes));
+  const createdAt = Date.now();
+  const originalMessageKind = payload && typeof payload === "object" ? (
+    /** @type {{ messageKind?: unknown }} */
+    payload.messageKind
+  ) : void 0;
+  const parts = [];
+  for (let i = 0; i < total; i++) {
+    const start = i * maxChunkBytes;
+    const end = Math.min(start + maxChunkBytes, bytes.byteLength);
+    const chunkBytes = bytes.subarray(start, end);
+    parts.push({
+      messageKind: MULTIPART_MESSAGE_KIND,
+      multipart: {
+        version: 1,
+        id,
+        index: i + 1,
+        total,
+        encoding: MULTIPART_ENCODING,
+        originalMessageKind: typeof originalMessageKind === "string" ? originalMessageKind : null,
+        createdAt,
+        ttlMs
+      },
+      chunk: bytesToBase64Url2(chunkBytes)
+    });
+  }
+  return parts;
+}
+function resolvePositiveInteger(value, fallback, fieldName) {
+  if (value === void 0 || value === null) return fallback;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new TypeError(`buildMultipartPushPayloads: ${fieldName} must be a positive integer`);
+  }
+  return value;
+}
+var SLEEP_BETWEEN_MESSAGES_MS3 = 1500;
+var DEFAULT_MAX_LOOP_ITERATIONS = 10;
+var DEFAULT_MAX_INLINE_BYTES = 2600;
+var DEFAULT_BLOB_TTL_SECONDS = 60;
+var VALID_DECISIONS2 = /* @__PURE__ */ new Set(["finish", "tool-request", "continue", "skip-push"]);
+var PUSH_PAYLOAD_BYTE_ENCODER2 = new TextEncoder();
+function ensureStableMessageId(push) {
+  if (!push || typeof push !== "object") return push;
+  const obj = (
+    /** @type {{ messageId?: unknown }} */
+    push
+  );
+  if (typeof obj.messageId === "string" && obj.messageId) return push;
+  return (
+    /** @type {T} */
+    { ...obj, messageId: `msg_${randomUUID2()}` }
+  );
+}
+async function deliverPush(push, payload, ctx, sessionId) {
+  if (ctx.deliver) {
+    await ctx.deliver(push);
+  } else {
+    await sendPushWithMaybeBlob(ensureStableMessageId(push), payload, ctx, sessionId);
+  }
+}
+async function sendPushesSequentially(pushPayloads, payload, ctx, sessionId, sleep) {
+  const total = pushPayloads.length;
+  const spacingMs = Number.isFinite(ctx.spacingMs) && ctx.spacingMs >= 0 ? ctx.spacingMs : SLEEP_BETWEEN_MESSAGES_MS3;
+  for (let i = 0; i < total; i++) {
+    const push = { ...pushPayloads[i] };
+    push.messageIndex = i + 1;
+    push.totalMessages = total;
+    try {
+      await deliverPush(push, payload, ctx, sessionId);
+    } catch (err3) {
+      if (err3 && (err3.code === "HOOK_THREW" || err3.code === "PAYLOAD_TOO_LARGE")) {
+        throw err3;
+      }
+      const wrapped = new Error(err3?.message || "Web Push delivery failed");
+      wrapped.code = "PUSH_SEND_FAILED";
+      wrapped.statusCode = err3?.statusCode;
+      wrapped.messageIndex = i + 1;
+      wrapped.cause = err3;
+      throw wrapped;
+    }
+    if (spacingMs > 0 && i < total - 1) {
+      await sleep(spacingMs);
+    }
+  }
+  return total;
+}
+async function emitReasoning(reasoningPush, payload, ctx, sessionId) {
+  await deliverPush(reasoningPush, payload, ctx, sessionId);
+  return 1;
+}
+function normalizeAiApiUrl2(apiUrl) {
+  const trimmed = String(apiUrl || "").trim();
+  if (!trimmed) {
+    throw new Error(
+      "Invalid apiUrl: apiUrl is required. Please provide a chat endpoint URL (for example: https://api.openai.com or https://api.openai.com/v1/chat/completions)."
+    );
+  }
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(
+      `Invalid apiUrl: "${apiUrl}". Please provide a valid absolute URL.`
+    );
+  }
+  let path = parsed.pathname.replace(/\/+$/, "") || "/";
+  if (/\/chat\/completions$/.test(path)) {
+  } else if (path === "/") {
+    path = "/v1/chat/completions";
+  } else if (/\/v\d+$/.test(path)) {
+    path = `${path}/chat/completions`;
+  }
+  parsed.pathname = path;
+  return parsed.toString();
+}
+function buildAiRequestBody(payload) {
+  const llmMessages = payload.messages ? payload.messages : [{ role: "user", content: payload.completePrompt }];
+  const body = {
+    model: payload.primaryModel,
+    messages: llmMessages,
+    // Instant path is one-shot, non-streaming by contract.
+    stream: false
+  };
+  if (payload.temperature !== void 0 && payload.temperature !== null) {
+    body.temperature = payload.temperature;
+  } else if (!payload.messages) {
+    body.temperature = 0.8;
+  }
+  if (payload.maxTokens === void 0 || payload.maxTokens === null) {
+    return body;
+  }
+  if (!Number.isInteger(payload.maxTokens) || payload.maxTokens <= 0) {
+    throw new Error("Invalid maxTokens: must be a positive integer when provided.");
+  }
+  body.max_tokens = payload.maxTokens;
+  return body;
+}
+async function callLlmRaw(payload, fetchImpl, requireContent) {
+  const url = normalizeAiApiUrl2(payload.apiUrl);
+  const requestBody = buildAiRequestBody(payload);
+  const res = await fetchImpl(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${payload.apiKey}`
+    },
+    body: JSON.stringify(requestBody),
+    signal: AbortSignal.timeout(3e5)
+  });
+  if (!res.ok) {
+    if (res.status === 405) {
+      throw new Error(
+        `AI API error: 405 Method Not Allowed. apiUrl must point to a full chat endpoint (for example: /chat/completions). Received: ${url}`
+      );
+    }
+    const statusText = res.statusText || "Unknown Error";
+    throw new Error(`AI API error: ${res.status} ${statusText}. Request URL: ${url}`);
+  }
+  const data = await res.json();
+  const rawContent = data?.choices?.[0]?.message?.content;
+  if (requireContent) {
+    if (typeof rawContent !== "string" || !rawContent.trim()) {
+      throw new Error("AI API error: response missing choices[0].message.content");
+    }
+  }
+  return {
+    response: data,
+    content: typeof rawContent === "string" ? rawContent : ""
+  };
+}
+function readReasoningContent2(llmResponse) {
+  if (!llmResponse || typeof llmResponse !== "object") return null;
+  const choices = (
+    /** @type {{ choices?: unknown }} */
+    llmResponse.choices
+  );
+  if (!Array.isArray(choices) || choices.length === 0) return null;
+  const message = (
+    /** @type {{ message?: { reasoning_content?: unknown, content?: unknown } }} */
+    choices[0]?.message
+  );
+  const raw = message?.reasoning_content;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  const content = message?.content;
+  if (typeof content === "string") {
+    const match = content.match(REASONING_TAG_RE2);
+    if (match) {
+      const trimmed = match[2].trim();
+      if (trimmed.length > 0) return trimmed;
+    }
+  }
+  return null;
+}
+var REASONING_TAG_RE2 = /<(think|thinking|thought)>([\s\S]*?)<\/\1>/i;
+var REASONING_TAG_RE_G2 = /<(think|thinking|thought)>[\s\S]*?<\/\1>/gi;
+function stripReasoningTags2(content) {
+  if (typeof content !== "string" || !content.includes("<")) return content;
+  return content.replace(REASONING_TAG_RE_G2, "").trim();
+}
+async function processInstantMessage(payload, ctx) {
+  if (!ctx.onLLMOutput && !ctx.isResume) {
+    return runLegacyInstant(payload, ctx);
+  }
+  return runAgenticLoop(payload, ctx);
+}
+async function runLegacyInstant(payload, ctx) {
+  const fetchImpl = ctx.fetch || globalThis.fetch;
+  const sleep = ctx.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const onEvent = typeof ctx.onEvent === "function" ? ctx.onEvent : () => {
+  };
+  const spacingMs = Number.isFinite(ctx.spacingMs) && ctx.spacingMs >= 0 ? ctx.spacingMs : SLEEP_BETWEEN_MESSAGES_MS3;
+  const sessionId = typeof payload.sessionId === "string" && payload.sessionId ? payload.sessionId : `sess_${randomUUID2()}`;
+  let llmResponse;
+  let messageContent;
+  try {
+    const { response, content } = await callLlmRaw(
+      payload,
+      fetchImpl,
+      /*requireContent=*/
+      true
+    );
+    llmResponse = response;
+    messageContent = content.trim();
+    onEvent({ type: "llm_done", sessionId });
+  } catch (err3) {
+    const error = new Error(err3?.message || "LLM call failed");
+    error.code = "LLM_CALL_FAILED";
+    throw error;
+  }
+  const contactName = payload.contactName;
+  const avatarUrl = payload.avatarUrl || null;
+  const messageSubtype = payload.messageSubtype || "chat";
+  const metadata = payload.metadata || {};
+  const reasoning = readReasoningContent2(llmResponse);
+  if (reasoning) {
+    messageContent = stripReasoningTags2(messageContent);
+    const reasoningPush = buildReasoningPush2({
+      messageType: MESSAGE_TYPE2.INSTANT,
+      source: PUSH_SOURCE2.INSTANT,
+      messageId: `msg_${randomUUID2()}_instant_reasoning`,
+      sessionId,
+      reasoningContent: reasoning,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      title: `\u6765\u81EA ${contactName}`,
+      contactName,
+      avatarUrl,
+      messageSubtype,
+      metadata
+    });
+    let reasoningShipped = false;
+    try {
+      await emitReasoning(reasoningPush, payload, ctx, sessionId);
+      reasoningShipped = true;
+      onEvent({ type: "reasoning_pushed", sessionId });
+    } catch (err3) {
+      onEvent({ type: "reasoning_push_failed", sessionId, cause: err3 });
+    }
+    if (reasoningShipped && spacingMs > 0) {
+      await sleep(spacingMs);
+    }
+  }
+  const splitOutput = messageContent.split(/([。！？!?]+)/).reduce((acc, part, i, arr) => {
+    if (i % 2 === 0 && part.trim()) acc.push(part.trim() + (arr[i + 1] || ""));
+    return acc;
+  }, []).filter((s) => s.length > 0);
+  const messages = splitOutput.length > 0 ? splitOutput : [messageContent];
+  for (let i = 0; i < messages.length; i++) {
+    const contentPush = buildContentPush2({
+      messageType: MESSAGE_TYPE2.INSTANT,
+      source: PUSH_SOURCE2.INSTANT,
+      messageId: `msg_${randomUUID2()}_instant_${i}`,
+      sessionId,
+      message: messages[i],
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      title: `\u6765\u81EA ${contactName}`,
+      contactName,
+      avatarUrl,
+      messageSubtype,
+      messageIndex: i + 1,
+      totalMessages: messages.length,
+      taskId: null,
+      metadata
+    });
+    try {
+      await deliverPush(contentPush, payload, ctx, sessionId);
+      onEvent({ type: "push_sent", messageIndex: i + 1, totalMessages: messages.length, sessionId });
+    } catch (err3) {
+      if (err3 && err3.code === "PAYLOAD_TOO_LARGE") throw err3;
+      const error = new Error(err3?.message || "Web Push delivery failed");
+      error.code = "PUSH_SEND_FAILED";
+      error.statusCode = err3?.statusCode;
+      error.messageIndex = i + 1;
+      throw error;
+    }
+    if (spacingMs > 0 && i < messages.length - 1) {
+      await sleep(spacingMs);
+    }
+  }
+  return {
+    messagesSent: messages.length,
+    sentAt: (/* @__PURE__ */ new Date()).toISOString(),
+    sessionId
+  };
+}
+async function runAgenticLoop(payload, ctx) {
+  const fetchImpl = ctx.fetch || globalThis.fetch;
+  const sleep = ctx.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const onEvent = typeof ctx.onEvent === "function" ? ctx.onEvent : () => {
+  };
+  const maxLoopIterations = Number.isInteger(ctx.maxLoopIterations) && ctx.maxLoopIterations > 0 ? ctx.maxLoopIterations : DEFAULT_MAX_LOOP_ITERATIONS;
+  const sessionId = typeof payload.sessionId === "string" && payload.sessionId ? payload.sessionId : randomUUID2();
+  const autoEmitReasoning = ctx.autoEmitReasoning !== false;
+  if (ctx.isResume) {
+    onEvent({ type: "continue_received", sessionId, iteration: payload.iteration ?? 0 });
+  }
+  let messages = Array.isArray(payload.messages) ? payload.messages.slice() : [];
+  let iteration = Number.isInteger(payload.iteration) ? payload.iteration : 0;
+  while (iteration < maxLoopIterations) {
+    onEvent({ type: "llm_start", sessionId, iteration });
+    let llmResponse;
+    try {
+      const { response } = await callLlmRaw(
+        { ...payload, messages },
+        fetchImpl,
+        /*requireContent=*/
+        false
+      );
+      llmResponse = response;
+    } catch (err3) {
+      onEvent({ type: "llm_call_failed", sessionId, iteration, cause: err3 });
+      throw new LlmCallError(err3?.message || "LLM call failed", { cause: err3 });
+    }
+    onEvent({ type: "llm_done", sessionId, iteration });
+    const assistantMessage = extractAssistantMessage2(llmResponse);
+    messages = [...messages, assistantMessage];
+    if (autoEmitReasoning) {
+      const reasoning = readReasoningContent2(llmResponse);
+      if (reasoning) {
+        const reasoningPush = buildReasoningPush2({
+          messageType: MESSAGE_TYPE2.INSTANT,
+          source: PUSH_SOURCE2.INSTANT,
+          messageId: `msg_${randomUUID2()}_iter_${iteration}_reasoning`,
+          sessionId,
+          reasoningContent: reasoning,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          title: payload.contactName ? `\u6765\u81EA ${payload.contactName}` : void 0,
+          contactName: payload.contactName,
+          avatarUrl: payload.avatarUrl || null,
+          messageSubtype: payload.messageSubtype || "chat",
+          metadata: payload.metadata || {}
+        });
+        try {
+          await emitReasoning(reasoningPush, payload, ctx, sessionId);
+          onEvent({ type: "reasoning_pushed", sessionId, iteration });
+        } catch (err3) {
+          onEvent({ type: "reasoning_push_failed", sessionId, iteration, cause: err3 });
+        }
+      }
+    }
+    const sessionCtx = buildSessionContext2({
+      sessionId,
+      messages,
+      llmResponse,
+      iteration,
+      contactName: payload.contactName,
+      avatarUrl: payload.avatarUrl,
+      charId: payload.charId,
+      metadata: payload.metadata
+    });
+    let decision;
+    try {
+      decision = await ctx.onLLMOutput(sessionCtx);
+      assertValidDecision2(decision);
+    } catch (err3) {
+      onEvent({ type: "hook_threw", sessionId, iteration, cause: err3 });
+      const diagnostic2 = buildErrorPush({
+        messageType: MESSAGE_TYPE2.INSTANT,
+        source: PUSH_SOURCE2.INSTANT,
+        messageId: `msg_${randomUUID2()}_iter_${iteration}_error`,
+        sessionId,
+        code: "HOOK_THREW",
+        message: err3?.message ?? "onLLMOutput hook threw",
+        iteration,
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      });
+      try {
+        await deliverPush(diagnostic2, payload, ctx, sessionId);
+      } catch (pushErr) {
+        onEvent({ type: "diagnostic_push_failed", code: "HOOK_THREW", sessionId, cause: pushErr });
+      }
+      throw new HookError(`onLLMOutput threw: ${err3?.message ?? err3}`, { cause: err3 });
+    }
+    if (decision.decision === "continue") {
+      messages = Array.isArray(decision.nextHistory) ? decision.nextHistory.slice() : [];
+      iteration++;
+      continue;
+    }
+    if (decision.decision === "skip-push") {
+      return { status: "skipped", sessionId, iteration };
+    }
+    const messagesSent = await sendPushesSequentially(
+      decision.pushPayloads,
+      payload,
+      ctx,
+      sessionId,
+      sleep
+    );
+    onEvent({
+      type: decision.decision === "finish" ? "final_pushed" : "tool_request_pushed",
+      sessionId,
+      iteration,
+      messagesSent
+    });
+    return { status: decision.decision === "finish" ? "finished" : "tool_requested", sessionId, iteration };
+  }
+  onEvent({ type: "loop_exceeded", sessionId, iteration });
+  const diagnostic = buildErrorPush({
+    messageType: "instant",
+    source: "instant",
+    messageId: `msg_${randomUUID2()}_loop_exceeded`,
+    sessionId,
+    code: "LOOP_EXCEEDED",
+    message: `Agentic loop exceeded ${maxLoopIterations} iterations`,
+    iteration,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString()
+  });
+  try {
+    await deliverPush(diagnostic, payload, ctx, sessionId);
+  } catch (err3) {
+    onEvent({ type: "diagnostic_push_failed", code: "LOOP_EXCEEDED", sessionId, cause: err3 });
+  }
+  return { status: "loop_exceeded", sessionId, iteration };
+}
+function assertValidDecision2(decision) {
+  if (!decision || typeof decision !== "object") {
+    throw new TypeError(`onLLMOutput returned invalid decision: ${stringifyForError(decision)}`);
+  }
+  const tag = (
+    /** @type {{ decision?: unknown }} */
+    decision.decision
+  );
+  if (typeof tag !== "string" || !VALID_DECISIONS2.has(tag)) {
+    throw new TypeError(`onLLMOutput returned invalid decision tag: ${stringifyForError(tag)}`);
+  }
+  const hasSingular = Object.prototype.hasOwnProperty.call(decision, "pushPayload");
+  const hasPlural = Object.prototype.hasOwnProperty.call(decision, "pushPayloads");
+  if (hasSingular) {
+    throw new TypeError(
+      hasPlural ? "pushPayload (singular) is removed in 0.8.0, use pushPayloads" : "pushPayload (singular) is removed in 0.8.0, use pushPayloads: [yourPayload]"
+    );
+  }
+  if (tag === "continue") {
+    if (!Array.isArray(
+      /** @type {{ nextHistory?: unknown }} */
+      decision.nextHistory
+    )) {
+      throw new TypeError('decision:"continue" requires a nextHistory array');
+    }
+    return;
+  }
+  if (tag === "skip-push") {
+    return;
+  }
+  if (!hasPlural || !Array.isArray(
+    /** @type {{ pushPayloads?: unknown }} */
+    decision.pushPayloads
+  )) {
+    throw new TypeError(`decision:"${tag}" requires a pushPayloads array`);
+  }
+  const pushes = (
+    /** @type {Array<unknown>} */
+    decision.pushPayloads
+  );
+  if (pushes.length === 0) {
+    throw new TypeError("pushPayloads: [] \u2014 use decision: skip-push to skip notification entirely");
+  }
+  for (let i = 0; i < pushes.length; i++) {
+    const p = pushes[i];
+    if (!p || typeof p !== "object" || Array.isArray(p)) {
+      throw new TypeError(`pushPayloads[${i}] must be a plain object, got ${stringifyForError(p)}`);
+    }
+    if (Object.prototype.hasOwnProperty.call(p, "splitPattern")) {
+      throw new TypeError(`pushPayloads[${i}].splitPattern is removed in 0.8.0; caller is responsible for splitting`);
+    }
+    if (Object.prototype.hasOwnProperty.call(p, "messageId")) {
+      const id = p.messageId;
+      if (typeof id !== "string" || id === "") {
+        throw new TypeError(`pushPayloads[${i}].messageId must be a non-empty string when set, got ${stringifyForError(id)}`);
+      }
+    }
+  }
+}
+function stringifyForError(value) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+async function sendPushWithMaybeBlob(pushPayload, payload, ctx, sessionId) {
+  const onEvent = typeof ctx.onEvent === "function" ? ctx.onEvent : () => {
+  };
+  const fetchImpl = ctx.fetch || globalThis.fetch;
+  let serialized;
+  try {
+    serialized = JSON.stringify(pushPayload);
+  } catch (err3) {
+    throw new HookError(`pushPayload is not JSON-serializable: ${err3?.message ?? err3}`, { cause: err3 });
+  }
+  if (typeof serialized !== "string") {
+    throw new HookError("pushPayload serialized to a non-string (likely `undefined`)");
+  }
+  const byteLen = PUSH_PAYLOAD_BYTE_ENCODER2.encode(serialized).byteLength;
+  const maxInline = ctx.blobStore && Number.isInteger(ctx.blobStore.maxInlineBytes) && ctx.blobStore.maxInlineBytes > 0 ? ctx.blobStore.maxInlineBytes : DEFAULT_MAX_INLINE_BYTES;
+  if (byteLen <= maxInline) {
+    await sendWebPush3({
+      subscription: payload.pushSubscription,
+      payload: serialized,
+      vapid: ctx.vapid,
+      fetch: fetchImpl
+    });
+    return;
+  }
+  if (!ctx.blobStore || !ctx.blobStore.adapter) {
+    const multipart = resolveRuntimeMultipartOptions(ctx);
+    if (!multipart.enabled) {
+      onEvent({ type: "payload_too_large", byteLen, maxInline, sessionId });
+      throw new PayloadTooLargeError(byteLen, maxInline);
+    }
+    await sendMultipartPushes(pushPayload, {
+      byteLen,
+      fetchImpl,
+      maxInline,
+      multipart,
+      onEvent,
+      payload,
+      serialized,
+      sessionId,
+      vapid: ctx.vapid
+    });
+    return;
+  }
+  const adapter = ctx.blobStore.adapter;
+  const ttl = Number.isInteger(ctx.blobStore.ttlSeconds) && ctx.blobStore.ttlSeconds > 0 ? ctx.blobStore.ttlSeconds : DEFAULT_BLOB_TTL_SECONDS;
+  const key = randomUUID2();
+  try {
+    await adapter.put(key, serialized, ttl);
+  } catch (err3) {
+    onEvent({ type: "blob_put_failed", key, sessionId, cause: err3 });
+    throw new PayloadTooLargeError(byteLen, maxInline, { cause: err3 });
+  }
+  onEvent({ type: "blob_written", key, size: byteLen, sessionId });
+  const blobUrl = buildBlobUrl(ctx.requestUrl, key);
+  const payloadObj = pushPayload && typeof pushPayload === "object" ? pushPayload : {};
+  const envelope = {
+    _blob: true,
+    key,
+    url: blobUrl,
+    messageKind: (
+      /** @type {{ messageKind?: unknown }} */
+      payloadObj.messageKind
+    ),
+    type: (
+      /** @type {{ type?: unknown }} */
+      payloadObj.type
+    )
+  };
+  for (const field of ["messageId", "id", "dedupeKey"]) {
+    const value = (
+      /** @type {Record<string, unknown>} */
+      payloadObj[field]
+    );
+    if (typeof value === "string" && value) {
+      envelope[field] = value;
+    }
+  }
+  try {
+    await sendWebPush3({
+      subscription: payload.pushSubscription,
+      payload: JSON.stringify(envelope),
+      vapid: ctx.vapid,
+      fetch: fetchImpl
+    });
+  } catch (err3) {
+    onEvent({ type: "blob_orphaned", key, size: byteLen, sessionId, cause: err3 });
+    throw err3;
+  }
+}
+function resolveRuntimeMultipartOptions(ctx) {
+  const hasMultipart = ctx && ctx.multipart !== void 0;
+  const raw = hasMultipart ? ctx.multipart : {};
+  const config = raw && typeof raw === "object" ? raw : {};
+  let enabled = config.enabled !== false;
+  let maxChunkBytes = config.maxChunkBytes;
+  if (ctx && ctx.reasoningChunkBytes !== void 0 && maxChunkBytes === void 0) {
+    if (ctx.reasoningChunkBytes === null) {
+      if (!hasMultipart) enabled = false;
+    } else {
+      maxChunkBytes = ctx.reasoningChunkBytes;
+    }
+  }
+  return {
+    enabled,
+    maxChunkBytes: positiveIntegerOrDefault(maxChunkBytes, DEFAULT_MULTIPART_CHUNK_BYTES),
+    ttlMs: positiveIntegerOrDefault(config.ttlMs, DEFAULT_MULTIPART_TTL_MS),
+    maxChunks: positiveIntegerOrDefault(config.maxChunks, DEFAULT_MULTIPART_MAX_CHUNKS),
+    maxTotalBytes: positiveIntegerOrDefault(config.maxTotalBytes, DEFAULT_MULTIPART_MAX_TOTAL_BYTES)
+  };
+}
+async function sendMultipartPushes(pushPayload, args) {
+  const {
+    byteLen,
+    fetchImpl,
+    maxInline,
+    multipart,
+    onEvent,
+    payload,
+    serialized,
+    sessionId,
+    vapid
+  } = args;
+  const originalMessageKind = getOriginalMessageKind(pushPayload);
+  if (originalMessageKind === MULTIPART_MESSAGE_KIND) {
+    onEvent({ type: "payload_too_large", byteLen, maxInline, sessionId });
+    throw new PayloadTooLargeError(byteLen, maxInline);
+  }
+  if (byteLen > multipart.maxTotalBytes) {
+    onEvent({
+      type: "multipart_too_large",
+      byteLen,
+      maxTotalBytes: multipart.maxTotalBytes,
+      originalMessageKind,
+      sessionId
+    });
+    throw new PayloadTooLargeError(byteLen, maxInline);
+  }
+  const parts = buildMultipartPushPayloads(pushPayload, {
+    maxChunkBytes: multipart.maxChunkBytes,
+    serializedPayload: serialized,
+    ttlMs: multipart.ttlMs
+  });
+  if (parts.length > multipart.maxChunks) {
+    onEvent({
+      type: "multipart_too_many_chunks",
+      byteLen,
+      maxChunks: multipart.maxChunks,
+      totalChunks: parts.length,
+      originalMessageKind,
+      sessionId
+    });
+    throw new PayloadTooLargeError(byteLen, maxInline);
+  }
+  const firstPart = (
+    /** @type {{ multipart?: { id?: unknown } }} */
+    parts[0] || {}
+  );
+  const id = firstPart.multipart?.id;
+  onEvent({
+    type: "multipart_built",
+    id,
+    byteLen,
+    totalChunks: parts.length,
+    originalMessageKind,
+    sessionId
+  });
+  for (const part of parts) {
+    await sendWebPush3({
+      subscription: payload.pushSubscription,
+      payload: JSON.stringify(part),
+      vapid,
+      fetch: fetchImpl
+    });
+  }
+  onEvent({ type: "multipart_sent", id, totalChunks: parts.length, originalMessageKind, sessionId });
+}
+function getOriginalMessageKind(pushPayload) {
+  return pushPayload && typeof pushPayload === "object" ? (
+    /** @type {{ messageKind?: unknown }} */
+    pushPayload.messageKind
+  ) : void 0;
+}
+function positiveIntegerOrDefault(value, fallback) {
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+function buildBlobUrl(requestUrl, key) {
+  if (requestUrl) {
+    try {
+      return new URL(`/blob/${key}`, requestUrl).toString();
+    } catch {
+    }
+  }
+  return `/blob/${key}`;
+}
+var BLOB_KEY_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var SSE_ENCODER2 = new TextEncoder();
+var SSE_KEEPALIVE_BYTES2 = SSE_ENCODER2.encode(": keepalive\n\n");
+var SSE_DONE_BYTES2 = SSE_ENCODER2.encode("event: done\ndata: {}\n\n");
+var DEFAULT_SSE_KEEPALIVE_MS = 1e3;
+var MIN_SSE_KEEPALIVE_MS = 250;
+function acceptsJsonOnly(acceptHeader) {
+  if (typeof acceptHeader !== "string" || acceptHeader.length === 0) return false;
+  const ranges = acceptHeader.split(",").map((r) => r.split(";")[0].trim().toLowerCase()).filter(Boolean);
+  return ranges.length > 0 && ranges.every((r) => r === "application/json");
+}
+function createInstantHandler(options) {
+  if (!options) throw new Error("[amsg-instant] options is required");
+  if (!options.vapid) throw new Error("[amsg-instant] options.vapid is required");
+  if (options.webpush !== void 0) {
+    const warn = globalThis.console && globalThis.console.warn;
+    if (typeof warn === "function") {
+      warn("[amsg-instant] options.webpush is deprecated and ignored since 0.3.0. Intercept push delivery via options.fetch in tests.");
+    }
+  }
+  const onEvent = typeof options.onEvent === "function" ? options.onEvent : () => {
+  };
+  const tokenSigningKey = options.tokenSigningKey ? String(options.tokenSigningKey) : "";
+  const clientToken = options.clientToken ? String(options.clientToken) : "";
+  const expectedClientTokenBytes = clientToken ? utf84(clientToken) : null;
+  const corsHeaders = buildCorsHeaders(options.cors);
+  const onLLMOutput2 = typeof options.onLLMOutput === "function" ? options.onLLMOutput : null;
+  const onBeforeLoop = typeof options.onBeforeLoop === "function" ? options.onBeforeLoop : null;
+  const onAfterLoop = typeof options.onAfterLoop === "function" ? options.onAfterLoop : null;
+  const blobStore = options.blobStore || null;
+  const maxLoopIterations = Number.isInteger(options.maxLoopIterations) && options.maxLoopIterations > 0 ? options.maxLoopIterations : 10;
+  const autoEmitReasoning = options.autoEmitReasoning !== false;
+  const multipart = resolveMultipartOptions(options);
+  const sse = resolveSseOptions(options.sse);
+  const vapidValid = isVapidConfigValid(options.vapid);
+  const respond = (status, body) => jsonResponse2(status, body, corsHeaders);
+  return async function handler(request, envOrRuntime, runtime) {
+    onEvent({ type: "request" });
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders });
+    }
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(request.url);
+    } catch {
+      parsedUrl = null;
+    }
+    const pathname = parsedUrl ? parsedUrl.pathname : "";
+    if (pathname.startsWith("/blob/") && request.method === "GET") {
+      return handleBlobRead(request, pathname, blobStore, corsHeaders);
+    }
+    if (request.method !== "POST") {
+      return respond(405, {
+        success: false,
+        error: { code: "METHOD_NOT_ALLOWED", message: "Only POST is supported" }
+      });
+    }
+    if (tokenSigningKey) {
+      const tokenError = await verifyBearerToken(request, tokenSigningKey, respond);
+      if (tokenError) return tokenError;
+    }
+    if (expectedClientTokenBytes) {
+      const tokenError = verifyClientToken(request, expectedClientTokenBytes, respond);
+      if (tokenError) return tokenError;
+    }
+    let rawBody;
+    try {
+      rawBody = await request.text();
+    } catch (_err) {
+      return respond(400, {
+        success: false,
+        error: { code: "INVALID_PAYLOAD_FORMAT", message: "\u65E0\u6CD5\u8BFB\u53D6\u8BF7\u6C42\u4F53" }
+      });
+    }
+    let payload;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      return respond(400, {
+        success: false,
+        error: { code: "INVALID_PAYLOAD_FORMAT", message: "\u8BF7\u6C42\u4F53\u4E0D\u662F\u5408\u6CD5 JSON" }
+      });
+    }
+    const isContinue = pathname === "/continue";
+    if (isContinue && !onLLMOutput2) {
+      return respond(400, {
+        success: false,
+        error: {
+          code: "CONTINUE_NOT_AVAILABLE",
+          message: "/continue \u4EC5\u5728 createInstantHandler \u914D\u7F6E\u4E86 onLLMOutput \u65F6\u53EF\u7528"
+        }
+      });
+    }
+    let validation;
+    if (isContinue) {
+      validation = validateContinuePayload(payload, { maxLoopIterations });
+    } else {
+      validation = validateInstantPayload(payload, {
+        hookPath: !!onLLMOutput2,
+        maxLoopIterations
+      });
+    }
+    if (!validation.valid) {
+      return respond(400, {
+        success: false,
+        error: {
+          code: validation.errorCode,
+          message: validation.errorMessage,
+          details: validation.details
+        }
+      });
+    }
+    if (!vapidValid) {
+      return respond(500, {
+        success: false,
+        error: { code: "VAPID_CONFIG_ERROR", message: "VAPID \u914D\u7F6E\u7F3A\u5931\u6216\u65E0\u6548" }
+      });
+    }
+    try {
+      const isPurePush = acceptsJsonOnly(request.headers.get("accept"));
+      const sessionId = typeof payload.sessionId === "string" && payload.sessionId ? payload.sessionId : `sess_${randomUUID2()}`;
+      const processorCtx = {
+        vapid: options.vapid,
+        fetch: options.fetch || globalThis.fetch,
+        onEvent,
+        onLLMOutput: onLLMOutput2,
+        blobStore,
+        maxLoopIterations,
+        autoEmitReasoning,
+        multipart,
+        requestUrl: request.url,
+        isResume: isContinue
+      };
+      const hookMetadata = payload.metadata || {};
+      const runWithLifecycleHooks = async () => {
+        let pending;
+        if (onBeforeLoop) {
+          pending = await onBeforeLoop({ requestBody: payload, sessionId, metadata: hookMetadata });
+        }
+        const result = await processInstantMessage({ ...payload, sessionId }, processorCtx);
+        if (onAfterLoop) {
+          await onAfterLoop({
+            deliver: processorCtx.deliver,
+            sessionId,
+            metadata: hookMetadata,
+            requestBody: payload,
+            pending
+          });
+        }
+        return result;
+      };
+      if (isPurePush) {
+        processorCtx.deliver = async (pushPayload) => {
+          await sendPushWithMaybeBlob(ensureStableMessageId(pushPayload), payload, processorCtx, sessionId);
+        };
+        const work = runWithLifecycleHooks();
+        registerWaitUntil(work, resolveWaitUntil(envOrRuntime, runtime, options), onEvent);
+        const result = await work;
+        return respond(200, { success: true, data: result });
+      }
+      processorCtx.spacingMs = 0;
+      let resolveStartDone;
+      const startDone = new Promise((resolve) => {
+        resolveStartDone = resolve;
+      });
+      registerWaitUntil(startDone, resolveWaitUntil(envOrRuntime, runtime, options), onEvent);
+      const backupWork = /* @__PURE__ */ new Set();
+      let streamUsable = true;
+      let keepaliveTimer = null;
+      let activeController = null;
+      const stopKeepalive = () => {
+        if (keepaliveTimer) {
+          clearInterval(keepaliveTimer);
+          keepaliveTimer = null;
+        }
+      };
+      const trackBackupWork = (work) => {
+        backupWork.add(work);
+        work.finally(() => {
+          backupWork.delete(work);
+        });
+      };
+      const messageIdOf = (body) => body && typeof body === "object" && typeof body.messageId === "string" ? body.messageId : void 0;
+      const scheduleBackupPush = (body) => {
+        const messageId = messageIdOf(body);
+        onEvent({ type: "backup_push_scheduled", sessionId, messageId });
+        const work = (async () => {
+          try {
+            await sendPushWithMaybeBlob(body, payload, processorCtx, sessionId);
+            onEvent({ type: "backup_push_sent", sessionId, messageId });
+          } catch (pushErr) {
+            onEvent({ type: "backup_push_failed", sessionId, messageId, cause: pushErr });
+          }
+        })();
+        trackBackupWork(work);
+      };
+      const enqueueKeepalive = () => {
+        if (!streamUsable || request.signal.aborted || !activeController) return;
+        try {
+          activeController.enqueue(SSE_KEEPALIVE_BYTES2);
+        } catch {
+          streamUsable = false;
+          stopKeepalive();
+        }
+      };
+      const startKeepalive = () => {
+        if (!streamUsable || request.signal.aborted) return;
+        if (sse.immediateKeepalive) enqueueKeepalive();
+        if (!streamUsable || request.signal.aborted) return;
+        keepaliveTimer = setInterval(enqueueKeepalive, sse.keepaliveMs);
+      };
+      const safeClose = () => {
+        try {
+          activeController && activeController.close();
+        } catch {
+        }
+      };
+      return new Response(
+        new ReadableStream({
+          async start(controller) {
+            activeController = controller;
+            const onAbort = () => {
+              if (!streamUsable) return;
+              streamUsable = false;
+              stopKeepalive();
+              onEvent({ type: "sse_stream_aborted", sessionId });
+            };
+            request.signal.addEventListener("abort", onAbort);
+            if (request.signal.aborted) onAbort();
+            const cleanup = () => {
+              stopKeepalive();
+              request.signal.removeEventListener("abort", onAbort);
+            };
+            const safeEnqueue = async (eventName, body, onFallbackFail) => {
+              const stableBody = ensureStableMessageId(body);
+              const messageId = messageIdOf(stableBody);
+              const fallback = async () => {
+                try {
+                  await sendPushWithMaybeBlob(stableBody, payload, processorCtx, sessionId);
+                  onEvent({ type: "fallback_push_sent", sessionId, messageId, eventName });
+                } catch (pushErr) {
+                  onEvent({ type: "fallback_push_failed", sessionId, messageId, eventName, cause: pushErr });
+                  if (onFallbackFail) onFallbackFail(pushErr);
+                }
+              };
+              if (!streamUsable || request.signal.aborted) {
+                streamUsable = false;
+                stopKeepalive();
+                await fallback();
+                return;
+              }
+              try {
+                controller.enqueue(SSE_ENCODER2.encode(`event: ${eventName}
+data: ${JSON.stringify(stableBody)}
+
+`));
+                onEvent({ type: "sse_payload_enqueued", sessionId, messageId, eventName });
+                scheduleBackupPush(stableBody);
+              } catch (err3) {
+                streamUsable = false;
+                stopKeepalive();
+                onEvent({ type: "sse_payload_enqueue_failed", sessionId, messageId, eventName, cause: err3 });
+                await fallback();
+              }
+            };
+            processorCtx.deliver = async (pushPayload) => {
+              await safeEnqueue("payload", pushPayload);
+            };
+            startKeepalive();
+            try {
+              await runWithLifecycleHooks();
+              if (streamUsable) {
+                try {
+                  controller.enqueue(SSE_DONE_BYTES2);
+                } catch {
+                }
+              }
+            } catch (err3) {
+              if (!(err3 instanceof HookError)) {
+                const diag = buildErrorPush({
+                  messageType: MESSAGE_TYPE2.INSTANT,
+                  source: PUSH_SOURCE2.INSTANT,
+                  messageId: `msg_${randomUUID2()}_error`,
+                  sessionId,
+                  code: err3?.code || "INTERNAL_ERROR",
+                  message: err3?.message || "\u5185\u90E8\u9519\u8BEF",
+                  timestamp: (/* @__PURE__ */ new Date()).toISOString()
+                });
+                await safeEnqueue("error", diag, (pushErr) => {
+                  onEvent({ type: "sse_error_fallback_failed", sessionId, cause: pushErr });
+                });
+              }
+            } finally {
+              cleanup();
+              await Promise.allSettled(Array.from(backupWork));
+              safeClose();
+              resolveStartDone();
+            }
+          },
+          cancel(reason) {
+            streamUsable = false;
+            stopKeepalive();
+            onEvent({ type: "sse_stream_canceled", sessionId, reason });
+          }
+        }),
+        {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive"
+          }
+        }
+      );
+    } catch (err3) {
+      onEvent({ type: "error", code: err3?.code, message: err3?.message });
+      const code = err3?.code || "INTERNAL_ERROR";
+      const status = mapErrorStatus(err3, code);
+      return respond(status, {
+        success: false,
+        error: { code, message: err3?.message || "\u5185\u90E8\u9519\u8BEF" }
+      });
+    }
+  };
+}
+function resolveWaitUntil(envOrRuntime, runtime, options) {
+  if (runtime && typeof runtime.waitUntil === "function") {
+    return { waitUntil: runtime.waitUntil, target: runtime };
+  }
+  if (envOrRuntime && typeof envOrRuntime.waitUntil === "function") {
+    return { waitUntil: envOrRuntime.waitUntil, target: envOrRuntime };
+  }
+  if (options && typeof options.waitUntil === "function") {
+    return { waitUntil: options.waitUntil, target: void 0 };
+  }
+  return null;
+}
+function registerWaitUntil(work, lifecycle, onEvent) {
+  if (!lifecycle) return;
+  const backgroundWork = work.catch((err3) => {
+    onEvent({ type: "wait_until_rejected", code: err3?.code, message: err3?.message });
+  });
+  try {
+    lifecycle.waitUntil.call(lifecycle.target, backgroundWork);
+  } catch (err3) {
+    onEvent({ type: "wait_until_failed", cause: err3 });
+  }
+}
+function resolveMultipartOptions(options) {
+  const hasMultipart = options.multipart !== void 0;
+  const raw = hasMultipart ? options.multipart : {};
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new TypeError("[amsg-instant] multipart must be a plain object when set");
+  }
+  const multipart = (
+    /** @type {Record<string, unknown>} */
+    raw
+  );
+  let enabled = multipart.enabled !== false;
+  let maxChunkBytes = multipart.maxChunkBytes;
+  if (options.reasoningChunkBytes !== void 0 && maxChunkBytes === void 0) {
+    if (options.reasoningChunkBytes === null) {
+      if (!hasMultipart) enabled = false;
+    } else {
+      maxChunkBytes = options.reasoningChunkBytes;
+    }
+  }
+  return {
+    enabled,
+    maxChunkBytes: resolvePositiveInt(maxChunkBytes, DEFAULT_MULTIPART_CHUNK_BYTES, "multipart.maxChunkBytes"),
+    ttlMs: resolvePositiveInt(multipart.ttlMs, DEFAULT_MULTIPART_TTL_MS, "multipart.ttlMs"),
+    maxChunks: resolvePositiveInt(multipart.maxChunks, DEFAULT_MULTIPART_MAX_CHUNKS, "multipart.maxChunks"),
+    maxTotalBytes: resolvePositiveInt(multipart.maxTotalBytes, DEFAULT_MULTIPART_MAX_TOTAL_BYTES, "multipart.maxTotalBytes")
+  };
+}
+function resolveSseOptions(input) {
+  const raw = input === void 0 ? {} : input;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new TypeError("[amsg-instant] sse must be a plain object when set");
+  }
+  const backupPush = raw.backupPush === void 0 ? "on" : String(raw.backupPush);
+  if (backupPush !== "on") {
+    throw new TypeError('[amsg-instant] sse.backupPush is always "on" in 0.9.0 stable');
+  }
+  if (raw.backupDelayMs !== void 0) {
+    throw new TypeError("[amsg-instant] sse.backupDelayMs was removed; backup push is immediate");
+  }
+  const keepaliveMs = Math.max(
+    MIN_SSE_KEEPALIVE_MS,
+    resolvePositiveInt(raw.keepaliveMs, DEFAULT_SSE_KEEPALIVE_MS, "sse.keepaliveMs")
+  );
+  return {
+    backupPush,
+    keepaliveMs,
+    immediateKeepalive: raw.immediateKeepalive !== false
+  };
+}
+function resolvePositiveInt(value, fallback, fieldName) {
+  if (value === void 0 || value === null) return fallback;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new TypeError(`[amsg-instant] ${fieldName} must be a positive integer. Got: ${value}`);
+  }
+  return value;
+}
+function mapErrorStatus(err3, code) {
+  if (err3 instanceof HookError) return 500;
+  if (err3 instanceof LlmCallError) return 502;
+  if (err3 instanceof PayloadTooLargeError) return 500;
+  if (code === "PUSH_SEND_FAILED" || code === "LLM_CALL_FAILED") return 502;
+  return 500;
+}
+async function handleBlobRead(request, pathname, blobStore, baseHeaders) {
+  if (!blobStore || !blobStore.adapter) {
+    return new Response(JSON.stringify({ error: "blob_store_not_configured" }), {
+      status: 404,
+      headers: {
+        ...baseHeaders,
+        "Content-Type": "application/json; charset=utf-8",
+        "Access-Control-Allow-Origin": "*"
+      }
+    });
+  }
+  const key = pathname.slice("/blob/".length);
+  if (!BLOB_KEY_REGEX.test(key)) {
+    return new Response(JSON.stringify({ error: "invalid_key" }), {
+      status: 400,
+      headers: {
+        ...baseHeaders,
+        "Content-Type": "application/json; charset=utf-8",
+        "Access-Control-Allow-Origin": "*"
+      }
+    });
+  }
+  let body;
+  try {
+    body = await blobStore.adapter.read(key);
+  } catch {
+    return new Response(JSON.stringify({ error: "blob_read_failed" }), {
+      status: 502,
+      headers: {
+        ...baseHeaders,
+        "Content-Type": "application/json; charset=utf-8",
+        "Access-Control-Allow-Origin": "*"
+      }
+    });
+  }
+  if (typeof body !== "string") {
+    return new Response(JSON.stringify({ error: "blob_not_found_or_expired" }), {
+      status: 404,
+      headers: {
+        ...baseHeaders,
+        "Content-Type": "application/json; charset=utf-8",
+        "Access-Control-Allow-Origin": "*"
+      }
+    });
+  }
+  return new Response(body, {
+    status: 200,
+    headers: {
+      ...baseHeaders,
+      "Content-Type": "application/json; charset=utf-8",
+      "Access-Control-Allow-Origin": "*",
+      "Cache-Control": "no-store"
+    }
+  });
+}
+function getHeader2(request, name) {
+  try {
+    return String(request.headers.get(name) || "").trim();
+  } catch {
+    return "";
+  }
+}
+function buildCorsHeaders(cors) {
+  const allowOrigin = cors && typeof cors.allowOrigin === "string" && cors.allowOrigin.trim() ? cors.allowOrigin.trim() : "*";
+  const headers = {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Token",
+    "Access-Control-Max-Age": "86400"
+  };
+  if (allowOrigin !== "*") {
+    headers["Vary"] = "Origin";
+  }
+  return headers;
+}
+function jsonResponse2(status, body, extraHeaders) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      ...extraHeaders || {}
+    }
+  });
+}
+function isVapidConfigValid(vapid) {
+  if (!vapid || !vapid.email || !vapid.publicKey || !vapid.privateKey) return false;
+  return true;
+}
+function verifyClientToken(request, expectedBytes, respond) {
+  const received = getHeader2(request, "x-client-token");
+  if (!received) {
+    return respond(401, {
+      success: false,
+      error: { code: "INVALID_CLIENT_TOKEN", message: "\u7F3A\u5C11 X-Client-Token" }
+    });
+  }
+  const receivedBytes = utf84(received);
+  if (!timingSafeEqualBytes2(receivedBytes, expectedBytes)) {
+    return respond(401, {
+      success: false,
+      error: { code: "INVALID_CLIENT_TOKEN", message: "X-Client-Token \u65E0\u6548" }
+    });
+  }
+  return null;
+}
+async function verifyBearerToken(request, signingKey, respond) {
+  const authHeader = getHeader2(request, "authorization");
+  if (!authHeader.toLowerCase().startsWith("bearer ")) {
+    return respond(401, {
+      success: false,
+      error: { code: "UNAUTHORIZED", message: "\u7F3A\u5C11 Authorization: Bearer <token>" }
+    });
+  }
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    return respond(401, {
+      success: false,
+      error: { code: "UNAUTHORIZED", message: "\u7A7A Bearer token" }
+    });
+  }
+  const parts = token.split(".");
+  if (parts.length !== 3) {
+    return respond(401, {
+      success: false,
+      error: { code: "UNAUTHORIZED", message: "token \u683C\u5F0F\u65E0\u6548" }
+    });
+  }
+  const [encodedHeader, encodedPayload, receivedSig] = parts;
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const expectedSigBytes = await hmacSha2562(utf84(signingKey), utf84(signingInput));
+  let receivedBytes;
+  try {
+    receivedBytes = base64UrlToBytes2(receivedSig);
+  } catch {
+    return respond(401, {
+      success: false,
+      error: { code: "UNAUTHORIZED", message: "token \u7B7E\u540D\u683C\u5F0F\u65E0\u6548" }
+    });
+  }
+  if (!timingSafeEqualBytes2(receivedBytes, expectedSigBytes)) {
+    return respond(401, {
+      success: false,
+      error: { code: "UNAUTHORIZED", message: "token \u7B7E\u540D\u65E0\u6548" }
+    });
+  }
+  let payload;
+  try {
+    payload = JSON.parse(utf8Decode2(base64UrlToBytes2(encodedPayload)));
+  } catch {
+    return respond(401, {
+      success: false,
+      error: { code: "UNAUTHORIZED", message: "token payload \u89E3\u6790\u5931\u8D25" }
+    });
+  }
+  if (!payload || payload.v !== 1 || !payload.exp || payload.exp <= Math.floor(Date.now() / 1e3)) {
+    return respond(401, {
+      success: false,
+      error: { code: "UNAUTHORIZED", message: "token \u5DF2\u8FC7\u671F\u6216\u65E0\u6548" }
+    });
+  }
+  return null;
+}
+function createCloudflareWorker(optionsBuilder) {
+  let handler = null;
+  return {
+    async fetch(request, env, ctx) {
+      if (!handler) {
+        handler = createInstantHandler(optionsBuilder(env || {}));
+      }
+      return handler(request, ctx);
+    }
+  };
+}
+
+// node_modules/.pnpm/@rei-standard+amsg-instant@0.9.1/node_modules/@rei-standard/amsg-instant/dist/blob/d1.mjs
+function createD1BlobStore(db, opts = {}) {
+  if (!db || typeof db.prepare !== "function") {
+    throw new TypeError("createD1BlobStore: db must be a D1 Database binding");
+  }
+  const table = sanitizeTable(opts.table);
+  const putSql = `INSERT INTO ${table}(key, body, expires_at) VALUES (?, ?, ?)`;
+  const readSql = `SELECT body FROM ${table} WHERE key = ? AND expires_at > ?`;
+  return {
+    async put(key, body, ttlSeconds) {
+      await db.prepare(putSql).bind(key, body, Date.now() + ttlSeconds * 1e3).run();
+    },
+    async read(key) {
+      const row = await db.prepare(readSql).bind(key, Date.now()).first();
+      if (!row) return null;
+      const body = (
+        /** @type {{ body?: unknown }} */
+        row.body
+      );
+      return typeof body === "string" ? body : null;
+    }
+  };
+}
+function sanitizeTable(value) {
+  if (value === void 0 || value === null || value === "") return "amsg_transient_blobs";
+  if (typeof value !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new TypeError(
+      "createD1BlobStore: opts.table must match /^[A-Za-z_][A-Za-z0-9_]*$/"
+    );
+  }
+  return value;
+}
+
+// node_modules/.pnpm/@rei-standard+amsg-client@2.9.0-next.7/node_modules/@rei-standard/amsg-client/dist/index.mjs
+var TEXT_ENCODER3 = new TextEncoder();
+function makeLocalError(code, message, details) {
+  const err3 = new Error(`[rei-standard-amsg-client] ${message}`);
+  err3.code = code;
+  if (details) err3.details = details;
+  return err3;
+}
+function isThenable(value) {
+  return !!value && (typeof value === "object" || typeof value === "function") && typeof value.then === "function";
+}
+var SSE_LINE_NORMALIZE = /\r\n?/g;
+function classifyContentType(contentType) {
+  const main = (contentType || "").split(";")[0].trim().toLowerCase();
+  if (main === "text/event-stream") return "sse";
+  if (main === "application/json") return "json";
+  if (/^application\/[\w.+-]+\+json$/.test(main)) return "json";
+  return "unknown";
+}
+var COMPRESS_REQUEST_DEFAULT_THRESHOLD = 16384;
+var COMPRESS_REQUEST_HEADER = "X-Amsg-Request-Encoding";
+async function maybeCompressRequestBody(body, compressRequest) {
+  if (!compressRequest) return { body, header: null };
+  const threshold = typeof compressRequest === "object" && typeof compressRequest.thresholdBytes === "number" ? compressRequest.thresholdBytes : COMPRESS_REQUEST_DEFAULT_THRESHOLD;
+  try {
+    if (typeof CompressionStream === "undefined") return { body, header: null };
+    const bytes = new TextEncoder().encode(body);
+    if (bytes.length <= threshold) return { body, header: null };
+    const gz = new Uint8Array(
+      await new Response(
+        new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))
+      ).arrayBuffer()
+    );
+    return { body: gz, header: COMPRESS_REQUEST_HEADER };
+  } catch {
+    return { body, header: null };
+  }
+}
+var ReiClient = class {
+  /**
+   * @param {ReiClientConfig} config
+   */
+  constructor(config) {
+    if (!config || !config.baseUrl) throw new Error("[rei-standard-amsg-client] baseUrl is required");
+    const instantEncryption = config.instantEncryption !== false;
+    if (!config.userId && instantEncryption) {
+      throw new Error(
+        "[rei-standard-amsg-client] userId is required (omit only when instantEncryption: false)"
+      );
+    }
+    this._baseUrl = config.baseUrl.replace(/\/+$/, "");
+    this._customBaseUrls = {};
+    if (config.customBaseUrls && typeof config.customBaseUrls === "object") {
+      for (const [name, url] of Object.entries(config.customBaseUrls)) {
+        if (typeof url === "string" && url) {
+          this._customBaseUrls[name] = url.replace(/\/+$/, "");
+        }
+      }
+    }
+    this._userId = config.userId || "";
+    this._userKey = null;
+    this._instantEncryption = instantEncryption;
+    this._instantClientToken = typeof config.instantClientToken === "string" && config.instantClientToken ? config.instantClientToken : "";
+    this._serverToken = typeof config.serverToken === "string" && config.serverToken ? config.serverToken : "";
+    this._maxPayloadBytes = normalizeMaxPayloadBytes(config.maxPayloadBytes);
+    this._lowLevelWarned = /* @__PURE__ */ new Set();
+  }
+  /**
+   * Resolve the base URL for a given endpoint, falling back to `baseUrl`.
+   *
+   * @private
+   * @param {string} endpointName
+   * @returns {string}
+   */
+  _resolveBaseUrl(endpointName) {
+    return this._customBaseUrls[endpointName] || this._baseUrl;
+  }
+  /**
+   * Attach the single-user shared secret to amsg-server endpoint requests.
+   * Never applied to the instant path (that uses instantClientToken).
+   * @private
+   * @param {Record<string, string>} headers
+   * @returns {Record<string, string>}
+   */
+  _withServerToken(headers) {
+    if (this._serverToken) headers["X-Client-Token"] = this._serverToken;
+    return headers;
+  }
+  // ─── Initialisation ─────────────────────────────────────────────
+  /**
+   * Fetch the user-specific encryption key.
+   * Must be called before any encrypted request.
+   *
+   * In plaintext-instant mode (`instantEncryption: false`) this is a no-op:
+   * `sendInstant()` / `deliver()` do not need a userKey. Note that if you
+   * also intend to call `scheduleMessage` / `listMessages` / `updateMessage`
+   * (which always use AES-256-GCM), you must construct with
+   * `instantEncryption: true` (the default) — those methods will throw
+   * "Not initialised" otherwise.
+   */
+  async init() {
+    if (this._instantEncryption === false) {
+      return;
+    }
+    const res = await fetch(`${this._baseUrl}/get-user-key`, {
+      method: "GET",
+      headers: this._withServerToken({ "X-User-Id": this._userId })
+    });
+    const json2 = await res.json();
+    if (!json2.success) throw new Error(json2.error?.message || "Failed to fetch user key");
+    const userKey = json2?.data?.userKey;
+    if (typeof userKey !== "string" || !/^[0-9a-f]{64}$/i.test(userKey)) {
+      throw new Error("[rei-standard-amsg-client] Invalid user key format");
+    }
+    this._userKey = this._hexToUint8Array(userKey);
+  }
+  /**
+   * Fetch the amsg-server worker's own VAPID public key.
+   *
+   * A browser needs this as `applicationServerKey` when creating a Web Push
+   * subscription. Each self-hosted worker owns its VAPID keypair, so pull the
+   * key at runtime rather than baking it into the frontend. Sends
+   * `X-Client-Token` when a `serverToken` is configured.
+   *
+   * @returns {Promise<string>} The base64url VAPID public key.
+   * @throws {Error} When the worker has no VAPID public key configured (503).
+   */
+  async getVapidPublicKey() {
+    const res = await fetch(`${this._baseUrl}/vapid-public-key`, {
+      method: "GET",
+      headers: this._withServerToken({})
+    });
+    const json2 = await res.json();
+    if (!json2.success) throw new Error(json2.error?.message || "Failed to fetch VAPID public key");
+    return json2.publicKey;
+  }
+  /**
+   * Fetch the worker's capability manifest (single-user amsg-server 2.7.0+,
+   * `GET /capabilities`).
+   *
+   * Feature detection for deploy drift: an outdated worker lacks newer
+   * endpoints/behaviors silently, so the frontend can call this once and
+   * show a "worker needs a redeploy" hint instead of leaving new features
+   * dead. Feature names are library-defined strings (e.g. `client-state`,
+   * `client-state-chunking`, `agentic-hooks`) that grow over time.
+   *
+   * Sends `X-Client-Token` when a `serverToken` is configured.
+   *
+   * @returns {Promise<{ serverVersion: string, features: string[] } | null>}
+   *   `null` when the worker predates the endpoint (HTTP 404) or the
+   *   response is not JSON (e.g. a proxy error page). Other failures
+   *   (wrong token, 5xx with a JSON envelope) throw.
+   */
+  async getCapabilities() {
+    const res = await fetch(`${this._baseUrl}/capabilities`, {
+      method: "GET",
+      headers: this._withServerToken({})
+    });
+    if (res.status === 404) return null;
+    let json2;
+    try {
+      json2 = await res.json();
+    } catch {
+      return null;
+    }
+    if (!json2?.success) throw new Error(json2?.error?.message || "Failed to fetch capabilities");
+    return {
+      serverVersion: typeof json2.serverVersion === "string" ? json2.serverVersion : "",
+      features: Array.isArray(json2.features) ? json2.features : []
+    };
+  }
+  // ─── Public API ─────────────────────────────────────────────────
+  /**
+   * Schedule a message.
+   *
+   * Note: For `messageType: 'instant'`, prefer `deliver()` (2.5.0+) or
+   * `sendInstant()`. Both route through `@rei-standard/amsg-instant`
+   * (stateless, no DB round-trip) rather than `amsg-server`'s schedule-
+   * message endpoint. This method still works for instant via amsg-server
+   * for backward compatibility — see CHANGELOG / README for details.
+   *
+   * The payload is automatically encrypted before transmission.
+   *
+   * If `avatarUrl` is unusable (`data:` URI, > 2 KB, or non-string), the
+   * client soft-strips it on the payload and emits a `console.warn` — the
+   * schedule still ships, just without an avatar. If `maxPayloadBytes` is
+   * configured, oversized JSON payloads throw `PAYLOAD_TOO_LARGE_LOCAL`.
+   *
+   * @param {Object} payload - Schedule message payload.
+   * @returns {Promise<Object>} API response body.
+   */
+  async scheduleMessage(payload) {
+    this._sanitizeAvatarUrl(payload);
+    const json2 = JSON.stringify(payload);
+    this._assertPayloadSize(json2, "scheduleMessage");
+    const encrypted = await this._encrypt(json2);
+    const res = await fetch(`${this._baseUrl}/schedule-message`, {
+      method: "POST",
+      headers: this._withServerToken({
+        "Content-Type": "application/json",
+        "X-User-Id": this._userId,
+        "X-Payload-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      }),
+      body: JSON.stringify(encrypted)
+    });
+    return res.json();
+  }
+  /**
+   * **Low-level JSON dispatcher.** Use `deliver()` for new code — it
+   * gives you a correct `send-failed` vs `delivered` verdict by
+   * coordinating transport with an out-of-band observation channel.
+   *
+   * Posts an instant message via `@rei-standard/amsg-instant` and
+   * returns whatever the worker returns. **HTTP 200 ≠ delivery
+   * confirmation** when amsg-instant is configured with backup Web
+   * Push (default in 0.9.0+): the dispatch succeeded but the message
+   * may still land via the backup channel even if this call rejected,
+   * and a 200 here does not guarantee the consumer ever saw it. If
+   * you only care about the transport response (no delivery
+   * coordination needed), this stays useful — otherwise prefer
+   * `deliver()`.
+   *
+   * Two transport modes (chosen by constructor `instantEncryption`):
+   *
+   * - **Encrypted (default)** — payload is AES-256-GCM encrypted with the
+   *   `userKey` fetched by `init()`. Compatible with amsg-instant 0.1.x and
+   *   with amsg-server's `schedule-message` instant path. Sends
+   *   `X-User-Id` + `X-Payload-Encrypted: true` + `X-Encryption-Version: 1`.
+   *
+   * - **Plaintext** (`instantEncryption: false`) — payload is sent as raw
+   *   JSON. Targets amsg-instant 0.2.x+. Sends `X-Client-Token` if
+   *   `instantClientToken` was configured.
+   *
+   * Routes to `customBaseUrls.instant` if configured, otherwise `baseUrl`.
+   *
+   * @param {Object} payload - Instant message payload.
+   * @param {string} [endpointPath] - Path under the resolved base URL. Default '/instant'.
+   * @param {{ authorization?: string, expectsBackupPush?: boolean }} [opts]
+   *   - `authorization`: optional auth header to forward.
+   *   - `expectsBackupPush`: opt-in dev reminder. Set to `true` to log a
+   *     one-shot console.warn that this is a low-level transport and
+   *     "HTTP 200 ≠ delivery confirmation" once the worker has backup
+   *     push enabled (amsg-instant 0.9.0+ default). Default (omitted) is
+   *     silent.
+   * @returns {Promise<Object>} `{ success, data?: { messagesSent, sentAt }, error? }`
+   */
+  async sendInstant(payload, endpointPath = "/instant", opts = {}) {
+    this._maybeWarnLowLevel("sendInstant", opts);
+    const { url, headers, body } = await this._buildInstantRequest(
+      payload,
+      endpointPath,
+      { authorization: opts.authorization, methodName: "sendInstant" }
+    );
+    headers["Accept"] = "application/json";
+    const res = await fetch(url, { method: "POST", headers, body });
+    return res.json();
+  }
+  /**
+   * **Low-level SSE consumer.** Use `deliver()` for new code — it gives
+   * you a correct `send-failed` vs `delivered` verdict by coordinating
+   * transport with an out-of-band observation channel.
+   *
+   * **Rejection ≠ delivery failure** when amsg-instant is configured
+   * with backup Web Push (default in 0.9.0+): SSE may reject for many
+   * unrelated reasons (iOS background tab killed fetch, network blip,
+   * worker 5xx) while the backup push still lands the message. Treating
+   * the rejection as the canonical error path is wrong for that worker
+   * configuration. If you need the foreground SSE chunk hook without
+   * delivery coordination (you have your own observed channel), this
+   * stays useful — otherwise prefer `deliver()`.
+   *
+   * Error semantics: any failure (network, protocol, abort, `onPayload`
+   * callback throwing) rejects the returned Promise. `options.onError`
+   * fires before the rejection as a side-channel notification — it does
+   * NOT suppress the throw. Always wrap calls in `try / await`.
+   *
+   * @param {Object} payload - Instant message payload.
+   * @param {string} [endpointPath] - Path under the resolved base URL. Default '/instant'.
+   * @param {Object} options
+   * @param {Record<string, string>} [options.headers]
+   * @param {(payload: unknown) => Promise<void> | void} options.onPayload
+   * @param {(error: unknown) => void} [options.onError]
+   * @param {() => void} [options.onDone]
+   * @param {AbortSignal} [options.signal]
+   * @param {boolean} [options.expectsBackupPush] - Opt-in dev reminder. Set
+   *   to `true` to log a one-shot console.warn that "rejection ≠ delivery
+   *   failure" once the worker has backup push enabled (amsg-instant 0.9.0+
+   *   default). Default (omitted) is silent.
+   * @returns {Promise<void>}
+   */
+  async consumeInstantStream(payload, endpointPath = "/instant", options = {}) {
+    this._maybeWarnLowLevel("consumeInstantStream", options);
+    const { url, headers, body } = await this._buildInstantRequest(
+      payload,
+      endpointPath,
+      { headers: options.headers, methodName: "consumeInstantStream" }
+    );
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body,
+      signal: options.signal
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Instant request failed: ${res.status} ${text}`);
+    }
+    const contentType = res.headers.get("content-type") || "";
+    if (classifyContentType(contentType) !== "sse") {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Expected text/event-stream, got ${contentType}: ${text}`);
+    }
+    if (!res.body) {
+      throw new Error("Response body is null");
+    }
+    try {
+      await this._consumeSseStream(res, { onPayload: options.onPayload });
+      if (options.onDone) options.onDone();
+    } catch (err3) {
+      if (options.onError) {
+        try {
+          options.onError(err3);
+        } catch {
+        }
+      }
+      throw err3;
+    }
+  }
+  /**
+   * Deliver a message with an explicit delivery contract.
+   *
+   * `deliver()` is the recommended primitive for new code. It coordinates
+   * the foreground transport (SSE / JSON, picked automatically by
+   * response Content-Type) with an optional out-of-band observation
+   * channel that the caller supplies as a Promise — the library doesn't
+   * care what produces that Promise (Service Worker broadcast, IPC,
+   * native push handler, polling, anything). It returns a single
+   * `DeliveryResult` with a five-value `outcome` so you can distinguish
+   * `delivered` (truth-grade) from `cancelled` / `timeout` / `send-failed`
+   * without inferring delivery from transport rejections.
+   *
+   * Why this exists: when the server uses always-on backup Web Push
+   * (amsg-instant 0.9.0+ default), `sendInstant`'s HTTP 200 and
+   * `consumeInstantStream`'s rejection are both ambiguous w.r.t. actual
+   * delivery — the backup channel can still deliver after a transport
+   * reject, and a clean transport doesn't prove the consumer ever
+   * observed the message. `deliver()` resolves that ambiguity by
+   * making the observation channel a first-class input.
+   *
+   * @param {Object}         payload  - Instant message payload (same shape as `sendInstant`).
+   * @param {DeliverOptions} opts     - Delivery contract; see typedef.
+   * @returns {Promise<DeliveryResult>}
+   */
+  async deliver(payload, opts) {
+    if (!opts || typeof opts !== "object") {
+      throw new TypeError("[rei-standard-amsg-client] deliver() requires an options object");
+    }
+    const {
+      delivery,
+      timeoutMs,
+      onChunk,
+      postTransportGraceMs,
+      signal,
+      headers,
+      authorization,
+      endpointPath,
+      onRawRead,
+      compressRequest
+    } = opts;
+    if (!delivery || typeof delivery !== "object") {
+      throw new TypeError("[rei-standard-amsg-client] deliver() requires opts.delivery (discriminated union)");
+    }
+    if (delivery.mode !== "observed" && delivery.mode !== "transport-only") {
+      throw new TypeError(
+        '[rei-standard-amsg-client] opts.delivery.mode must be "observed" or "transport-only"'
+      );
+    }
+    if (delivery.mode === "observed" && !isThenable(delivery.observed)) {
+      throw new TypeError(
+        "[rei-standard-amsg-client] opts.delivery.observed must be a Promise<ObservedDeliveryReceipt>"
+      );
+    }
+    if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new TypeError("[rei-standard-amsg-client] opts.timeoutMs must be a positive finite number");
+    }
+    if (postTransportGraceMs !== void 0 && (typeof postTransportGraceMs !== "number" || !Number.isFinite(postTransportGraceMs) || postTransportGraceMs < 0)) {
+      throw new TypeError(
+        "[rei-standard-amsg-client] opts.postTransportGraceMs, if set, must be a non-negative finite number"
+      );
+    }
+    const start = Date.now();
+    const detail = { waitedMs: 0 };
+    if (signal && signal.aborted) {
+      detail.cancelledByCaller = true;
+      return { ok: false, outcome: "cancelled", detail };
+    }
+    const built = await this._buildInstantRequest(
+      payload,
+      endpointPath || "/instant",
+      { headers, authorization, methodName: "deliver" }
+    );
+    if (signal && signal.aborted) {
+      detail.cancelledByCaller = true;
+      detail.waitedMs = Date.now() - start;
+      return { ok: false, outcome: "cancelled", detail };
+    }
+    let finalized = false;
+    let validatedObserved = null;
+    let observedP = null;
+    if (delivery.mode === "observed") {
+      validatedObserved = this._waitForValidReceipt(delivery.observed);
+      observedP = validatedObserved.then((receipt) => ({ tag: "delivered", receipt }));
+    }
+    const wrappedOnChunk = onChunk ? async (chunk) => {
+      try {
+        await onChunk(chunk);
+      } catch (err3) {
+        if (finalized) return;
+        if (detail.chunkHandlerError === void 0) detail.chunkHandlerError = err3;
+      }
+    } : void 0;
+    const internalAbort = new AbortController();
+    let transportEnded = false;
+    let transportError;
+    const transportPromise = (async () => {
+      try {
+        const result = await this._runInstantTransport(built, {
+          signal: internalAbort.signal,
+          onChunk: wrappedOnChunk,
+          onRawRead,
+          compressRequest
+        });
+        if (finalized) return;
+        transportEnded = true;
+        if (result && result.kind === "json") detail.transportResponse = result.body;
+      } catch (err3) {
+        if (finalized) return;
+        transportError = err3;
+      }
+    })();
+    let timeoutId;
+    const timeoutP = new Promise((resolve) => {
+      timeoutId = setTimeout(() => resolve({ tag: "timeout" }), timeoutMs);
+    });
+    const signalListeners = [];
+    let cancelledP = null;
+    if (signal) {
+      cancelledP = new Promise((resolve) => {
+        const cancelListener = () => resolve({ tag: "cancelled" });
+        const abortForwarder = () => internalAbort.abort();
+        signal.addEventListener("abort", cancelListener, { once: true });
+        signal.addEventListener("abort", abortForwarder, { once: true });
+        signalListeners.push(cancelListener, abortForwarder);
+        if (signal.aborted) {
+          cancelListener();
+          abortForwarder();
+        }
+      });
+    }
+    const transportP = transportPromise.then(() => ({ tag: "transport-ended" }));
+    const racers = [transportP, timeoutP];
+    if (observedP) racers.push(observedP);
+    if (cancelledP) racers.push(cancelledP);
+    const winner = await Promise.race(racers);
+    const finalize = (outcome, ok, extras) => {
+      finalized = true;
+      clearTimeout(timeoutId);
+      internalAbort.abort();
+      if (signal) {
+        for (const l of signalListeners) signal.removeEventListener("abort", l);
+      }
+      detail.waitedMs = Date.now() - start;
+      if (transportEnded) detail.transportEnded = true;
+      if (transportError !== void 0) detail.transportError = transportError;
+      if (extras) Object.assign(detail, extras);
+      return { ok, outcome, detail };
+    };
+    const remainingBudget = () => Math.max(0, timeoutMs - (Date.now() - start));
+    if (winner.tag === "delivered") {
+      return finalize("delivered", true, { receipt: winner.receipt });
+    }
+    if (winner.tag === "cancelled") {
+      detail.cancelledByCaller = true;
+      if (validatedObserved) {
+        internalAbort.abort();
+        const cancelGrace = this._computeGrace(postTransportGraceMs, timeoutMs, remainingBudget()) / 2;
+        const lateReceipt = await this._raceObservedWithTimeout(validatedObserved, cancelGrace);
+        if (lateReceipt) {
+          return finalize("delivered", true, { receipt: lateReceipt });
+        }
+      }
+      return finalize("cancelled", false);
+    }
+    if (winner.tag === "timeout") {
+      return finalize("timeout", false);
+    }
+    clearTimeout(timeoutId);
+    if (!validatedObserved) {
+      if (transportError !== void 0) return finalize("send-failed", false);
+      return finalize("completed-unconfirmed", false, { transportEnded: true });
+    }
+    const grace = this._computeGrace(postTransportGraceMs, timeoutMs, remainingBudget());
+    const observedLateP = this._raceObservedWithTimeout(validatedObserved, grace).then((receipt) => ({ tag: "late", receipt }));
+    const lateRacers = [observedLateP];
+    if (cancelledP) lateRacers.push(cancelledP);
+    const lateWinner = await Promise.race(lateRacers);
+    if (lateWinner.tag === "cancelled") {
+      detail.cancelledByCaller = true;
+      return finalize("cancelled", false);
+    }
+    if (lateWinner.receipt) {
+      return finalize("delivered", true, { receipt: lateWinner.receipt });
+    }
+    if (transportError !== void 0) {
+      return finalize("send-failed", false);
+    }
+    return finalize("timeout", false, { transportEnded: true, observationChannelStalled: true });
+  }
+  /**
+   * Update an existing scheduled message.
+   *
+   * If `updates.avatarUrl` is unusable (`data:` URI, > 2 KB, or non-string),
+   * the client soft-strips it from the patch and emits a `console.warn` —
+   * the rest of the update still applies, and the stored avatar is left
+   * untouched. If `maxPayloadBytes` is configured, oversized JSON patches
+   * throw `PAYLOAD_TOO_LARGE_LOCAL`.
+   *
+   * @param {string} uuid    - Task UUID.
+   * @param {Object} updates - Fields to update.
+   * @returns {Promise<Object>}
+   */
+  async updateMessage(uuid, updates) {
+    if (this._sanitizeAvatarUrl(updates)) {
+      delete updates.avatarUrl;
+    }
+    const json2 = JSON.stringify(updates);
+    this._assertPayloadSize(json2, "updateMessage");
+    const encrypted = await this._encrypt(json2);
+    const res = await fetch(`${this._baseUrl}/update-message?id=${encodeURIComponent(uuid)}`, {
+      method: "PUT",
+      headers: this._withServerToken({
+        "Content-Type": "application/json",
+        "X-User-Id": this._userId,
+        "X-Payload-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      }),
+      body: JSON.stringify(encrypted)
+    });
+    return res.json();
+  }
+  /**
+   * Cancel / delete a scheduled message.
+   *
+   * @param {string} uuid - Task UUID.
+   * @returns {Promise<Object>}
+   */
+  async cancelMessage(uuid) {
+    const res = await fetch(`${this._baseUrl}/cancel-message?id=${encodeURIComponent(uuid)}`, {
+      method: "DELETE",
+      headers: this._withServerToken({ "X-User-Id": this._userId })
+    });
+    return res.json();
+  }
+  /**
+   * List the current user's messages with optional filters.
+   *
+   * @param {Object} [opts]
+   * @param {string} [opts.status]
+   * @param {number} [opts.limit]
+   * @param {number} [opts.offset]
+   * @returns {Promise<Object>}
+   */
+  async listMessages(opts = {}) {
+    const params = new URLSearchParams();
+    if (opts.status) params.set("status", opts.status);
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    if (opts.offset != null) params.set("offset", String(opts.offset));
+    const qs = params.toString();
+    const url = `${this._baseUrl}/messages${qs ? "?" + qs : ""}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: this._withServerToken({
+        "X-User-Id": this._userId,
+        "X-Response-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      })
+    });
+    const json2 = await res.json();
+    if (!json2?.success || json2?.encrypted !== true) return json2;
+    const decrypted = await this._decrypt(json2.data);
+    return {
+      success: true,
+      encrypted: true,
+      version: json2.version || 1,
+      data: decrypted
+    };
+  }
+  /**
+   * Read one task, with its **full** `metadata` (amsg-server 2.6.0+
+   * `GET /message`).
+   *
+   * `listMessages` 的每条任务只带 `charId` / `clientTaskId` 两个 metadata 子
+   * 字段——一页最多 100 条，整份 metadata 驮上去会把响应撑得很大。要改
+   * metadata 时得用这个：`updateMessage` 对 `metadata` 是**整体替换**，只改其
+   * 中一个键就必须先读回完整的那份改完再传，只传一部分会把宿主存在里面的其余
+   * 键一起冲掉。
+   *
+   * 只读得到还没发出去的任务；已完成 / 已失败的返回 409
+   * `TASK_ALREADY_COMPLETED`，不存在返回 404 `TASK_NOT_FOUND`（与
+   * `updateMessage` 同一口径）。老 worker 没有这个路由 → 404 `NOT_FOUND`，用
+   * `getCapabilities()` 的 `get-message-detail` 探测。
+   *
+   * @param {string} uuid - Task UUID.
+   * @returns {Promise<Object>} `{ success, encrypted, version, data: { task } }`
+   */
+  async getMessage(uuid) {
+    const res = await fetch(`${this._baseUrl}/message?id=${encodeURIComponent(uuid)}`, {
+      method: "GET",
+      headers: this._withServerToken({
+        "X-User-Id": this._userId,
+        "X-Response-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      })
+    });
+    const json2 = await res.json();
+    if (!json2?.success || json2?.encrypted !== true) return json2;
+    return {
+      success: true,
+      encrypted: true,
+      version: json2.version || 1,
+      data: await this._decrypt(json2.data)
+    };
+  }
+  // ─── Client state (single-user cloud mirror) ────────────────────
+  /**
+   * Batch-upsert client-state entries (single-user worker,
+   * amsg-server 2.6.0+ `/client-state`).
+   *
+   * The worker keeps one live copy per (namespace, key); this client is
+   * the only writer. Send everything that changed in ONE call — e.g.
+   * inside the few-seconds window before iOS backgrounds the page — the
+   * server upserts the whole batch in a single DB round trip. Upserts
+   * are last-write-wins on `updatedAt`: entries older than the stored
+   * row are skipped, so re-sending a stale batch is harmless.
+   *
+   * The payload is encrypted like every other amsg-server call
+   * (requires `init()`); the worker re-encrypts each value at rest
+   * under the per-user key.
+   *
+   * Large values: on amsg-server 2.7.0+ a value over 200KB is stored
+   * chunked across rows by the worker itself — no client-side splitting
+   * needed, and reads return the original value reassembled. The default
+   * per-value ceiling is 5MB (worker factory config `maxStateValueBytes`).
+   * Older workers reject the whole batch for oversized values; probe with
+   * `getCapabilities()` (feature `client-state-chunking`) when you need
+   * to know which behavior you'll get.
+   *
+   * Partial failure: an invalid/oversized entry only rejects itself.
+   * When at least one entry is rejected the response carries
+   * `data.rejected: [{ index, namespace, key, code, message }]`; when all
+   * entries are accepted the response shape is unchanged (no `rejected`).
+   *
+   * @param {Array<{ namespace: string, key: string, value: string, updatedAt: number }>} entries
+   *   - `value`: pre-serialized string (the SDK does not stringify it for you).
+   *   - `updatedAt`: epoch milliseconds.
+   * @returns {Promise<Object>} `{ success, data?: { upserted, skipped, rejected? }, error? }`
+   */
+  async putClientState(entries) {
+    if (!Array.isArray(entries) || entries.length === 0) {
+      throw new TypeError("[rei-standard-amsg-client] entries must be a non-empty array");
+    }
+    const json2 = JSON.stringify({ entries });
+    this._assertPayloadSize(json2, "putClientState");
+    const encrypted = await this._encrypt(json2);
+    const res = await fetch(`${this._baseUrl}/client-state`, {
+      method: "PUT",
+      headers: this._withServerToken({
+        "Content-Type": "application/json",
+        "X-User-Id": this._userId,
+        "X-Payload-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      }),
+      body: JSON.stringify(encrypted)
+    });
+    return res.json();
+  }
+  /**
+   * Read every entry of one client-state namespace.
+   *
+   * The response rides the encrypted-response envelope (same as
+   * `listMessages`); this method decrypts it and returns plaintext
+   * values.
+   *
+   * @param {string} namespace
+   * @returns {Promise<Object>} `{ success, data?: { namespace, entries }, error? }`
+   *   where `entries` is `Array<{ namespace, key, value, updatedAt }>`.
+   */
+  async getClientState(namespace) {
+    if (typeof namespace !== "string" || !namespace.trim()) {
+      throw new TypeError("[rei-standard-amsg-client] namespace must be a non-empty string");
+    }
+    const res = await fetch(
+      `${this._baseUrl}/client-state?namespace=${encodeURIComponent(namespace)}`,
+      {
+        method: "GET",
+        headers: this._withServerToken({
+          "X-User-Id": this._userId,
+          "X-Response-Encrypted": "true",
+          "X-Encryption-Version": "1"
+        })
+      }
+    );
+    const json2 = await res.json();
+    if (!json2?.success || json2?.encrypted !== true) return json2;
+    const decrypted = await this._decrypt(json2.data);
+    return {
+      success: true,
+      encrypted: true,
+      version: json2.version || 1,
+      data: decrypted
+    };
+  }
+  /**
+   * Wipe every client-state entry of this user, across all namespaces —
+   * e.g. behind a "clear cloud state" settings action.
+   *
+   * @returns {Promise<Object>} `{ success, data?: { deleted }, error? }`
+   */
+  async clearClientState() {
+    const res = await fetch(`${this._baseUrl}/client-state`, {
+      method: "DELETE",
+      headers: this._withServerToken({ "X-User-Id": this._userId })
+    });
+    return res.json();
+  }
+  // ─── Push Subscription ──────────────────────────────────────────
+  /**
+   * Subscribe to Web Push notifications.
+   *
+   * 拿到订阅之后要用 {@link ReiClient#putPushSubscription} 把它登记到服务端，
+   * 定时任务到点才知道往哪推。
+   *
+   * @param {string} vapidPublicKey - The server's VAPID public key.
+   * @param {ServiceWorkerRegistration} registration - An active SW registration.
+   * @returns {Promise<PushSubscription>}
+   */
+  async subscribePush(vapidPublicKey, registration) {
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlToBytes(vapidPublicKey)
+    });
+    return subscription;
+  }
+  /**
+   * 登记（或覆盖）这个用户的 Web Push 订阅。
+   *
+   * 服务端一个用户存一份订阅，所有定时任务到点投递时都读它——包括角色在
+   * fire 里给自己排的、客户端根本不知道存在的那些任务。用户清了站点数据、
+   * 重装了 PWA、或者推送服务轮换了 endpoint 之后，调一次这个就全好了。
+   *
+   * 什么时候调：`subscribePush()` 拿到订阅之后调一次；之后每次应用启动确认
+   * 订阅仍然有效时再调一次（幂等覆盖，重复调没有副作用）。
+   *
+   * 载荷像其它接口一样加密（需要先 `init()`），服务端落库时再用 per-user
+   * key 加密一次。
+   *
+   * @param {PushSubscription|Object} subscription - `pushManager.subscribe()` 的结果
+   *   （或它的 `toJSON()`）。至少要有非空的 `endpoint`。
+   * @param {{ updatedAt?: number }} [opts] - `updatedAt` 为 epoch 毫秒，默认由服务端取当前时刻。
+   * @returns {Promise<Object>} `{ success, data?: { updatedAt }, error? }`
+   */
+  async putPushSubscription(subscription, opts = {}) {
+    const plain = subscription && typeof subscription.toJSON === "function" ? subscription.toJSON() : subscription;
+    if (!plain || typeof plain !== "object" || typeof plain.endpoint !== "string" || !plain.endpoint) {
+      throw new TypeError("[rei-standard-amsg-client] subscription must be an object with a non-empty endpoint");
+    }
+    const body = { subscription: plain };
+    if (opts.updatedAt !== void 0) body.updatedAt = opts.updatedAt;
+    const json2 = JSON.stringify(body);
+    this._assertPayloadSize(json2, "putPushSubscription");
+    const encrypted = await this._encrypt(json2);
+    const res = await fetch(`${this._baseUrl}/push-subscription`, {
+      method: "PUT",
+      headers: this._withServerToken({
+        "Content-Type": "application/json",
+        "X-User-Id": this._userId,
+        "X-Payload-Encrypted": "true",
+        "X-Encryption-Version": "1"
+      }),
+      body: JSON.stringify(encrypted)
+    });
+    return res.json();
+  }
+  /**
+   * 服务端登记的订阅现状。
+   *
+   * 返回的是「有没有、什么时候登记的、endpoint 是哪个」，不含订阅的密钥部分
+   * ——设置页显示状态、或者拿 `endpoint` 跟本地订阅对一下是不是同一个，这些
+   * 就够了。
+   *
+   * @returns {Promise<Object>} `{ success, data?: { exists, updatedAt, endpoint }, error? }`
+   */
+  async getPushSubscription() {
+    const res = await fetch(`${this._baseUrl}/push-subscription`, {
+      method: "GET",
+      headers: this._withServerToken({ "X-User-Id": this._userId })
+    });
+    return res.json();
+  }
+  /**
+   * 删掉服务端登记的订阅（设置页的「停止接收推送」）。
+   *
+   * 删掉之后已有的定时任务到点会投递失败并记下原因，不会静默消失。
+   *
+   * @returns {Promise<Object>} `{ success, data?: { deleted }, error? }`
+   */
+  async deletePushSubscription() {
+    const res = await fetch(`${this._baseUrl}/push-subscription`, {
+      method: "DELETE",
+      headers: this._withServerToken({ "X-User-Id": this._userId })
+    });
+    return res.json();
+  }
+  // ─── Local preflight (no network) ────────────────────────────────
+  /**
+   * Sanitize `avatarUrl` on an outgoing payload. If the value is unusable
+   * (`data:` URI / oversized / non-string), set the field to `null` on the
+   * payload, log a `console.warn`, and let the rest of the request go
+   * through. Avatar is cosmetic — failing the entire schedule / instant
+   * call over a bad image URL is too punishing. Mirrors the server-side
+   * soft-strip in `@rei-standard/amsg-server` 2.3.3+ and `@rei-standard/amsg-instant`
+   * 0.7.1+. See standards §6.2.
+   *
+   * @private
+   * @param {object|null|undefined} target - Payload-like object holding `avatarUrl`.
+   * @returns {boolean} `true` if the field was stripped, `false` otherwise.
+   */
+  _sanitizeAvatarUrl(target) {
+    if (!target || typeof target !== "object") return false;
+    const reason = validateAvatarUrl(target.avatarUrl);
+    if (reason) {
+      console.warn("[rei-standard-amsg-client] avatarUrl \u4E0D\u5408\u6CD5\uFF0C\u5DF2\u7F6E\u7A7A\uFF1A", reason);
+      target.avatarUrl = null;
+      return true;
+    }
+    return false;
+  }
+  /**
+   * Enforce the optional local request payload cap before encryption.
+   * By default there is no SDK-level request-size limit; runtime, proxy,
+   * database, and LLM-provider limits remain the deployer's boundary.
+   *
+   * @private
+   * @param {string} bodyJson  - `JSON.stringify(payload)`.
+   * @param {string} methodName
+   */
+  _assertPayloadSize(bodyJson, methodName) {
+    if (this._maxPayloadBytes == null) return;
+    const bytes = TEXT_ENCODER3.encode(bodyJson).length;
+    if (bytes > this._maxPayloadBytes) {
+      throw makeLocalError(
+        "PAYLOAD_TOO_LARGE_LOCAL",
+        `${methodName} payload \u4F53\u79EF ${bytes} \u5B57\u8282\u8D85\u8FC7\u672C\u5730\u4E0A\u9650 ${this._maxPayloadBytes} \u5B57\u8282`,
+        { method: methodName, actualBytes: bytes, limitBytes: this._maxPayloadBytes }
+      );
+    }
+  }
+  // ─── Transport helpers (shared by sendInstant / consumeInstantStream / deliver) ─
+  /**
+   * Build the URL, headers, and body for an instant-endpoint POST.
+   * Used by `sendInstant`, `consumeInstantStream`, and `deliver`.
+   *
+   * @private
+   * @param {Object} payload
+   * @param {string} endpointPath
+   * @param {{ headers?: Record<string, string>, authorization?: string, methodName: string }} opts
+   * @returns {Promise<{ url: string, headers: Record<string, string>, body: string }>}
+   */
+  async _buildInstantRequest(payload, endpointPath, opts) {
+    const { headers: extraHeaders, authorization, methodName } = opts;
+    this._sanitizeAvatarUrl(payload);
+    const json2 = JSON.stringify(payload);
+    this._assertPayloadSize(json2, methodName);
+    const headers = { "Content-Type": "application/json", ...extraHeaders || {} };
+    let body;
+    if (this._instantEncryption === false) {
+      body = json2;
+      if (this._instantClientToken) headers["X-Client-Token"] = this._instantClientToken;
+    } else {
+      const encrypted = await this._encrypt(json2);
+      headers["X-User-Id"] = this._userId;
+      headers["X-Payload-Encrypted"] = "true";
+      headers["X-Encryption-Version"] = "1";
+      body = JSON.stringify(encrypted);
+    }
+    if (authorization) headers["Authorization"] = authorization;
+    const path = endpointPath.startsWith("/") ? endpointPath : `/${endpointPath}`;
+    const url = `${this._resolveBaseUrl("instant")}${path}`;
+    return { url, headers, body };
+  }
+  /**
+   * Run the foreground transport for `deliver()`. Takes a request pre-built
+   * by `_buildInstantRequest` so the caller can surface local-validation
+   * errors (encryption, payload-size) synchronously, instead of having
+   * them buried inside the post-transport grace race.
+   * Picks SSE or JSON based on the response Content-Type. Resolves on
+   * natural stream EOF / parsed JSON; throws on network / protocol / SSE
+   * error frame / AbortError.
+   *
+   * @private
+   * @param {{ url: string, headers: Record<string, string>, body: string }} built
+   * @param {{ signal: AbortSignal, onChunk?: (p: unknown) => Promise<void> | void, onRawRead?: (meta: RawReadMeta) => void, compressRequest?: boolean | { thresholdBytes?: number } }} opts
+   *   `onRawRead` is forwarded to the SSE consumer for raw read-loop telemetry (see `DeliverOptions.onRawRead`).
+   *   `compressRequest` opts the request body into gzip before `fetch` (see `DeliverOptions.compressRequest`).
+   * @returns {Promise<{ kind: 'sse' } | { kind: 'json', body: unknown }>}
+   */
+  async _runInstantTransport(built, opts) {
+    const { signal, onChunk, onRawRead, compressRequest } = opts;
+    const { url, headers, body } = built;
+    const { body: wireBody, header: compressionHeader } = await maybeCompressRequestBody(body, compressRequest);
+    const wireHeaders = compressionHeader ? { ...headers, [compressionHeader]: "gzip" } : headers;
+    const res = await fetch(url, { method: "POST", headers: wireHeaders, body: wireBody, signal });
+    if (!res.ok) {
+      const text2 = await res.text().catch(() => "");
+      const err3 = new Error(`Instant request failed: ${res.status} ${text2}`);
+      err3.status = res.status;
+      throw err3;
+    }
+    const rawContentType = res.headers.get("content-type");
+    const contentType = rawContentType || "";
+    const kind = classifyContentType(contentType);
+    if (kind === "sse") {
+      if (!res.body) throw new Error("Response body is null");
+      await this._consumeSseStream(res, {
+        onPayload: onChunk,
+        onRawRead,
+        responseMeta: {
+          status: res.status,
+          contentEncoding: res.headers.get("content-encoding"),
+          contentType: rawContentType
+        }
+      });
+      return { kind: "sse" };
+    }
+    if (kind === "json") {
+      const json2 = await res.json();
+      return { kind: "json", body: json2 };
+    }
+    const text = await res.text().catch(() => "");
+    throw new Error(`Expected text/event-stream or application/json, got ${contentType}: ${text}`);
+  }
+  /**
+   * Consume an SSE response body, dispatching `event: payload` frames to
+   * `onPayload`. Resolves on `event: done` or natural EOF. Throws on
+   * `event: error` frames, `onPayload` throws, or stream read errors.
+   *
+   * @private
+   * @param {Response} res
+   * @param {{
+   *   onPayload?: (p: unknown) => Promise<void> | void,
+   *   onRawRead?: (meta: RawReadMeta) => void,
+   *   responseMeta?: { status?: number, contentEncoding?: string | null, contentType?: string | null }
+   * }} opts
+   *   `onRawRead` (if supplied) fires once per `reader.read()` before any SSE parsing/filtering — it sees
+   *   raw bytes including `: keepalive` comment frames. Throws from it are swallowed. `responseMeta` is
+   *   attached to the FIRST `onRawRead` call only. See `DeliverOptions.onRawRead`.
+   * @returns {Promise<void>}
+   */
+  async _consumeSseStream(res, opts) {
+    const { onPayload, onRawRead, responseMeta } = opts;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let thrown;
+    const previewDecoder = onRawRead ? new TextDecoder() : null;
+    let rawReadFired = false;
+    const emitRawRead = (done, value) => {
+      if (!onRawRead) return;
+      try {
+        let textPreview = "";
+        if (value && value.byteLength) {
+          textPreview = previewDecoder.decode(value).slice(0, 120);
+        }
+        const meta = {
+          ts: Date.now(),
+          byteLength: value && value.byteLength ? value.byteLength : 0,
+          done: !!done,
+          textPreview
+        };
+        if (!rawReadFired) {
+          meta.status = responseMeta ? responseMeta.status : void 0;
+          meta.contentEncoding = responseMeta ? responseMeta.contentEncoding : void 0;
+          meta.contentType = responseMeta ? responseMeta.contentType : void 0;
+        }
+        rawReadFired = true;
+        onRawRead(meta);
+      } catch {
+      }
+    };
+    const processFrame = async (part) => {
+      if (!part.trim()) return null;
+      let eventName = "message";
+      let data = "";
+      const lines = part.split("\n");
+      for (const line of lines) {
+        if (line.startsWith(":")) continue;
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith("data:")) {
+          const piece = line.slice(5).trim();
+          data = data ? `${data}
+${piece}` : piece;
+        }
+      }
+      if (eventName === "done") return "done";
+      if (eventName === "error") {
+        let parsedErr;
+        try {
+          parsedErr = JSON.parse(data);
+        } catch {
+          parsedErr = { code: "PARSE_ERROR", message: data };
+        }
+        const err3 = new Error(parsedErr.message || "Stream error");
+        err3.code = parsedErr.code;
+        throw err3;
+      }
+      if (eventName === "payload") {
+        let parsedPayload;
+        try {
+          parsedPayload = JSON.parse(data);
+        } catch {
+          return null;
+        }
+        if (onPayload) await onPayload(parsedPayload);
+      }
+      return null;
+    };
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        emitRawRead(done, value);
+        if (done) {
+          buffer += decoder.decode();
+          const finalNormalized = buffer.replace(SSE_LINE_NORMALIZE, "\n");
+          if (finalNormalized.trim()) {
+            await processFrame(finalNormalized);
+          }
+          return;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const trailingCr = buffer.endsWith("\r");
+        const head = trailingCr ? buffer.slice(0, -1) : buffer;
+        const normalized = head.replace(SSE_LINE_NORMALIZE, "\n");
+        const parts = normalized.split("\n\n");
+        buffer = (parts.pop() || "") + (trailingCr ? "\r" : "");
+        for (const part of parts) {
+          const result = await processFrame(part);
+          if (result === "done") return;
+        }
+      }
+    } catch (err3) {
+      thrown = err3;
+    } finally {
+      if (thrown) {
+        try {
+          await reader.cancel(thrown);
+        } catch {
+        }
+        try {
+          reader.releaseLock();
+        } catch {
+        }
+        throw thrown;
+      }
+      try {
+        reader.releaseLock();
+      } catch {
+      }
+    }
+  }
+  // ─── deliver() helpers ──────────────────────────────────────────
+  /**
+   * Wraps the caller's observed Promise so it only settles on a valid
+   * `ObservedDeliveryReceipt` (per RFC: at least one of messageId /
+   * sessionId must be a non-empty string). Invalid receipts and
+   * rejections leave the returned Promise pending — the race's timeout
+   * or abort branches take over.
+   *
+   * @private
+   * @param {Promise<ObservedDeliveryReceipt>} source
+   * @returns {Promise<ObservedDeliveryReceipt>}
+   */
+  _waitForValidReceipt(source) {
+    return new Promise((resolve) => {
+      Promise.resolve(source).then(
+        (receipt) => {
+          if (this._validateReceipt(receipt)) {
+            resolve(receipt);
+          }
+        },
+        () => {
+        }
+      );
+    });
+  }
+  /**
+   * Identity check: a receipt must be an object with at least one of
+   * `messageId` or `sessionId` as a non-empty string. Caller-supplied
+   * observation channels can produce arbitrary shapes; this gate
+   * prevents an empty-resolve from being interpreted as a successful
+   * delivery (a common shape of caller bug).
+   *
+   * @private
+   * @param {unknown} receipt
+   * @returns {boolean}
+   */
+  _validateReceipt(receipt) {
+    if (!receipt || typeof receipt !== "object") return false;
+    const hasMsgId = typeof receipt.messageId === "string" && receipt.messageId.length > 0;
+    const hasSessionId = typeof receipt.sessionId === "string" && receipt.sessionId.length > 0;
+    return hasMsgId || hasSessionId;
+  }
+  /**
+   * Race a Promise against a timeout. Returns the resolved value if the
+   * Promise wins, or `null` if the timeout fires first. Promise rejection
+   * is treated as "did not arrive" (same as timeout, returns `null`).
+   *
+   * @private
+   * @template T
+   * @param {Promise<T>} promise
+   * @param {number} ms
+   * @returns {Promise<T | null>}
+   */
+  _raceObservedWithTimeout(promise, ms) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve(null);
+      }, Math.max(0, ms));
+      Promise.resolve(promise).then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        },
+        () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(null);
+        }
+      );
+    });
+  }
+  /**
+   * Post-transport grace formula. Defaults to
+   * `min(remainingBudget, max(5000ms, timeoutMs * 0.1))`. Caller override
+   * is capped by remaining budget so it can never exceed the total timeout.
+   *
+   * @private
+   * @param {number | undefined} override
+   * @param {number} totalTimeoutMs
+   * @param {number} remainingMs
+   * @returns {number}
+   */
+  _computeGrace(override, totalTimeoutMs, remainingMs) {
+    if (typeof override === "number" && Number.isFinite(override) && override >= 0) {
+      return Math.min(override, remainingMs);
+    }
+    const defaultGrace = Math.max(5e3, Math.floor(totalTimeoutMs * 0.1));
+    return Math.min(defaultGrace, remainingMs);
+  }
+  /**
+   * One-shot dev reminder for low-level instant APIs. The warning is opt-in
+   * per call via `opts.expectsBackupPush === true` and fires at most once
+   * per ReiClient instance per method name. Default (omitted or `false`)
+   * is silent.
+   *
+   * @private
+   * @param {string} methodName
+   * @param {{ expectsBackupPush?: boolean }} opts
+   */
+  _maybeWarnLowLevel(methodName, opts) {
+    if (!opts || opts.expectsBackupPush !== true) return;
+    if (this._lowLevelWarned.has(methodName)) return;
+    this._lowLevelWarned.add(methodName);
+    const verdict = methodName === "sendInstant" ? "HTTP 200 \u2260 delivery confirmation" : "rejection \u2260 delivery failure";
+    console.warn(
+      `[rei-standard-amsg-client] ${methodName} is a low-level transport \u2014 ${verdict} when the worker is configured with always-on backup Web Push (amsg-instant 0.9.0+ default). Prefer client.deliver() for a correct delivered / cancelled / timeout / send-failed verdict.`
+    );
+  }
+  // ─── Crypto helpers (Web Crypto API) ────────────────────────────
+  /**
+   * Encrypt plaintext with AES-256-GCM.
+   * @private
+   * @param {string} plaintext
+   * @returns {Promise<{ iv: string, authTag: string, encryptedData: string }>}
+   */
+  async _encrypt(plaintext) {
+    if (!this._userKey) throw new Error("[rei-standard-amsg-client] Not initialised. Call init() first.");
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await crypto.subtle.importKey("raw", this._userKey, { name: "AES-GCM" }, false, ["encrypt"]);
+    const encoded = TEXT_ENCODER3.encode(plaintext);
+    const cipherBuf = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoded);
+    const cipherArr = new Uint8Array(cipherBuf);
+    const encryptedData = cipherArr.slice(0, cipherArr.length - 16);
+    const authTag = cipherArr.slice(cipherArr.length - 16);
+    return {
+      iv: this._toBase64(iv),
+      authTag: this._toBase64(authTag),
+      encryptedData: this._toBase64(encryptedData)
+    };
+  }
+  /**
+   * Decrypt an encrypted API payload.
+   * @private
+   * @param {{ iv: string, authTag: string, encryptedData: string }} encryptedPayload
+   * @returns {Promise<Object>}
+   */
+  async _decrypt(encryptedPayload) {
+    if (!this._userKey) throw new Error("[rei-standard-amsg-client] Not initialised. Call init() first.");
+    const { iv, authTag, encryptedData } = encryptedPayload || {};
+    if (typeof iv !== "string" || typeof authTag !== "string" || typeof encryptedData !== "string") {
+      throw new Error("[rei-standard-amsg-client] Invalid encrypted payload");
+    }
+    const ivBytes = this._fromBase64(iv);
+    const authTagBytes = this._fromBase64(authTag);
+    const encryptedBytes = this._fromBase64(encryptedData);
+    const cipherBytes = new Uint8Array(encryptedBytes.length + authTagBytes.length);
+    cipherBytes.set(encryptedBytes);
+    cipherBytes.set(authTagBytes, encryptedBytes.length);
+    const key = await crypto.subtle.importKey("raw", this._userKey, { name: "AES-GCM" }, false, ["decrypt"]);
+    const plainBuffer = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivBytes }, key, cipherBytes);
+    return JSON.parse(new TextDecoder().decode(plainBuffer));
+  }
+  /** @private */
+  _toBase64(uint8) {
+    const binary = Array.from(uint8, (byte) => String.fromCharCode(byte)).join("");
+    return btoa(binary);
+  }
+  /** @private */
+  _fromBase64(base64) {
+    const raw = atob(base64);
+    const arr = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+    return arr;
+  }
+  /** @private */
+  _hexToUint8Array(hex) {
+    const arr = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+      arr[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+    }
+    return arr;
+  }
+};
+function normalizeMaxPayloadBytes(value) {
+  if (value === void 0 || value === null) return null;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new TypeError("[rei-standard-amsg-client] maxPayloadBytes must be a positive integer when set");
+  }
+  return value;
+}
+
+// utils/instantWorkerVersion.ts
+var INSTANT_WORKER_VERSION = "2026-08-05";
+
+// utils/thinkingGate.ts
+var CLAUDE_TOOL_MIN_THINKING_BUDGET = 1024;
+var ensureClaudeToolThinkingBudget = (body) => {
+  if (!Array.isArray(body.tools) || body.tools.length === 0) return body;
+  if (!/claude.*thinking/i.test(String(body.model || ""))) return body;
+  const existingBudget = Number(body.thinking?.budget_tokens);
+  if (body.thinking?.type === "enabled" && Number.isFinite(existingBudget) && existingBudget >= CLAUDE_TOOL_MIN_THINKING_BUDGET) return body;
+  body.thinking = { type: "enabled", budget_tokens: CLAUDE_TOOL_MIN_THINKING_BUDGET };
+  body.extra_body = {
+    ...body.extra_body || {},
+    thinking: { type: "enabled", budget_tokens: CLAUDE_TOOL_MIN_THINKING_BUDGET }
+  };
+  delete body.temperature;
+  delete body.top_p;
+  return body;
+};
+
+// utils/toolSchemaCompat.ts
+var ensureClaudeToolSchema = (body) => {
+  if (!/claude/i.test(String(body.model || "")) || !Array.isArray(body.tools)) return body;
+  body.tools = body.tools.map((tool) => {
+    if (tool?.type !== "function" || !tool.function?.name) return tool;
+    return {
+      name: tool.function.name,
+      ...tool.function.description ? { description: tool.function.description } : {},
+      input_schema: tool.function.parameters || { type: "object", properties: {} }
+    };
+  });
+  if (body.tool_choice === "auto") body.tool_choice = { type: "auto" };
+  if (body.tool_choice === "required") body.tool_choice = { type: "any" };
+  return body;
+};
+
+// worker/instant-push/src/index.ts
+var MULTIPART_TRANSPORT = { enabled: true };
+var UTILITY_CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  // X-Amsg-Request-Encoding: 大请求体 gzip 上行用的自定义头 (见 decodeGzipRequestBody)。
+  // 跨域带它会触发 CORS 预检, 必须放行, 否则浏览器拦请求。amsg-instant 库的预检不含它, 故 worker 自己回预检。
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Token, X-Amsg-Request-Encoding",
+  "Access-Control-Max-Age": "86400"
+};
+var D1_BLOB_TABLE = "amsg_transient_blobs";
+var D1_CLEANUP_INTERVAL_MS = 15 * 60 * 1e3;
+var D1_CREATE_TABLE_SQL = `
+CREATE TABLE IF NOT EXISTS ${D1_BLOB_TABLE} (
+  key        TEXT    PRIMARY KEY,
+  body       TEXT    NOT NULL,
+  expires_at INTEGER NOT NULL
+)`;
+var D1_CREATE_EXPIRES_INDEX_SQL = `
+CREATE INDEX IF NOT EXISTS idx_amsg_blobs_expires
+  ON ${D1_BLOB_TABLE}(expires_at)`;
+var D1_DELETE_EXPIRED_SQL = `DELETE FROM ${D1_BLOB_TABLE} WHERE expires_at < ?`;
+var d1SchemaReadyPromise = null;
+var lastD1CleanupAt = 0;
+var d1CleanupPromise = null;
+var AMSG2_TOOL_NAMES = /* @__PURE__ */ new Set([
+  "schedule_active_message",
+  "cancel_active_message",
+  "renew_active_message",
+  "list_active_messages"
+]);
+var AMSG2_PLACEHOLDER_PROMPT = "AMSG2_PLACEHOLDER_PROMPT\uFF08\u6B63\u5F0F prompt \u5230\u70B9\u7531 worker onBeforeFire \u4E0B\u53D1\uFF1B\u770B\u5230\u8FD9\u6761\u8BF4\u660E fire hooks \u672A\u751F\u6548\uFF09";
+var MAX_ACTIVE_TASKS_PER_CHAR2 = 5;
+var instantAmsgSessions = /* @__PURE__ */ new Map();
+var INSTANT_AMSG_SESSION_TTL_MS = 10 * 6e4;
+var ERROR_EVENT_TYPES = /* @__PURE__ */ new Set([
+  "hook_threw",
+  "loop_exceeded",
+  "llm_call_failed",
+  "blob_put_failed",
+  "blob_orphaned",
+  "payload_too_large",
+  "multipart_too_large",
+  "multipart_too_many_chunks"
+]);
+var TRACE_EVENT_TYPES = /* @__PURE__ */ new Set([
+  // 主链路里程碑: 一次会话的完整叙事是
+  //   request → llm_start → llm_done → push_sent×N (前台还有 sse_payload_enqueued)
+  // llm_start 和 llm_done 之间的安静期 = 在等上游 LLM, 不是卡死。
+  "request",
+  "llm_start",
+  "llm_done",
+  "push_sent",
+  "multipart_sent",
+  "sse_stream_aborted",
+  "sse_stream_canceled",
+  "sse_payload_enqueued",
+  "sse_payload_enqueue_failed",
+  "backup_push_scheduled",
+  "backup_push_sent",
+  "backup_push_failed",
+  "fallback_push_sent",
+  "fallback_push_failed",
+  "sse_error_fallback_failed",
+  "wait_until_rejected",
+  "wait_until_failed"
+]);
+var POST_ABORT_HEARTBEAT_MS = 1e4;
+var POST_ABORT_HEARTBEAT_MAX_TICKS = 30;
+var postAbortWatchers = /* @__PURE__ */ new Map();
+function startPostAbortHeartbeat(sessionId) {
+  if (postAbortWatchers.has(sessionId)) return;
+  const abortedAt = Date.now();
+  let ticks = 0;
+  const timer = setInterval(() => {
+    ticks += 1;
+    console.log("[instant-push:trace]", {
+      type: "post_abort_alive",
+      sessionId,
+      sinceAbortMs: Date.now() - abortedAt
+    });
+    if (ticks >= POST_ABORT_HEARTBEAT_MAX_TICKS) {
+      clearInterval(timer);
+      postAbortWatchers.delete(sessionId);
+    }
+  }, POST_ABORT_HEARTBEAT_MS);
+  postAbortWatchers.set(sessionId, timer);
+}
+function flattenAmsgEvent(e) {
+  const cause = e.cause;
+  if (cause == null) return e;
+  return {
+    ...e,
+    cause: void 0,
+    causeName: cause?.name,
+    causeMessage: cause?.message ?? String(cause),
+    causeStatus: cause?.statusCode ?? cause?.status
+  };
+}
+function traceAmsgEvent(e) {
+  if (e.type === "sse_stream_aborted" && typeof e.sessionId === "string") {
+    startPostAbortHeartbeat(e.sessionId);
+  }
+  const formatted = flattenAmsgEvent(e);
+  if (ERROR_EVENT_TYPES.has(e.type)) {
+    console.error("[instant-push]", formatted);
+    return;
+  }
+  if (TRACE_EVENT_TYPES.has(e.type)) {
+    console.log("[instant-push:trace]", formatted);
+  }
+}
+function parseBooleanFlag(value) {
+  if (value == null) return null;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return null;
+}
+function parseOversizeTransportMode(raw) {
+  const norm = raw.trim().toLowerCase();
+  if (norm === "multipart") return "multipart";
+  if (norm === "d1" || norm === "blob" || norm === "blobstore") return "d1";
+  if (norm === "auto") return "auto";
+  return null;
+}
+function resolveOversizeTransport(env) {
+  const mode = parseOversizeTransportMode(env.AMSG_OVERSIZE_TRANSPORT || "");
+  if (mode) return mode;
+  const d1Flag = parseBooleanFlag(env.AMSG_ENABLE_D1_BLOBSTORE);
+  if (d1Flag === true) return "d1";
+  if (d1Flag === false) return "multipart";
+  if ((env.AMSG_OVERSIZE_TRANSPORT || "").trim()) {
+    console.warn(`[instant-push] Unknown AMSG_OVERSIZE_TRANSPORT="${env.AMSG_OVERSIZE_TRANSPORT}", using multipart.`);
+  }
+  return "multipart";
+}
+function shouldUseD1BlobStore(env) {
+  const mode = resolveOversizeTransport(env);
+  return mode === "d1" || mode === "auto" && !!env.DB;
+}
+function resolveRequestOversizeTransport(body) {
+  return parseOversizeTransportMode(String(body?.oversizeTransport || body?.amsgOversizeTransport || ""));
+}
+function withRequestOversizeTransport(env, body) {
+  const requested = resolveRequestOversizeTransport(body);
+  if (!requested) return env;
+  return {
+    ...env,
+    AMSG_OVERSIZE_TRANSPORT: requested,
+    AMSG_ENABLE_D1_BLOBSTORE: requested === "d1" ? "true" : requested === "multipart" ? "false" : env.AMSG_ENABLE_D1_BLOBSTORE
+  };
+}
+function forceMultipartTransport(env) {
+  return {
+    ...env,
+    AMSG_OVERSIZE_TRANSPORT: "multipart",
+    AMSG_ENABLE_D1_BLOBSTORE: "false"
+  };
+}
+async function ensureD1BlobSchema(env) {
+  if (!shouldUseD1BlobStore(env)) return false;
+  if (!env.DB) {
+    console.warn("[instant-push] D1 BlobStore requested but DB binding is missing; falling back to multipart.");
+    return false;
+  }
+  if (!d1SchemaReadyPromise) {
+    d1SchemaReadyPromise = (async () => {
+      await env.DB.batch([
+        env.DB.prepare(D1_CREATE_TABLE_SQL),
+        env.DB.prepare(D1_CREATE_EXPIRES_INDEX_SQL)
+      ]);
+      return true;
+    })().catch((e) => {
+      d1SchemaReadyPromise = null;
+      console.error("[instant-push] D1 BlobStore schema init failed; falling back to multipart.", e);
+      return false;
+    });
+  }
+  return d1SchemaReadyPromise;
+}
+async function probeD1BlobCapability(env) {
+  if (!env.DB) {
+    return { available: false, reason: "DB binding missing" };
+  }
+  const ready = await ensureD1BlobSchema({
+    ...env,
+    AMSG_OVERSIZE_TRANSPORT: "d1",
+    AMSG_ENABLE_D1_BLOBSTORE: "true"
+  });
+  return ready ? { available: true } : { available: false, reason: "D1 schema init failed" };
+}
+async function prepareBlobStoreEnv(env) {
+  if (!shouldUseD1BlobStore(env)) return env;
+  const ready = await ensureD1BlobSchema(env);
+  return ready ? env : forceMultipartTransport(env);
+}
+function createBlobStore(env) {
+  if (!shouldUseD1BlobStore(env)) return void 0;
+  if (!env.DB) {
+    console.warn("[instant-push] D1 BlobStore requested but DB binding is missing; falling back to multipart.");
+    return void 0;
+  }
+  return {
+    adapter: createD1BlobStore(env.DB, { table: D1_BLOB_TABLE })
+    // 用默认 2600 B / 60 s; 见 amsg-instant README §BlobStore.
+  };
+}
+async function cleanupExpiredD1Blobs(env) {
+  if (!shouldUseD1BlobStore(env) || !env.DB) return;
+  if (d1CleanupPromise) return d1CleanupPromise;
+  d1CleanupPromise = (async () => {
+    const ready = await ensureD1BlobSchema(env);
+    if (!ready) return;
+    await env.DB.prepare(D1_DELETE_EXPIRED_SQL).bind(Date.now()).run();
+  })().catch((e) => {
+    console.error("[instant-push] blob sweeper failed", e);
+  }).finally(() => {
+    d1CleanupPromise = null;
+  });
+  return d1CleanupPromise;
+}
+function scheduleD1BlobCleanup(env, ctx) {
+  if (!shouldUseD1BlobStore(env) || !env.DB) return;
+  const now = Date.now();
+  if (now - lastD1CleanupAt < D1_CLEANUP_INTERVAL_MS) return;
+  lastD1CleanupAt = now;
+  ctx.waitUntil(cleanupExpiredD1Blobs(env));
+}
+function utilityJson(status, body) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...UTILITY_CORS_HEADERS,
+      "Content-Type": "application/json; charset=utf-8"
+    }
+  });
+}
+function verifyUtilityClientToken(request, env) {
+  const expected = (env.AMSG_CLIENT_TOKEN || "").trim();
+  if (!expected) return null;
+  const received = (request.headers.get("X-Client-Token") || "").trim();
+  if (!received) {
+    return utilityJson(401, {
+      success: false,
+      error: { code: "CLIENT_TOKEN_REQUIRED", message: "X-Client-Token required" }
+    });
+  }
+  if (received !== expected) {
+    return utilityJson(403, {
+      success: false,
+      error: { code: "CLIENT_TOKEN_INVALID", message: "X-Client-Token invalid" }
+    });
+  }
+  return null;
+}
+function handleVersionRequest(request) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: UTILITY_CORS_HEADERS });
+  }
+  if (request.method !== "GET") {
+    return utilityJson(405, {
+      success: false,
+      error: { code: "METHOD_NOT_ALLOWED", message: "Use GET" }
+    });
+  }
+  return utilityJson(200, {
+    success: true,
+    data: { version: INSTANT_WORKER_VERSION }
+  });
+}
+async function handleCapabilitiesRequest(request, env) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: UTILITY_CORS_HEADERS });
+  }
+  if (request.method !== "GET" && request.method !== "POST") {
+    return utilityJson(405, {
+      success: false,
+      error: { code: "METHOD_NOT_ALLOWED", message: "Use GET or POST" }
+    });
+  }
+  const tokenError = verifyUtilityClientToken(request, env);
+  if (tokenError) return tokenError;
+  const d1 = await probeD1BlobCapability(env);
+  return utilityJson(200, {
+    success: true,
+    data: {
+      multipart: { available: true },
+      d1,
+      defaultOversizeTransport: resolveOversizeTransport(env)
+    }
+  });
+}
+function isInstantAmsgBridge(value) {
+  const v = value;
+  return !!v && typeof v.workerUrl === "string" && /^https:\/\//i.test(v.workerUrl) && typeof v.userId === "string" && !!v.userId && typeof v.charId === "string" && !!v.charId && typeof v.charName === "string" && typeof v.tzId === "string" && !!v.tzId && typeof v.userTzId === "string" && !!v.userTzId && typeof v.anchorMs === "number" && !!v.api && typeof v.api.baseUrl === "string" && typeof v.api.apiKey === "string" && typeof v.api.model === "string" && Array.isArray(v.tasks);
+}
+function sanitizeInstantAmsgTools(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (tool) => tool?.type === "function" && AMSG2_TOOL_NAMES.has(tool?.function?.name) && typeof tool?.function?.description === "string" && tool?.function?.parameters && typeof tool.function.parameters === "object"
+  );
+}
+function messagePrefixMatches(candidate, prefix) {
+  if (candidate.length < prefix.length) return false;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (JSON.stringify(candidate[i]) !== JSON.stringify(prefix[i])) return false;
+  }
+  return true;
+}
+function injectInstantAmsgTools(body, sessions) {
+  if (!body?.model || !Array.isArray(body.messages)) return body;
+  const state = sessions.find(
+    (entry) => entry.tools.length > 0 && messagePrefixMatches(body.messages, entry.requestMessages)
+  );
+  if (!state) return body;
+  const patched = ensureClaudeToolSchema({ ...body, tools: state.tools, tool_choice: "auto" });
+  return ensureClaudeToolThinkingBudget(patched);
+}
+async function fetchWithInstantAmsgTools(input, init) {
+  if (typeof init?.body !== "string") return globalThis.fetch(input, init);
+  let body;
+  try {
+    body = JSON.parse(init.body);
+  } catch {
+    return globalThis.fetch(input, init);
+  }
+  const patched = injectInstantAmsgTools(body, [...instantAmsgSessions.values()]);
+  if (patched === body) return globalThis.fetch(input, init);
+  return globalThis.fetch(input, {
+    ...init,
+    body: JSON.stringify(patched)
+  });
+}
+async function getAmsgClient(state) {
+  if (state.client) return state.client;
+  const client = new ReiClient({
+    baseUrl: state.bridge.workerUrl.replace(/\/+$/, ""),
+    userId: state.bridge.userId,
+    serverToken: state.bridge.serverToken || void 0
+  });
+  await client.init();
+  state.client = client;
+  return client;
+}
+async function cancelBridgeTask(client, taskUuid) {
+  const response = await client.cancelMessage(taskUuid);
+  if (response?.success) return;
+  if (response?.error?.code === "TASK_NOT_FOUND") return;
+  throw new Error(response?.error?.message || "\u4E3B\u52A8\u6D88\u606F\u4EFB\u52A1\u53D6\u6D88\u5931\u8D25");
+}
+function shortTaskId2(uuid) {
+  return uuid.slice(0, 8);
+}
+function findBridgeTask(state, rawId) {
+  const id = typeof rawId === "string" ? rawId.trim() : "";
+  if (id) return state.tasks.find((task) => task.taskUuid === id || task.taskUuid.startsWith(id)) ?? null;
+  const pending = state.tasks.filter((task) => task.status === "scheduled");
+  return pending.length === 1 ? pending[0] : null;
+}
+function describeBridgeTasks(state) {
+  if (!state.tasks.length) return "\u5F53\u524D\u89D2\u8272\u6CA1\u6709\u4EFB\u4F55\u5B9A\u65F6\u4E3B\u52A8\u6D88\u606F\u4EFB\u52A1\u3002";
+  return `\u5F53\u524D\u89D2\u8272\u7684\u4EFB\u52A1\u5217\u8868\uFF1A
+${state.tasks.map((task) => {
+    const recurrence = task.recurrenceType === "daily" ? "\u6BCF\u5929" : task.recurrenceType === "weekly" ? "\u6BCF\u5468" : "\u4E00\u6B21\u6027";
+    const mode = task.mode === "prompted" ? `\u63D0\u793A\u65B9\u5411\u300C${task.promptHint || ""}\u300D` : "\u81EA\u52A8\u751F\u6210";
+    return `- [${shortTaskId2(task.taskUuid)}] ${task.firstSendTime} \xB7 ${recurrence} \xB7 ${mode}`;
+  }).join("\n")}`;
+}
+async function scheduleBridgeTask(state, args, replaceTask, keepReplaced = false) {
+  if (state.bridge.enabled === false) return "\u4E3B\u52A8\u6D88\u606F\u5DF2\u7ECF\u5173\u95ED\uFF0C\u8FD9\u6B21\u4E0D\u4F1A\u5EFA\u7ACB\u65B0\u7684\u5524\u9192\u3002";
+  if (state.bridge.experienceMode === "switch") {
+    const client2 = await getAmsgClient(state);
+    const response2 = await client2.getClientState(amsgStateNamespace(state.bridge.charId));
+    if (!response2?.success) {
+      return response2?.error?.message ? `\u65E0\u6CD5\u786E\u8BA4\u4E3B\u52A8\u5524\u9192\u5F53\u524D\u5F00\u5173\u72B6\u6001\uFF1A${response2.error.message}` : "\u65E0\u6CD5\u786E\u8BA4\u4E3B\u52A8\u5524\u9192\u5F53\u524D\u5F00\u5173\u72B6\u6001\uFF0C\u672C\u6B21\u4E0D\u4F1A\u5EFA\u7ACB\u65B0\u7684\u5524\u9192\u3002";
+    }
+    if (response2.success) {
+      const entries = response2.data?.entries ?? [];
+      const raw = entries.find((entry) => entry.key === AMSG_SWITCH_CONTROL_KEY)?.value;
+      if (raw) {
+        try {
+          const control = JSON.parse(raw);
+          if (control.enabled === false || control.experienceMode !== "switch") {
+            return "\u4E3B\u52A8\u5524\u9192\u5DF2\u7ECF\u5173\u95ED\u6216\u5207\u6362\u5230\u539F\u7248\uFF0C\u8FD9\u6B21\u4E0D\u4F1A\u5EFA\u7ACB\u65B0\u7684\u5524\u9192\u3002";
+          }
+        } catch {
+          console.warn("[instant-push] ignored malformed switch_control state");
+        }
+      }
+    }
+  }
+  if (state.bridge.experienceMode === "switch" && !replaceTask) {
+    replaceTask = state.tasks.find((task) => task.status === "scheduled" && !task.switchFallback);
+  }
+  if (state.tasks.filter((task) => task.status === "scheduled" && task.taskUuid !== replaceTask?.taskUuid).length >= MAX_ACTIVE_TASKS_PER_CHAR2) {
+    return `\u8BE5\u89D2\u8272\u7684\u5F85\u89E6\u53D1\u4EFB\u52A1\u5DF2\u8FBE\u4E0A\u9650 ${MAX_ACTIVE_TASKS_PER_CHAR2} \u4E2A\uFF0C\u8BF7\u5148\u53D6\u6D88\u6216\u5408\u5E76\u5DF2\u6709\u4EFB\u52A1\u3002`;
+  }
+  const sendAtRaw = String(args.send_at || "").trim();
+  const sendAtMs = resolveSendAtMs(sendAtRaw, { tzId: state.bridge.tzId });
+  if (!Number.isFinite(sendAtMs)) return "send_at \u4E0D\u662F\u6709\u6548\u65F6\u95F4\uFF0C\u8BF7\u6309 YYYY-MM-DDTHH:mm:ss \u91CD\u65B0\u586B\u5199\u3002";
+  if (sendAtMs <= Date.now()) return "send_at \u5FC5\u987B\u665A\u4E8E\u5F53\u524D\u65F6\u95F4\uFF0C\u8BF7\u91CD\u65B0\u9009\u62E9\u672A\u6765\u65F6\u95F4\u3002";
+  if (state.bridge.experienceMode === "switch" && validateSwitchWakeTime(sendAtMs) === "too_far") {
+    return "\u4E3B\u52A8\u5524\u9192\u7684\u4E0B\u4E00\u6B21\u65F6\u95F4\u6700\u8FDC\u53EA\u80FD\u5B89\u6392\u5728\u672A\u6765 7 \u5929\u5185\u3002";
+  }
+  if (isAmsgQuietHours(
+    sendAtMs,
+    state.bridge.userTzId,
+    state.bridge.switchQuietStart,
+    state.bridge.switchQuietEnd
+  )) {
+    return buildAmsgQuietHoursMessage(
+      state.bridge.switchQuietStart,
+      state.bridge.switchQuietEnd
+    );
+  }
+  if (wouldExceedAutonomousWakeRate(state.tasks, sendAtMs, Date.now(), replaceTask?.taskUuid)) {
+    return "\u8FD9\u4E2A\u65F6\u95F4\u4F1A\u8BA9\u4E00\u5C0F\u65F6\u5185\u7684\u81EA\u4E3B\u5524\u9192\u8D85\u8FC7 3 \u6B21\u3002\u8BF7\u6362\u5230\u66F4\u665A\u7684\u65F6\u95F4\u3002";
+  }
+  const mode = args.mode === "prompted" ? "prompted" : "auto";
+  const recurrence = ["daily", "weekly"].includes(String(args.recurrence)) ? String(args.recurrence) : "none";
+  const expirePolicy = args.expire_policy === "force" ? "force" : "expire";
+  const promptHint = typeof args.prompt_hint === "string" && args.prompt_hint.trim() ? args.prompt_hint.trim() : void 0;
+  const clientTaskId = crypto.randomUUID();
+  const firstSendTime = new Date(sendAtMs).toISOString();
+  const payload = {
+    contactName: state.bridge.charName,
+    ...state.bridge.avatarUrl ? { avatarUrl: state.bridge.avatarUrl } : {},
+    messageType: mode,
+    messageSubtype: "chat",
+    firstSendTime,
+    recurrenceType: recurrence,
+    tzId: state.bridge.tzId,
+    messages: [{ role: "user", content: AMSG2_PLACEHOLDER_PROMPT }],
+    apiUrl: state.bridge.api.baseUrl,
+    apiKey: state.bridge.api.apiKey,
+    primaryModel: state.bridge.api.model,
+    ...state.bridge.maxTokens ? { maxTokens: state.bridge.maxTokens } : {},
+    metadata: {
+      charId: state.bridge.charId,
+      charName: state.bridge.charName,
+      source: "active_msg_2",
+      amsgMode: mode,
+      amsgClientTaskId: clientTaskId,
+      amsgExpirePolicy: expirePolicy,
+      amsgAnchorMs: state.bridge.anchorMs,
+      amsgTaskInstruction: buildTaskInstruction(mode, promptHint)
+    }
+  };
+  const client = await getAmsgClient(state);
+  const response = await client.scheduleMessage(payload);
+  if (!response?.success || typeof response?.data?.uuid !== "string") {
+    throw new Error(response?.error?.message || "\u4E3B\u52A8\u6D88\u606F\u4EFB\u52A1\u521B\u5EFA\u5931\u8D25");
+  }
+  const record = {
+    taskUuid: response.data.uuid,
+    clientTaskId,
+    mode,
+    firstSendTime,
+    ...typeof response.data.nextSendAt === "string" ? { nextSendAt: response.data.nextSendAt } : {},
+    recurrenceType: recurrence,
+    ...promptHint ? { promptHint } : {},
+    expirePolicy,
+    anchorLastUserMsgAt: state.bridge.anchorMs,
+    source: "character",
+    status: "scheduled",
+    createdAt: Date.now()
+  };
+  state.created.push(record);
+  state.tasks = [
+    ...state.tasks.filter((task) => keepReplaced || task.taskUuid !== replaceTask?.taskUuid),
+    record
+  ];
+  let cancelWarning = "";
+  if (replaceTask && !keepReplaced) {
+    try {
+      await cancelBridgeTask(client, replaceTask.taskUuid);
+      state.cancelled.push(replaceTask.taskUuid);
+    } catch (error) {
+      state.tasks = [replaceTask, ...state.tasks];
+      cancelWarning = `\uFF0C\u4F46\u539F\u4EFB\u52A1 [${shortTaskId2(replaceTask.taskUuid)}] \u53D6\u6D88\u5931\u8D25\u3001\u53EF\u80FD\u4ECD\u4F1A\u89E6\u53D1`;
+      console.warn("[instant-push] AMSG replace cancel failed", error);
+    }
+  }
+  return `\u5B9A\u65F6\u4E3B\u52A8\u6D88\u606F\u5DF2\u521B\u5EFA [${shortTaskId2(record.taskUuid)}]\uFF0C\u5C06\u5728 ${firstSendTime} \u5F00\u59CB\u751F\u6210${cancelWarning}\u3002`;
+}
+async function executeInstantAmsgTool(state, name, args) {
+  if (name === "list_active_messages") return describeBridgeTasks(state);
+  if (name === "schedule_active_message") return scheduleBridgeTask(state, args);
+  const target = findBridgeTask(state, args.task_id);
+  if (!target) {
+    return state.tasks.length > 1 ? "\u5F53\u524D\u6709\u591A\u4E2A\u4EFB\u52A1\uFF0C\u8BF7\u5148\u7528 list_active_messages \u67E5\u8BE2\uFF0C\u518D\u5E26 task_id \u6307\u5B9A\u3002" : "\u6CA1\u6709\u627E\u5230\u53EF\u64CD\u4F5C\u7684\u4E3B\u52A8\u6D88\u606F\u4EFB\u52A1\u3002";
+  }
+  const client = await getAmsgClient(state);
+  if (name === "cancel_active_message") {
+    await cancelBridgeTask(client, target.taskUuid);
+    state.tasks = state.tasks.filter((task) => task.taskUuid !== target.taskUuid);
+    state.created = state.created.filter((task) => task.taskUuid !== target.taskUuid);
+    state.cancelled.push(target.taskUuid);
+    return `\u5DF2\u53D6\u6D88\u4EFB\u52A1 [${shortTaskId2(target.taskUuid)}]\u3002`;
+  }
+  if (name === "renew_active_message") {
+    if (target.mode === "fixed") return "\u56FA\u5B9A\u6D88\u606F\u4EFB\u52A1\u8BF7\u5728\u8BBE\u7F6E\u9762\u677F\u8C03\u6574\u3002";
+    const recurring = target.recurrenceType !== "none";
+    return scheduleBridgeTask(state, {
+      ...args,
+      mode: target.mode,
+      prompt_hint: target.promptHint,
+      recurrence: recurring ? "none" : target.recurrenceType,
+      expire_policy: target.expirePolicy
+    }, target, recurring);
+  }
+  return `\u4E0D\u652F\u6301\u7684\u4E3B\u52A8\u6D88\u606F\u5DE5\u5177\uFF1A${name}`;
+}
+function attachInstantAmsgChanges(decision, state) {
+  if (!state || decision?.decision !== "finish" || !Array.isArray(decision.pushPayloads)) return decision;
+  const cancelled = [...new Set(state.cancelled)];
+  const liveTaskIds = new Set(state.tasks.map((task) => task.taskUuid));
+  const created = state.created.filter(
+    (task) => liveTaskIds.has(task.taskUuid) && !cancelled.includes(task.taskUuid)
+  );
+  if (!created.length && !cancelled.length) return decision;
+  const last = decision.pushPayloads.length - 1;
+  if (last < 0) return decision;
+  decision.pushPayloads[last] = {
+    ...decision.pushPayloads[last],
+    metadata: {
+      ...decision.pushPayloads[last]?.metadata || {},
+      ...created.length ? { amsgSelfScheduled: created } : {},
+      ...cancelled.length ? { amsgCancelledTaskIds: cancelled } : {}
+    }
+  };
+  return decision;
+}
+function buildAmsgOptions(env) {
+  return {
+    fetch: fetchWithInstantAmsgTools,
+    vapid: {
+      email: env.VAPID_EMAIL || "mailto:noreply@example.com",
+      publicKey: env.VAPID_PUBLIC_KEY,
+      privateKey: env.VAPID_PRIVATE_KEY
+    },
+    blobStore: createBlobStore(env),
+    multipart: MULTIPART_TRANSPORT,
+    onEvent: (e) => {
+      traceAmsgEvent(e);
+    }
+  };
+}
+var cfWorker = createCloudflareWorker((env) => {
+  return {
+    ...buildAmsgOptions(env),
+    clientToken: env.AMSG_CLIENT_TOKEN,
+    maxLoopIterations: 10,
+    sse: {
+      backupPush: "on",
+      keepaliveMs: 1e3,
+      immediateKeepalive: true
+    },
+    onLLMOutput,
+    onBeforeLoop: ({ requestBody, sessionId }) => {
+      const now = Date.now();
+      for (const [id, state] of instantAmsgSessions) {
+        if (now - state.createdAt > INSTANT_AMSG_SESSION_TTL_MS) instantAmsgSessions.delete(id);
+      }
+      const tools = sanitizeInstantAmsgTools(requestBody?.tools);
+      if (isInstantAmsgBridge(requestBody?.amsg2Bridge) && tools.length > 0) {
+        instantAmsgSessions.set(sessionId, {
+          bridge: requestBody.amsg2Bridge,
+          requestMessages: Array.isArray(requestBody.messages) ? [...requestBody.messages] : [],
+          tools,
+          tasks: [...requestBody.amsg2Bridge.tasks],
+          created: [],
+          cancelled: [],
+          createdAt: now
+        });
+      }
+      return requestBody?.emotionEval ? { emotionEval: runEmotionEval(requestBody) } : {};
+    },
+    onAfterLoop: async ({ deliver, pending, requestBody, sessionId }) => {
+      try {
+        if (!pending?.emotionEval) return;
+        const { raw: emotionRaw, error: emotionError } = await pending.emotionEval;
+        const charId = requestBody?.charId || requestBody?.metadata?.charId || "";
+        await deliver({
+          messageKind: "emotion_update",
+          messageId: `msg_${sessionId}_emotion`,
+          sessionId,
+          metadata: {
+            ...requestBody?.metadata || {},
+            charId,
+            emotionRaw,
+            ...emotionError ? { emotionError } : {}
+          },
+          notification: {
+            show: "when-hidden",
+            silent: true,
+            title: requestBody?.contactName ? `\u6765\u81EA ${requestBody.contactName}` : "\u4E3B\u52A8\u6D88\u606F",
+            tag: `chat-message-${charId}`,
+            body: "\u5BF9\u65B9\u7684\u60C5\u7EEA\u4EA7\u751F\u4E86\u6CE2\u52A8..."
+          }
+        });
+      } catch (err3) {
+        console.warn("[instant] emotion eval failed in onAfterLoop:", err3);
+      } finally {
+        instantAmsgSessions.delete(sessionId);
+      }
+    }
+  };
+});
+async function runEmotionEval(body) {
+  const ee = body?.emotionEval;
+  if (!ee?.prompt || !ee?.api?.baseUrl || !ee?.api?.apiKey || !ee?.api?.model) {
+    return { raw: "", error: "\u8BC4\u4F30\u914D\u7F6E\u4E0D\u5B8C\u6574\uFF08\u7F3A prompt / baseUrl / apiKey / model\uFF09" };
+  }
+  const charId = body?.metadata && typeof body.metadata === "object" ? body.metadata.charId : "";
+  const priorMessages = Array.isArray(body?.messages) ? body.messages : [];
+  const contactName = body?.contactName || "\u89D2\u8272";
+  const flattenContent = (content) => {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      return content.map((p) => p?.type === "text" ? p.text || "" : p?.type === "image_url" ? "[\u56FE\u7247]" : "").filter(Boolean).join(" ");
+    }
+    return "";
+  };
+  let systemPromptText = "";
+  let conversation = priorMessages;
+  if (priorMessages.length > 0 && priorMessages[0]?.role === "system") {
+    systemPromptText = flattenContent(priorMessages[0].content);
+    conversation = priorMessages.slice(1);
+  }
+  const recentLines = conversation.map((m) => {
+    const role = m.role === "user" ? "\u7528\u6237" : m.role === "assistant" ? contactName : "\u7CFB\u7EDF";
+    return `[${role}]: ${flattenContent(m.content)}`;
+  }).join("\n");
+  const evalContent = String(ee.prompt).replace("__EMOTION_EVAL_SYSTEM_PROMPT__", () => systemPromptText).replace("__EMOTION_EVAL_HISTORY__", () => recentLines);
+  const evalMessages = [{ role: "user", content: evalContent }];
+  try {
+    const baseUrl = String(ee.api.baseUrl).replace(/\/+$/, "");
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${ee.api.apiKey || "sk-none"}`
+      },
+      body: JSON.stringify({
+        model: ee.api.model,
+        messages: evalMessages,
+        temperature: 0.85,
+        // 显式给足输出额度: 部分代理不传 max_tokens 时默认很小, eval 输出很长, 会被截断成半截 JSON
+        max_tokens: 8e3,
+        stream: false
+      })
+    });
+    if (!res.ok) {
+      let snippet = "";
+      try {
+        snippet = (await res.text()).replace(/\s+/g, " ").slice(0, 120);
+      } catch {
+      }
+      console.error("[emotion-eval] LLM call failed", res.status);
+      return { raw: "", error: `\u526F API HTTP ${res.status}${snippet ? `\uFF1A${snippet}` : ""}` };
+    }
+    const data = await res.json();
+    const msg = data?.choices?.[0]?.message;
+    const raw = flattenContent(msg?.content) || (typeof msg?.reasoning_content === "string" ? msg.reasoning_content : "");
+    if (!raw) {
+      return { raw: "", error: `\u8BC4\u4F30\u6A21\u578B\u6CA1\u6709\u8F93\u51FA\u5185\u5BB9 (finish_reason: ${data?.choices?.[0]?.finish_reason ?? "?"})` };
+    }
+    return { raw };
+  } catch (e) {
+    console.error("[emotion-eval] failed", e);
+    return { raw: "", error: `\u8BC4\u4F30\u8BF7\u6C42\u5F02\u5E38\uFF1A${e?.message || String(e)}` };
+  }
+}
+function withSseAntiBufferingHeaders(resp) {
+  const contentType = resp.headers.get("content-type") || "";
+  if (!contentType.includes("text/event-stream")) return resp;
+  const headers = new Headers(resp.headers);
+  headers.set("Cache-Control", "no-cache, no-transform");
+  headers.set("X-Accel-Buffering", "no");
+  return new Response(resp.body, {
+    status: resp.status,
+    statusText: resp.statusText,
+    headers
+  });
+}
+async function decodeGzipRequestBody(request) {
+  if (request.headers.get("x-amsg-request-encoding") !== "gzip" || !request.body) {
+    return request;
+  }
+  const decompressed = await new Response(
+    request.body.pipeThrough(new DecompressionStream("gzip"))
+  ).arrayBuffer();
+  const headers = new Headers(request.headers);
+  headers.delete("x-amsg-request-encoding");
+  headers.delete("content-length");
+  return new Request(request.url, {
+    method: request.method,
+    headers,
+    body: decompressed
+  });
+}
+var src_default = {
+  fetch: async (request, env, ctx) => {
+    const url = new URL(request.url);
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: UTILITY_CORS_HEADERS });
+    }
+    if (url.pathname === "/version") {
+      return handleVersionRequest(request);
+    }
+    if (url.pathname === "/capabilities" || url.pathname === "/health") {
+      return handleCapabilitiesRequest(request, env);
+    }
+    let decodedRequest;
+    try {
+      decodedRequest = await decodeGzipRequestBody(request);
+    } catch {
+      return new Response(JSON.stringify({ error: "Failed to decompress request body" }), {
+        status: 400,
+        headers: {
+          ...UTILITY_CORS_HEADERS,
+          "Content-Type": "application/json"
+        }
+      });
+    }
+    let body = null;
+    try {
+      body = await decodedRequest.clone().json();
+    } catch {
+      body = null;
+    }
+    const requestedEnv = withRequestOversizeTransport({ ...env }, body);
+    const workerEnv = await prepareBlobStoreEnv(requestedEnv);
+    scheduleD1BlobCleanup(workerEnv, ctx);
+    const resp = await cfWorker.fetch(decodedRequest, workerEnv, ctx);
+    return withSseAntiBufferingHeaders(resp);
+  },
+  async scheduled(_event, env) {
+    const workerEnv = await prepareBlobStoreEnv(env);
+    await cleanupExpiredD1Blobs(workerEnv);
+  }
+};
+async function onLLMOutput(ctx) {
+  const state = instantAmsgSessions.get(ctx.sessionId);
+  const toolCalls = Array.isArray(ctx?.llmResponse?.choices?.[0]?.message?.tool_calls) ? ctx.llmResponse.choices[0].message.tool_calls : [];
+  const amsgCalls = toolCalls.filter((call) => AMSG2_TOOL_NAMES.has(call?.function?.name));
+  if (state && amsgCalls.length > 0) {
+    const toolMessages = [];
+    for (const call of amsgCalls) {
+      const name = String(call.function.name);
+      let args = {};
+      try {
+        args = JSON.parse(call.function.arguments || "{}");
+      } catch {
+        args = {};
+      }
+      let content;
+      try {
+        content = await executeInstantAmsgTool(state, name, args);
+      } catch (error) {
+        content = `\u4E3B\u52A8\u6D88\u606F\u5DE5\u5177\u6267\u884C\u5931\u8D25\uFF1A${error?.message || String(error)}`;
+      }
+      toolMessages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        name,
+        content
+      });
+    }
+    return {
+      decision: "continue",
+      nextHistory: [...ctx.messages, ...toolMessages]
+    };
+  }
+  const llmOutputText = String(ctx.llmOutputText ?? "");
+  const classified = classifyLLMOutput(llmOutputText);
+  const decision = buildPushDecision({
+    llmOutputText,
+    sessionId: ctx.sessionId,
+    iteration: Number(ctx.iteration ?? 0),
+    contactName: ctx.contactName ?? "",
+    avatarUrl: ctx.avatarUrl ?? null,
+    // metadata 透传: 客户端 sendInstantPush 时塞了 charId; SW 路由要它分发到具体角色
+    callerMetadata: ctx.metadata && typeof ctx.metadata === "object" ? ctx.metadata : {}
+  });
+  if (state && state.bridge.experienceMode === "switch" && decision.decision === "finish" && classified.kind === "finish" && classified.cleanedText) {
+    const wake = classified.directives.find((directive) => directive.type === "amsg_wake_at");
+    if (wake?.type === "amsg_wake_at") {
+      const before = state.created.length;
+      let feedback = "";
+      try {
+        feedback = await scheduleBridgeTask(state, {
+          send_at: wake.localDateTime,
+          mode: "auto",
+          recurrence: "none",
+          expire_policy: "force"
+        });
+      } catch (error) {
+        feedback = `\u5EFA\u7ACB\u4E0B\u4E00\u6B21\u5524\u9192\u5931\u8D25\uFF1A${error?.message || String(error)}`;
+      }
+      if (state.created.length === before && (state.wakeScheduleRetries ?? 0) < 1) {
+        state.wakeScheduleRetries = (state.wakeScheduleRetries ?? 0) + 1;
+        return {
+          decision: "continue",
+          nextHistory: [
+            ...ctx.messages,
+            { role: "assistant", content: llmOutputText },
+            {
+              role: "system",
+              content: `[\u7CFB\u7EDF\uFF1A\u4F60\u521A\u624D\u7ED9\u81EA\u5DF1\u5B89\u6392\u4E0B\u4E00\u6B21\u5524\u9192\u6CA1\u6709\u6210\u529F\u3002\u539F\u56E0\uFF1A${feedback} \u8BF7\u6839\u636E\u9650\u5236\u91CD\u65B0\u9009\u62E9\u6709\u6548\u65F6\u95F4\uFF0C\u6216\u4E0D\u518D\u5B89\u6392\uFF1B\u4E0D\u8981\u5411\u7528\u6237\u89E3\u91CA\u7CFB\u7EDF\u89C4\u5219\u3002]`
+            }
+          ]
+        };
+      }
+      for (const payload of decision.pushPayloads) {
+        const directives = payload?.metadata?.directives;
+        if (Array.isArray(directives)) {
+          payload.metadata.directives = directives.filter((directive) => directive?.type !== "amsg_wake_at");
+        }
+      }
+    }
+  }
+  return attachInstantAmsgChanges(decision, state);
+}
+function buildPushDecision(input, deps) {
+  const { llmOutputText, sessionId, iteration, contactName, avatarUrl, callerMetadata } = input;
+  const result = classifyLLMOutput(llmOutputText);
+  const baseCommon = {
+    messageType: MESSAGE_TYPE2.INSTANT,
+    source: PUSH_SOURCE2.INSTANT,
+    sessionId,
+    contactName,
+    avatarUrl
+  };
+  const trimmedContactName = (contactName || "").trim();
+  const notificationTitle = `\u6765\u81EA ${trimmedContactName || "\u4E3B\u52A8\u6D88\u606F"}`;
+  if (result.kind === "tool-request") {
+    const narrationSegments = sanitizeIntoSegments(result.prefix);
+    const narrationPushes = narrationSegments.map(
+      (seg, i) => buildSegmentPush({ seg, baseCommon, notificationTitle, callerMetadata, iteration, chunkIdx: i, sessionId })
+    );
+    const toolPush = {
+      ...buildToolRequestPush({
+        ...baseCommon,
+        messageId: `msg_${sessionId}_${iteration}_toolreq`,
+        message: "",
+        toolCalls: result.toolCalls,
+        metadata: {
+          ...callerMetadata,
+          iteration
+        }
+      })
+    };
+    const pushPayloads2 = [...narrationPushes, toolPush];
+    pushPayloads2.forEach((p) => warnIfPayloadLarge(p, deps?.onSizeWarn));
+    return { decision: "tool-request", pushPayloads: pushPayloads2 };
+  }
+  const segments = sanitizeIntoSegments(result.cleanedText);
+  if (segments.length === 0) {
+    if (result.directives.length === 0) {
+      return { decision: "skip-push" };
+    }
+    const directiveOnlyPush = buildDirectiveOnlyPush({
+      baseCommon,
+      callerMetadata,
+      iteration,
+      sessionId,
+      directives: result.directives
+    });
+    warnIfPayloadLarge(directiveOnlyPush, deps?.onSizeWarn);
+    return { decision: "finish", pushPayloads: [directiveOnlyPush] };
+  }
+  const lastIdx = segments.length - 1;
+  const pushPayloads = segments.map(
+    (seg, i) => buildSegmentPush({
+      seg,
+      baseCommon,
+      notificationTitle,
+      callerMetadata,
+      iteration,
+      chunkIdx: i,
+      sessionId,
+      // directives 只挂在最后一条 push 上, 客户端按 messageIndex==totalMessages 守卫
+      directives: i === lastIdx ? result.directives : void 0
+    })
+  );
+  pushPayloads.forEach((p) => warnIfPayloadLarge(p, deps?.onSizeWarn));
+  return { decision: "finish", pushPayloads };
+}
+function buildDirectiveOnlyPush(args) {
+  const { baseCommon, callerMetadata, iteration, sessionId, directives } = args;
+  return buildContentPush2({
+    ...baseCommon,
+    messageId: `msg_${sessionId}_${iteration}_directive`,
+    message: "",
+    metadata: {
+      ...callerMetadata,
+      iteration,
+      directives
+    }
+  });
+}
+function buildSegmentPush(args) {
+  const { seg, baseCommon, notificationTitle, callerMetadata, iteration, chunkIdx, sessionId, directives } = args;
+  return {
+    ...buildContentPush2({
+      ...baseCommon,
+      messageId: `msg_${sessionId}_${iteration}_chunk_${chunkIdx}`,
+      message: seg.raw,
+      metadata: {
+        ...callerMetadata,
+        iteration,
+        ...directives !== void 0 ? { directives } : {}
+      }
+    }),
+    notification: { show: "when-hidden", title: notificationTitle, body: seg.sanitized }
+  };
+}
+function warnIfPayloadLarge(payload, onSizeWarn) {
+  try {
+    const bytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+    if (bytes > 2300) {
+      if (onSizeWarn) {
+        onSizeWarn(bytes);
+      } else {
+        console.warn("[instant-push] payload close to limit", { bytes });
+      }
+    }
+  } catch {
+  }
+}
+
 // worker/amsg/src/index.ts
 var formatSwitchQuotaTime = (valueMs, userTzId) => {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -10293,13 +14773,31 @@ var readServerVersion = async (request, env) => {
     return null;
   }
 };
-var src_default = {
+var src_default2 = {
   async fetch(request, env, ctx) {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, "") || "/";
     const method = request.method.toUpperCase();
+    const isDirectInstantPath = pathname === "/instant" || pathname === "/continue" || pathname === "/version" || pathname.startsWith("/blob/");
+    if (isDirectInstantPath) {
+      if (!ctx || typeof ctx.waitUntil !== "function") {
+        return jsonWithCors(500, {
+          success: false,
+          error: { code: "EXECUTION_CONTEXT_MISSING", message: "\u5FEB\u901F\u56DE\u590D\u901A\u9053\u7F3A\u5C11 Worker execution context" }
+        });
+      }
+      return src_default.fetch(request, {
+        ...env,
+        AMSG_CLIENT_TOKEN: env.AMSG_SERVER_TOKEN,
+        AMSG_OVERSIZE_TRANSPORT: "multipart",
+        AMSG_ENABLE_D1_BLOBSTORE: "false"
+      }, ctx);
+    }
     if (pathname.endsWith("/config-check")) {
       if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS2 });
-      return jsonWithCors(200, { success: true, data: { ...inspectWorkerEnv(env), instantChat: true } });
+      return jsonWithCors(200, {
+        success: true,
+        data: { ...inspectWorkerEnv(env), instantChat: true, directInstant: true }
+      });
     }
     if (pathname.endsWith("/debug")) {
       if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS2 });
@@ -10348,7 +14846,7 @@ export {
   amsgStaleSkip,
   attachScheduledTasks,
   buildWorkerConfig,
-  src_default as default,
+  src_default2 as default,
   inspectWorkerEnv,
   offloadOversizedPush,
   persistMailboxDecision,

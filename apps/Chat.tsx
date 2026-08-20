@@ -242,6 +242,9 @@ const Chat: React.FC = () => {
             || localStorage.getItem('chat_translate_lang')
             || '中文') || '中文';
     });
+    const [translationExpanded, setTranslationExpanded] = useState(() => {
+        try { return JSON.parse(localStorage.getItem(`chat_translate_expanded_${activeCharacterId}`) || 'false'); } catch { return false; }
+    });
     // Which messages are currently showing "译" version (toggle state only, no API calls)
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
@@ -876,6 +879,7 @@ const Chat: React.FC = () => {
                 || localStorage.getItem('chat_translate_lang')
                 || '中文') || '中文'
             );
+            try { setTranslationExpanded(JSON.parse(localStorage.getItem(`chat_translate_expanded_${activeCharacterId}`) || 'false')); } catch { setTranslationExpanded(false); }
             setVisibleCount(30);
             visibleCountRef.current = 30;
             lastMsgIdRef.current = null;
@@ -1465,13 +1469,19 @@ const Chat: React.FC = () => {
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages, addToast, characters, userProfile, groups, realtimeConfig]);
 
-    // 顶栏 ⚡ 是用户正在前台等待的普通回复，固定走本地聊天 API。Instant Push 只负责
-    // 用户显式开启的「发送后自动触发回复」；不能因为配好了 Instant 就把手动闪电也绕到
-    // Worker → Push → SW，否则推送端点异常时模型虽已完成，当前聊天却迟迟没有气泡。
+    // 顶栏 ⚡ 代表「现在开始等这一轮回复」。旧 Instant Push 已启用时，这个显式动作也
+    // 必须交给 Instant Worker：用户点完就可以切后台/锁屏，回复由 Web Push 送回来。
+    // Instant 未启用时仍固定走本地 API，且不被 AMSG 2.0 的「即时对话」暗中接管。
+    // 两种云端即时通道的互斥在设置保存时收口；主动消息 2.0 的定时任务/主动唤醒不受影响。
     const handleManualTrigger = () => {
         // 上一轮还在跑时 triggerAI 会静默 reject，提前挡掉即可。
         if (isTyping) return;
-        triggerAI(messages, undefined, undefined, { forceLocal: true });
+        triggerAI(
+            messages,
+            undefined,
+            undefined,
+            isInstantConfigReady() ? undefined : { forceLocal: true },
+        );
     };
 
     const handleReroll = async () => {
@@ -3251,6 +3261,13 @@ const Chat: React.FC = () => {
                 onToggleTranslation={() => { const next = !translationEnabled; setTranslationEnabled(next); localStorage.setItem(`chat_translate_enabled_${activeCharacterId}`, JSON.stringify(next)); if (next) { trackEvent('开启聊天翻译', { targetLang: isTranslationLangPreset(translateTargetLang) ? translateTargetLang : 'custom' }); } if (!next) { setShowingTargetIds(new Set()); } }}
                 translateSourceLang={translateSourceLang}
                 translateTargetLang={translateTargetLang}
+                translationExpanded={translationExpanded}
+                onToggleTranslationExpanded={() => {
+                    const next = !translationExpanded;
+                    setTranslationExpanded(next);
+                    localStorage.setItem(`chat_translate_expanded_${activeCharacterId}`, String(next));
+                    setShowingTargetIds(new Set());
+                }}
                 onSetTranslateSourceLang={(lang: string) => { const next = normalizeTranslationLangLabel(lang); if (!next) return; setTranslateSourceLang(next); localStorage.setItem(`chat_translate_source_lang_${activeCharacterId}`, next); setShowingTargetIds(new Set()); }}
                 onSetTranslateLang={(lang: string) => { const next = normalizeTranslationLangLabel(lang); if (!next) return; setTranslateTargetLang(next); localStorage.setItem(`chat_translate_lang_${activeCharacterId}`, next); setShowingTargetIds(new Set()); }}
                 xhsEnabled={!!char.xhsEnabled}
@@ -3539,6 +3556,7 @@ const Chat: React.FC = () => {
                             isThinkingSelected={selectedThinkingMsgIds.has(m.id)}
                             onToggleThinkingSelect={toggleThinkingSelection}
                             translationEnabled={translationEnabled && m.type === 'text' && m.role === 'assistant'}
+                            translationExpanded={translationExpanded}
                             isShowingTarget={showingTargetIds.has(m.id)}
                             onTranslateToggle={handleTranslateToggle}
                             voiceData={voiceDataMap[m.id]}

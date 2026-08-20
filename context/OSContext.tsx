@@ -13,8 +13,9 @@ import { createV2ArrayFieldWriter, writeV2Backup, assembleV2Backup, type BackupM
 import { encodeVectorsForBackup, encodeVectorsForBackupChunked } from '../utils/memoryPalace/db';
 import { ProactiveChat } from '../utils/proactiveChat';
 import { MusicTogetherWake } from '../utils/musicTogetherWake';
-import { VRScheduler } from '../utils/vrWorld/scheduler';
+import { VRScheduler, type VRSessionOutcome } from '../utils/vrWorld/scheduler';
 import { runVRSession } from '../utils/vrWorld/runSession';
+import { logVRApiCall } from '../utils/vrWorld/vrApi';
 import { VR_DEFAULT_INTERVAL_MIN } from '../utils/vrWorld/constants';
 import { WorldScheduler, toTickEntries } from '../utils/worldHome/scheduler';
 import { runWorldEpisode, rerollWorldCharBeat } from '../utils/worldHome/engine';
@@ -2803,12 +2804,17 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
       window.addEventListener(MUSIC_TOGETHER_RESTORED_EVENT, onMusicTogetherRestored);
 
       // 「彼方」自主登入 —— 独立调度，复用同一批 refs 拿最新状态
-      const runVR = async (charId: string, room?: string, letterId?: string) => {
+      const runVR = async (charId: string, room?: string, letterId?: string, manual?: boolean) => {
           const char = charactersRef.current.find(c => c.id === charId);
-          if (!char || !char.vrState?.enabled) return;
+          if (!char || !char.vrState?.enabled) {
+              VRScheduler.stop(charId);
+              void logVRApiCall({ ts: Date.now(), charId, charName: char?.name, ok: false, ms: 0, kind: 'skipped', charEnabled: !!char?.vrState?.enabled, note: char ? '角色未接入彼方，已撤掉残留调度' : '角色已不存在，已撤掉残留调度' });
+              return;
+          }
           if (!userProfileRef.current) return;
+          let outcome: VRSessionOutcome = 'skipped';
           try {
-              await runVRSession({
+              const result = await runVRSession({
                   char,
                   characters: charactersRef.current,
                   apiConfig: apiConfigRef.current,
@@ -2819,12 +2825,20 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   updateCharacter,
                   forcedRoom: room as any,
                   forcedLetterId: letterId,
+                  manual,
               });
+              outcome = result.ok ? 'ok' : (result.reason === 'api-error' ? 'failed' : 'skipped');
           } catch (e) {
               console.error('[VRWorld] runVR error', e);
+              outcome = 'failed';
           }
+          const { tripped, streak } = VRScheduler.report(charId, outcome);
+          if (!tripped) return;
+          void updateCharacter(charId, prev => ({ vrState: { ...(prev.vrState || { intervalMinutes: VR_DEFAULT_INTERVAL_MIN }), enabled: false } as any }));
+          void logVRApiCall({ ts: Date.now(), charId, charName: char.name, ok: false, ms: 0, kind: 'tripped', note: `连续 ${streak} 次没能调通模型，已暂停自主登入` });
+          addToast(`${char.name} 连续 ${streak} 次没能调通模型，已暂停 ta 在彼方的自主登入`, 'error');
       };
-      VRScheduler.onTrigger((charId: string, room?: string, letterId?: string) => { void runVR(charId, room, letterId); });
+      VRScheduler.onTrigger((charId: string, room?: string, letterId?: string, manual?: boolean) => { void runVR(charId, room, letterId, manual); });
 
       // 以角色 vrState 为准对账调度表：调度表存 localStorage、不随备份迁移，
       // 导入备份后角色虽 enabled 但调度表为空，这里补建/清理使其按时触发。
@@ -4120,6 +4134,15 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                   }
                   return Object.keys(map).length > 0 ? map : undefined;
               })() : undefined,
+              chatTranslateExpandedByChar: (mode === 'text_only' || mode === 'full') ? (() => {
+                  const map: Record<string, boolean> = {};
+                  for (let i = 0; i < localStorage.length; i++) {
+                      const key = localStorage.key(i);
+                      if (!key || !key.startsWith('chat_translate_expanded_')) continue;
+                      map[key.replace('chat_translate_expanded_', '')] = localStorage.getItem(key) === 'true';
+                  }
+                  return Object.keys(map).length > 0 ? map : undefined;
+              })() : undefined,
               chatTranslateSourceLangByChar: (mode === 'text_only' || mode === 'full') ? (() => {
                   const map: Record<string, string> = {};
                   for (let i = 0; i < localStorage.length; i++) {
@@ -4960,6 +4983,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (data.chatTranslateEnabledByChar && typeof data.chatTranslateEnabledByChar === 'object') {
               for (const [charId, enabled] of Object.entries(data.chatTranslateEnabledByChar)) {
                   localStorage.setItem(`chat_translate_enabled_${charId}`, enabled ? 'true' : 'false');
+              }
+          }
+          if (data.chatTranslateExpandedByChar && typeof data.chatTranslateExpandedByChar === 'object') {
+              for (const [charId, expanded] of Object.entries(data.chatTranslateExpandedByChar)) {
+                  localStorage.setItem(`chat_translate_expanded_${charId}`, expanded ? 'true' : 'false');
               }
           }
           if (data.chatTranslateSourceLangByChar && typeof data.chatTranslateSourceLangByChar === 'object') {

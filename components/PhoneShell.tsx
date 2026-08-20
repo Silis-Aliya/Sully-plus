@@ -120,6 +120,7 @@ import DreamSimIndicator from './os/DreamSimIndicator';
 import ErrorDialog from './os/ErrorDialog';
 import BootSequence from './os/BootSequence';
 import { setAppPayloadWarmer, shouldUseIdleAppPreload } from './os/appPreload';
+import { isBrowserBackGuardState, makeBrowserBackGuardState } from '../utils/browserBackGuard';
 
 /*
 // Internal Error Boundary Component
@@ -713,6 +714,23 @@ const PhoneShell: React.FC = () => {
     openApp(AppID.Settings);
     trackEvent('点立即备份');
   };
+
+  // 浏览器边缘返回先交给 SullyOS 的层级返回逻辑，不直接离开当前网页。
+  useEffect(() => {
+    if (typeof window === 'undefined' || Capacitor.isNativePlatform() || activeApp === AppID.Launcher) return;
+    const armGuard = () => {
+      try { window.history.pushState(makeBrowserBackGuardState(window.history.state), '', window.location.href); return true; }
+      catch { return false; }
+    };
+    if (!isBrowserBackGuardState(window.history.state) && !armGuard()) return;
+    const onPopState = (event: PopStateEvent) => {
+      if (isBrowserBackGuardState(event.state)) return;
+      armGuard();
+      handleBack();
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [activeApp, handleBack]);
 
   // Capacitor Native Handling
   useEffect(() => {

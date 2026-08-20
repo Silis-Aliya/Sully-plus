@@ -133,6 +133,7 @@ export const createStoryTheaterDraft = (now: number = Date.now()): StoryTheaterE
     archives: [],
     selectedWorldbookIds: [],
     forceUserLastMessage: false,
+    omitSamplingParams: false,
     createdAt: now,
     updatedAt: now,
 });
@@ -164,6 +165,7 @@ export const normalizeStoryTheater = (entry: StoryTheaterEntry): StoryTheaterEnt
         presetId: /^builtin-night-screening-v\d/i.test(String(entry.presetId || '')) ? 'builtin-night-screening' : entry.presetId,
         presetOverride: entry.presetOverride?.schema === 'sullyos.story-preset' && Array.isArray(entry.presetOverride.prompts) ? entry.presetOverride : undefined,
         forceUserLastMessage: entry.forceUserLastMessage === true,
+        omitSamplingParams: entry.omitSamplingParams === true,
         createdAt: Number(entry.createdAt) || Date.now(),
         updatedAt: Number(entry.updatedAt) || Number(entry.createdAt) || Date.now(),
     };

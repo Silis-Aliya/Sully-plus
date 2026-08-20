@@ -2237,6 +2237,14 @@ describe('worker 入口 — 配置不全时的响应', () => {
     const body = await response.json();
     expect(body.data.ok).toBe(false);
     expect(body.data.missing).toEqual(['DB', 'AMSG_MASTER_KEY']);
+    expect(body.data.directInstant).toBe(true);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+  });
+
+  it('/version 由同包的快速回复通道响应，不需要再部署第二台 Instant Worker', async () => {
+    const response = await call('https://w.example/version');
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ success: true, data: { version: expect.any(String) } });
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
   });
 

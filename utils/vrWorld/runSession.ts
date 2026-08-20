@@ -61,6 +61,8 @@ export interface VRSessionDeps {
     forcedRoom?: VRRoomId;
     /** 用户在邮局指定要让该角色回复的来信 id（forcedRoom 应为 postoffice）。 */
     forcedLetterId?: string;
+    /** 用户手动触发不受自动登入最小间隔限制。 */
+    manual?: boolean;
 }
 
 export interface VRSessionResult {
@@ -72,6 +74,15 @@ export interface VRSessionResult {
 
 const genId = (p: string) => `${p}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 const running = new Set<string>();
+const lastAutoCallAt = new Map<string, number>();
+const throttledCount = new Map<string, number>();
+const MIN_AUTO_GAP_FLOOR_MS = 5 * 60_000;
+export function vrAutoGapMs(intervalMinutes?: number): number {
+    const raw = Number(intervalMinutes);
+    const minutes = Number.isFinite(raw) && raw > 0 ? raw : VR_DEFAULT_INTERVAL_MIN;
+    return Math.max((minutes * 60_000) / 2, MIN_AUTO_GAP_FLOOR_MS);
+}
+export function getVRThrottleCounts(): Record<string, number> { return Object.fromEntries(throttledCount); }
 
 /**
  * 串行化共享房间状态（留言墙等）的 read-modify-write。
@@ -92,19 +103,23 @@ function withSharedRoomLock<T>(fn: () => Promise<T>): Promise<T> {
     return result;
 }
 
-/** 选一本要读的书：优先续读未读完的，否则取最近更新的一本。 */
-function pickNovel(novels: VRWorldNovel[], char: CharacterProfile): VRWorldNovel | null {
-    if (novels.length === 0) return null;
+/** 从可读且未读完的候选中轮换；优先用户书单，并避免连续读同一本。 */
+export function pickNovel(novels: VRWorldNovel[], char: CharacterProfile, random: () => number = Math.random): VRWorldNovel | null {
+    const readable = novels.filter(novel => novel.segments.length > 0);
+    if (readable.length === 0) return null;
     const bookmarks = char.vrState?.novelBookmarks;
-    const unfinished = novels.filter(n => getBookmark(bookmarks, n.id) < n.segments.length);
-    const pool = unfinished.length > 0 ? unfinished : novels;
-    pool.sort((a, b) => {
-        const aStarted = getBookmark(bookmarks, a.id) > 0 ? 1 : 0;
-        const bStarted = getBookmark(bookmarks, b.id) > 0 ? 1 : 0;
-        if (aStarted !== bStarted) return bStarted - aStarted;
-        return b.updatedAt - a.updatedAt;
-    });
-    return pool[0];
+    const unfinished = readable.filter(novel => getBookmark(bookmarks, novel.id) < novel.segments.length);
+    const available = unfinished.length > 0 ? unfinished : readable;
+    const preferred = new Set(char.vrState?.preferredNovelIds || []);
+    const preferredAvailable = preferred.size ? available.filter(novel => preferred.has(novel.id)) : [];
+    let pool = preferredAvailable.length ? preferredAvailable : available;
+    if (char.vrState?.lastNovelId && pool.length > 1) {
+        const alternatives = pool.filter(novel => novel.id !== char.vrState?.lastNovelId);
+        if (alternatives.length) pool = alternatives;
+    }
+    const rolled = Number(random());
+    const normalized = Number.isFinite(rolled) ? Math.max(0, Math.min(0.999999999, rolled)) : 0;
+    return pool[Math.floor(normalized * pool.length)] || pool[0] || null;
 }
 
 /** 汇总角色可点的歌（歌单 + 最近在听，按 id 去重，最近优先，最多 20）。 */
@@ -154,9 +169,20 @@ export function rollRoom(char: CharacterProfile, novels: VRWorldNovel[], musicSt
 }
 
 export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult> {
+    const { manual } = deps;
     const { char, characters, apiConfig, userProfile, groups, realtimeConfig, memoryPalaceConfig, updateCharacter, forcedRoom, forcedLetterId } = deps;
 
     if (running.has(char.id)) return { ok: false, reason: 'busy' };
+    if (!manual) {
+        const gap = vrAutoGapMs(char.vrState?.intervalMinutes);
+        const since = Date.now() - (lastAutoCallAt.get(char.id) || 0);
+        if (since < gap) {
+            const times = (throttledCount.get(char.id) || 0) + 1;
+            throttledCount.set(char.id, times);
+            if (times === 1 || times % 20 === 0) void logVRApiCall({ ts: Date.now(), charId: char.id, charName: char.name, ok: false, ms: 0, kind: 'throttled', charEnabled: !!char.vrState?.enabled, note: `自动登入过密，已拦下（累计 ${times} 次）` });
+            return { ok: false, reason: 'too-soon' };
+        }
+    }
 
     // API 优先级：角色自带覆盖 > 彼方独立 API > 聊天默认
     const vrGlobalApi = await getVRApi();
@@ -172,6 +198,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
     running.add(char.id);
     // 信号坠落处的写诗会话锁 token（抢到才有值）；finally 里兜底放锁
     let signalLockToken: string | null = null;
+    let modelCallFailed = false;
     try {
         window.dispatchEvent(new CustomEvent('vr-session-start', {
             detail: { charId: char.id, charName: char.name, room: room.id },
@@ -240,7 +267,8 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         }
 
         if (room.id === 'library') {
-            novel = pickNovel(novels, char)!;
+            novel = pickNovel(novels, char);
+            if (!novel) return { ok: false, room: 'library', reason: 'no-readable-novel' };
             const bm = getBookmark(char.vrState?.novelBookmarks, novel.id);
             win = getReadingWindow(novel, bm >= novel.segments.length ? 0 : bm);
             allAnn = await DB.getVRAnnotations(novel.id);
@@ -379,6 +407,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         // 调 LLM（记录一次调用，供"调用记录"对账）
         const baseUrl = vrApi.baseUrl.replace(/\/+$/, '');
         const callStart = Date.now();
+        if (!manual) { lastAutoCallAt.set(char.id, callStart); throttledCount.delete(char.id); }
         let data: any;
         try {
             data = await safeFetchJson(`${baseUrl}/chat/completions`, {
@@ -390,9 +419,10 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
                     temperature: 0.9, stream: false,
                 }),
             }, 2, 0, { appName: '彼方', charId: char.id, charName: char.name, purpose: '自由活动' });
-            logVRApiCall({ ts: callStart, charName: char.name, room: room.id, model: vrApi.model, baseUrl, ok: true, ms: Date.now() - callStart });
+            logVRApiCall({ ts: callStart, charId: char.id, charName: char.name, charEnabled: !!char.vrState?.enabled, room: room.id, model: vrApi.model, baseUrl, ok: true, ms: Date.now() - callStart });
         } catch (e: any) {
-            logVRApiCall({ ts: callStart, charName: char.name, room: room.id, model: vrApi.model, baseUrl, ok: false, ms: Date.now() - callStart, error: (e?.message || String(e)).slice(0, 160) });
+            modelCallFailed = true;
+            logVRApiCall({ ts: callStart, charId: char.id, charName: char.name, charEnabled: !!char.vrState?.enabled, room: room.id, model: vrApi.model, baseUrl, ok: false, ms: Date.now() - callStart, error: (e?.message || String(e)).slice(0, 160) });
             throw e;
         }
         let aiContent: string = data.choices?.[0]?.message?.content || '';
@@ -424,7 +454,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
             }
             const nextBookmark = win!.reachedEnd ? novel!.segments.length : win!.to;
             await updateCharacter(char.id, {
-                vrState: { ...prevState, novelBookmarks: { ...(prevState.novelBookmarks || {}), [novel!.id]: nextBookmark }, currentRoom: 'library', lastActiveAt: Date.now() },
+                vrState: { ...prevState, novelBookmarks: { ...(prevState.novelBookmarks || {}), [novel!.id]: nextBookmark }, lastNovelId: novel!.id, currentRoom: 'library', lastActiveAt: Date.now() },
             });
             activity = parsed.activity || `读了《${novel!.title}》第 ${win!.from + 1}~${win!.to} 段${written ? `，留下了 ${written} 条批注` : '，安静读完没多说什么'}。`;
             cardLines = [`「彼方 · ${room.name}」`, nameLine(char.name, activity)];
@@ -674,7 +704,7 @@ export async function runVRSession(deps: VRSessionDeps): Promise<VRSessionResult
         return { ok: true, room: room.id, activity };
     } catch (err) {
         console.error('[VRWorld] session error:', err);
-        return { ok: false, room: room.id, reason: 'error' };
+        return { ok: false, room: room.id, reason: modelCallFailed ? 'api-error' : 'error' };
     } finally {
         running.delete(char.id);
         // 兜底放锁：任何提前 return / 异常路径漏放，这里补放（漏了也有 TTL 自动回收）

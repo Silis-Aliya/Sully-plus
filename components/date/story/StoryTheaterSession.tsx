@@ -47,6 +47,7 @@ import {
 import { incrementDigestRound, runCognitiveDigestion } from '../../../utils/memoryPalace';
 import StoryQuickPresetPanel from './StoryQuickPresetPanel';
 import { StoryAppearanceButton } from './StoryTheaterTheme';
+import { diagnoseStoryRequestFailure } from '../../../utils/networkFailureDiagnosis';
 
 interface Props {
     entry: StoryTheaterEntry;
@@ -392,19 +393,26 @@ const StoryTheaterSession: React.FC<Props> = ({ entry, preset, masks, onBack, on
     const displayedTokenInfo = contextTokens > 0 ? { count: contextTokens, exact: contextTokensExact } : storedTokenInfo;
 
     const callCompletion = useCallback(async (payload: Array<{ role: string; content: string }>, settings?: object, onPromptTokens?: (tokens: number) => void): Promise<string> => {
-        const response = await fetch(`${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
-            body: JSON.stringify({ model: apiConfig.model, messages: payload, stream: false, ...settings }),
-        });
-        if (!response.ok) throw new Error(`API Error ${response.status}`);
+        const compatibleSettings = entry.omitSamplingParams ? (() => { const { top_p, frequency_penalty, presence_penalty, ...rest } = settings as any || {}; return rest; })() : settings;
+        const url = `${apiConfig.baseUrl.replace(/\/+$/, '')}/chat/completions`;
+        const body = JSON.stringify({ model: apiConfig.model, messages: payload, stream: false, ...compatibleSettings });
+        const startedAt = performance.now();
+        let response: Response;
+        try {
+            response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` }, body });
+            if (!response.ok) throw new Error(`API Error ${response.status}`);
+        } catch (error) {
+            const detail = diagnoseStoryRequestFailure({ url, method: 'POST', durationMs: performance.now() - startedAt, error, messageCount: payload.length, bodyChars: body.length });
+            console.error('[StoryTheater] scoped network diagnosis\n' + detail);
+            throw new Error(`${String((error as any)?.message || error)}\n${detail}`);
+        }
         const data = await safeResponseJson(response);
         const reportedPromptTokens = Number(data?.usage?.prompt_tokens);
         if (Number.isFinite(reportedPromptTokens) && reportedPromptTokens > 0) onPromptTokens?.(reportedPromptTokens);
         const content = extractContent(data).trim();
         if (!content) throw new Error('没有生成正文，请重试');
         return content;
-    }, [apiConfig]);
+    }, [apiConfig, entry.omitSamplingParams]);
 
     const saveCentralAndMirrors = useCallback(async (role: 'user' | 'assistant', content: string, centralMetadata: Record<string, unknown> = {}): Promise<number> => {
         const now = Date.now();

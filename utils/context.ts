@@ -2,6 +2,7 @@
 import { CharacterProfile, UserProfile, DailySchedule } from '../types';
 import { normalizeUserImpression } from './impression';
 import { isScheduleFeatureOn } from './scheduleFeature';
+import { TIME_FRAMING_CONVERSATIONAL } from './timeFramingNote';
 import { buildScheduleInjection as buildScheduleInjectionText } from './scheduleInjection';
 import { resolveCharTimeZone, nowInTimeZone, tzAwarenessNote, interactionGapNote } from './timezone';
 import {
@@ -332,7 +333,7 @@ export const ContextBuilder = {
      */
     buildTimeAwarenessBlock: (
         char: CharacterProfile,
-        timeOptions?: { lastInteractionTs?: number; skipTimeAwareness?: boolean },
+        timeOptions?: { lastInteractionTs?: number; skipTimeAwareness?: boolean; conversational?: boolean },
     ): string => {
         // skipTimeAwareness：见面纯架空时由调用方传入，彻底抑制时间注入（修「线下时间感知」关掉后仍漏时间）。
         if (char.timeAwarenessEnabled === false || timeOptions?.skipTimeAwareness) return '';
@@ -349,6 +350,7 @@ export const ContextBuilder = {
         const timeStr = `${h.toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
         let context = `### 当前时间 (Now)\n`;
         context += `现在是 ${dateStr} ${dayNames[now.getDay()]} ${timeOfDay} ${timeStr}。请据此自然地拥有真实的时间观念（早晚作息、工作日/周末、距离上次互动多久等），不要凭空假设时间。\n`;
+        if (timeOptions?.conversational) context += `${TIME_FRAMING_CONVERSATIONAL}\n`;
         const tzNote = tzAwarenessNote(charTz);
         if (tzNote) context += `${tzNote.trim()}\n`;
         // 距离上次联系多久（统一口径）：传了 lastInteractionTs 才注入。
@@ -370,7 +372,7 @@ export const ContextBuilder = {
             includeDetailedMemories?: boolean;
             includeEmotionBuff?: boolean;
             memoryPalaceContext?: string;
-            timeOptions?: { lastInteractionTs?: number; skipTimeAwareness?: boolean };
+            timeOptions?: { lastInteractionTs?: number; skipTimeAwareness?: boolean; conversational?: boolean };
         },
     ): string => {
         let context = ContextBuilder.buildTimeAwarenessBlock(char, options?.timeOptions);

@@ -3,6 +3,7 @@ import { CharacterProfile, UserProfile, Message, Emoji, EmojiCategory, GroupProf
 import { ContextBuilder } from './context';
 import { DB } from './db';
 import { formatLifeSimResetCardForContext } from './lifeSimChatCard';
+import { formatQixiEventCardForContext, tryParseQixiEventChatCard } from './qixiChatCard';
 import { getVoiceTranscript, normalizeMessageContent, stickerNameFromUrl, theaterWhenPhrase } from './messageFormat';
 import { formatTransferRecord } from './transferFormat';
 import { computeCurrentListening, getCurrentSlot } from './charMusicSchedule';
@@ -20,6 +21,7 @@ import { getLocalDateKey } from './localDate';
 import { getCharNameById } from './charNameRegistry';
 import { getDailyScheduleForChar } from './dailySchedule';
 import { formatRelativeAge } from './groupChat/relativeTime';
+import { assembleAuthorityContextIfConfigured } from './memoryPalace/ombreBridge';
 
 // 语音格式指导按当前 TTS 服务商二选一：用 MiniMax 才注入 MiniMax 那套（含 <#秒#> 停顿标记），
 // 用鱼声则注入鱼声版（去掉 MiniMax 专属标记，改用标点 / 省略号控制停顿）。
@@ -375,26 +377,36 @@ export const ChatPrompts = {
         // 记忆宫殿检索结果现在从 char.memoryPalaceInjection 读取。
         // deferVolatile：时间/宫殿召回/情绪 buff 三块不进 stable，由下面的 volatileState 承接。
         const coreT0 = performance.now();
-        let baseSystemPrompt = ContextBuilder.buildCoreContext(
-            char,
-            userProfile,
-            true,
-            undefined,
-            undefined,
-            { worldbookMessages: currentMsgs },
-            { deferVolatile: true },
+        let hubAssembly = null;
+        if (!forFirePack) {
+            try {
+                hubAssembly = await assembleAuthorityContextIfConfigured(char.id, currentMsgs);
+            } catch (error) {
+                console.warn('[Memory Hub] authority context unavailable; using the parity-locked local builder for this turn:', error);
+            }
+        }
+        let baseSystemPrompt = hubAssembly?.stableSystemPrompt || ContextBuilder.buildCoreContext(
+          char,
+          userProfile,
+          true,
+          undefined,
+          undefined,
+          { worldbookMessages: currentMsgs },
+          { deferVolatile: true },
         );
         timings.buildCoreContext = Math.round(performance.now() - coreT0);
 
         // ── 易变状态段（volatileState）──
         // 开头一行框定，让模型明白这条出现在历史之后的 system 消息是"此刻的状态"，
         // 人设与规则仍以最上方的系统设定为准。
-        let volatileState = `\n[System: 实时状态 (Live Context)]\n（以下是此刻的实时状态——当前时间、你正在做的事、你的情绪底色、周边动态。你的人设与聊天规则见最上方的系统设定，此处不再重复。）\n\n`;
-        volatileState += ContextBuilder.buildVolatileCoreState(char, {
-            includeDetailedMemories: true,
-            includeEmotionBuff: !isCodeSurface,
-            timeOptions: { skipTimeAwareness: forFirePack },
-        });
+        let volatileState = hubAssembly?.volatileContext || `\n[System: 实时状态 (Live Context)]\n（以下是此刻的实时状态——当前时间、你正在做的事、你的情绪底色、周边动态。你的人设与聊天规则见最上方的系统设定，此处不再重复。）\n\n`;
+        if (!hubAssembly) {
+            volatileState += ContextBuilder.buildVolatileCoreState(char, {
+                includeDetailedMemories: true,
+                includeEmotionBuff: !isCodeSurface,
+                timeOptions: { skipTimeAwareness: forFirePack, conversational: true },
+            });
+        }
 
         // ── 并发发起所有独立的异步取数（网络 + IndexedDB），下面按原顺序拼接 ──
         // 原来是 7 段串行 await，总耗时 = 各段之和；现在取 max。
@@ -1518,8 +1530,11 @@ ${userProfile.name} 给你反馈时，别当成约束，当成信任——ta 在
                 else if ((m.type as string) === 'score_card') {
                     try {
                         const card = m.metadata?.scoreCard || JSON.parse(m.content);
+                        const qixiCard = tryParseQixiEventChatCard(card);
                         if (card?.type === 'lifesim_reset_card') {
                             content = `${timeStr} ${formatLifeSimResetCardForContext(card, char?.name)}`;
+                        } else if (qixiCard) {
+                            content = `${timeStr} ${formatQixiEventCardForContext(qixiCard, 'char')}`;
                         } else if (card?.type === 'diary_card') {
                             const uName = card.userName || userProfile?.name || '用户';
                             const userText = (card.userText || '').trim();

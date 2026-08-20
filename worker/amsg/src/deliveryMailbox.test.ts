@@ -78,7 +78,7 @@ describe('AMSG delivery mailbox', () => {
       occurrenceMs: 1234,
       sessionId: 'session-1',
     }, '2026-08-06T00:00:00.000Z');
-    await persistDeliveryMailbox(env, 'user-1', payloads, Date.parse('2026-08-06T00:00:00.000Z'));
+    await persistDeliveryMailbox(env, 'user-1', payloads, Date.now());
 
     expect(rows.size).toBe(1);
     expect([...rows.values()][0].encryptedPayload).not.toContain('不能裸存的正文');

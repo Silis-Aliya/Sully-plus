@@ -96,6 +96,18 @@ iOS 18 PWA，online、通知权限给了、SW 活着、~200 条上下文（约 2
 | `node_modules/@rei-standard/amsg-sw/dist/index.d.ts` | dedup 实现（dbName `rei_amsg_sw_dedupe_v1`） |
 | `node_modules/@rei-standard/amsg-client/dist/index.d.ts` | `consumeInstantStream` JSDoc —— **注意：当前 JSDoc 说「treat rejection as canonical error path」，这条建议跟 backupPush='on' 配合会坑爹，本仓库不能照做**。上游修复在路上 |
 
+## 与 AMSG 2.0 共用 Worker（fork 快速模式）
+
+本 fork 把 Instant 的 `/instant`、`/continue`、`/version` 和 `/blob/*` 路由挂进了
+同一份 AMSG Worker bundle。普通回复仍走上述 SSE + Web Push 双通道；定时主动消息仍走
+`scheduled_messages` + cron，两者不会共用任务队列。
+
+- 前端「主动消息 2.0 → 快速即时回复」会把同一 Worker URL 写入 Instant 配置。
+- `AMSG_SERVER_TOKEN` 同时作为快速通道的 client token，不需要维护第二份口令。
+- 快速通道固定使用 multipart 大包运输，不要求再为 Instant 建第二套 D1 blob 表。
+- 开启快速通道时只关闭旧 `/instant-chat` 开关，**不会**关闭主动消息任务或主动唤醒。
+- Worker 必须同步到包含直连路由的新版 bundle；只更新网页、没更新 Worker 不会生效。
+
 ## 已知的上游 (amsg-*) 待改进
 
 amsg-client 的 `consumeInstantStream` 当前 JSDoc 在 backupPush 强制开的世界里语义错位。Owner 知道，RFC 在内部讨论（见仓库 owner，不在这份文档展开）。在上游修好之前，本仓库的 `sendInstantPushAndAwaitReply` 是 reference implementation —— 接新功能 / fork 时照它的 race 形态写就行，不要原地 try/catch 直接判 send-failed。

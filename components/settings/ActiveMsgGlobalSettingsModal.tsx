@@ -7,6 +7,9 @@ import { cancelAllRemoteAmsgTasks, isWorkerUrlCleared, wipeAmsgCloudData } from 
 import {
   buildCloudflareDashboardUrl,
   isInstantConfigReady,
+  loadInstantConfig,
+  normalizeWorkerUrl,
+  saveInstantConfig,
 } from '../../utils/instantPushClient';
 import { generateClientToken } from '../../utils/vapidGen';
 import { isAmsgServerVersionAtLeast } from '../../utils/amsgWorkerVersion';
@@ -109,6 +112,13 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
   // Instant Push 也开着：新版会把 2.0 工具桥接到云端 agentic loop。
   const [instantOn, setInstantOn] = useState(false);
 
+  const isUnifiedInstantOn = () => {
+    if (!config?.workerUrl?.trim()) return false;
+    const instant = loadInstantConfig();
+    return instant.enabled
+      && normalizeWorkerUrl(instant.workerUrl) === normalizeWorkerUrl(config.workerUrl);
+  };
+
   // 特性探测：确认「过老」（端点 404 → null，或缺关键特性）才亮牌；
   // 探测本身失败（断网 / 密钥不对 / 没填地址）不亮，避免误报。
   const probeWorkerCaps = async (workerConfigured: boolean) => {
@@ -145,7 +155,11 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
     savedWorkerUrlRef.current = nextConfig.workerUrl || '';
     setConfig(nextConfig);
     setPushStatus(nextPushStatus);
-    setInstantOn(isInstantConfigReady());
+    const instant = loadInstantConfig();
+    setInstantOn(
+      isInstantConfigReady(instant)
+      && normalizeWorkerUrl(instant.workerUrl) === normalizeWorkerUrl(nextConfig.workerUrl || ''),
+    );
     void probeWorkerCaps(Boolean(nextConfig.workerUrl?.trim()));
   };
 
@@ -368,6 +382,46 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
     return revealAndCopy(token, setGeneratedServerToken, 'AMSG_SERVER_TOKEN');
   };
 
+  const handleToggleUnifiedInstant = async () => {
+    if (!config?.workerUrl?.trim()) {
+      addToast('先填写并连接 AMSG Worker。', 'error');
+      return;
+    }
+
+    const current = loadInstantConfig();
+    const nextEnabled = !isUnifiedInstantOn();
+    saveInstantConfig({
+      ...current,
+      enabled: nextEnabled,
+      workerUrl: normalizeWorkerUrl(config.workerUrl),
+      clientToken: config.serverToken?.trim() || undefined,
+      // 用户发完即可切后台或锁屏；普通回复直接在 Worker 内生成并用 Web Push 回来。
+      autoTriggerOnSend: nextEnabled,
+      // 统一 Worker 的快速链路固定走 multipart，不再要求另一套 Instant D1 表。
+      useD1BlobStore: false,
+      d1Available: false,
+      d1CheckedAt: undefined,
+      d1CheckedWorkerUrl: undefined,
+    });
+    // 老的 /instant-chat 会进 D1 排程；快速 /instant 会保持 SSE 并并发 Push。
+    // 两者不能同时接管同一轮，但这里只关旧即时路径，不碰主动任务和主动唤醒。
+    await ActiveMsgStore.saveGlobalConfig({ instantChatEnabled: false });
+    patchConfig({ instantChatEnabled: false });
+    setInstantOn(nextEnabled && isInstantConfigReady({
+      ...current,
+      enabled: true,
+      workerUrl: normalizeWorkerUrl(config.workerUrl),
+      clientToken: config.serverToken?.trim() || undefined,
+      autoTriggerOnSend: true,
+    }));
+    addToast(
+      nextEnabled
+        ? '快速即时回复已开启；主动消息与主动唤醒保持原样'
+        : '快速即时回复已关闭；主动消息与主动唤醒保持原样',
+      'success',
+    );
+  };
+
   if (!config) return null;
 
   const isConnected = Boolean(config.initializedAt);
@@ -400,15 +454,15 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
           </p>
         </div>
 
-        {/* 两个 Worker 各管投递的一段；新版 Instant Worker 会在云端执行 2.0 工具。 */}
+        {/* 快速普通回复与定时主动消息现在共用同一台 Worker，但入口和调度完全分开。 */}
         {instantOn ? (
           <div className="bg-cyan-50 border border-cyan-200 rounded-2xl p-4 space-y-2">
-            <div className="font-bold text-cyan-900 text-sm">Instant Push 已与 2.0 协同</div>
+            <div className="font-bold text-cyan-900 text-sm">快速即时回复已与 2.0 协同</div>
             <p className="text-xs leading-relaxed text-cyan-800">
-              你发消息后即使关掉 App，角色仍可在 Instant Worker 里查看、创建、取消或续期主动消息任务；任务结果会随回复同步回这台设备。
+              你发消息后可以直接切后台或锁屏：普通回复由这台 AMSG Worker 立即生成并通过 Web Push 返回；主动消息仍按原来的任务调度运行。
             </p>
             <p className="text-[11px] leading-relaxed text-cyan-700">
-              需要部署随当前站点提供的最新版 Instant Worker；设置里的版本检查会提示旧部署更新。
+              两条路径共用同一个 Worker 地址、推送订阅和密钥，不需要再维护单独的 Instant Worker。
             </p>
           </div>
         ) : null}
@@ -416,26 +470,23 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="font-bold text-slate-700">即时对话（AMSG 2.0）</div>
+              <div className="font-bold text-slate-700">快速即时回复</div>
               <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                你按发送后由自己的 Worker 在云端生成，锁屏或退出后仍会推回来。它与“定时主动消息”是两个独立开关：这里开启不会启用角色主动唤醒。
+                开启后，你按发送即可退出画面或锁屏，回复完成时显示系统通知。它不启用、不关闭、也不重复执行角色的主动消息任务。
               </p>
             </div>
             <button
               type="button"
-              disabled={instantOn || !config.workerUrl?.trim()}
-              onClick={async () => {
-                const next = !config.instantChatEnabled;
-                patchConfig({ instantChatEnabled: next });
-                await ActiveMsgStore.saveGlobalConfig({ instantChatEnabled: next });
-                addToast(next ? '已开启 AMSG 2.0 即时对话' : '已关闭 AMSG 2.0 即时对话', 'success');
-              }}
-              className={`shrink-0 px-3 py-2 rounded-xl text-xs font-bold ${config.instantChatEnabled ? 'bg-slate-200 text-slate-700' : 'bg-slate-900 text-white'} disabled:opacity-40`}
+              disabled={!config.workerUrl?.trim()}
+              onClick={() => { void handleToggleUnifiedInstant(); }}
+              className={`shrink-0 px-3 py-2 rounded-xl text-xs font-bold ${isUnifiedInstantOn() ? 'bg-slate-200 text-slate-700' : 'bg-slate-900 text-white'} disabled:opacity-40`}
             >
-              {config.instantChatEnabled ? '关闭' : '开启'}
+              {isUnifiedInstantOn() ? '关闭' : '开启'}
             </button>
           </div>
-          {instantOn ? <p className="text-xs text-amber-600">请先关闭旧 Instant Push，避免同一句消息走两条云端通道。</p> : null}
+          {!pushStatus?.hasSubscription ? (
+            <p className="text-xs text-amber-600">还需要先点下面的“开启通知与推送订阅”，否则锁屏后没有系统通知。</p>
+          ) : null}
         </div>
 
         <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">

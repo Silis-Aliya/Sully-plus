@@ -1,5 +1,20 @@
 # SullyOS Fork Maintenance Log
 
+## 2026-08-20 VR Reading, Story Diagnosis, And Voice Favorite Entrypoints
+
+- Added per-character VR reading preference UI with search, pagination, automatic full-library fallback, randomized rotation, and last-book avoidance.
+- Added story-theater-only network failure diagnosis. It reports endpoint host, elapsed time and request size without logging authorization headers or story text; unrelated API requests keep their normal error behavior.
+- Extended the existing voice favorites archive to Call and Date. Call bubbles and both Date reading modes can now persist or remove the synthesized audio Blob.
+- Confirmed the previously merged Live2D lip-sync split still independently drives mouth-open amplitude and mouth form; no duplicate patch was added.
+- Verification: 54 focused tests passed and `pnpm build` completed successfully.
+
+## 2026-08-20 VR Safety And Portable Scheduling
+
+- Synced the upstream VR safety behavior: three consecutive model failures pause autonomous visits, stale schedules are removed, and automatic calls have an in-memory minimum-gap guard; manual visits remain immediate.
+- Added visible failure counters, diagnostic log rows, and a copyable VR troubleshooting snapshot that excludes API key contents.
+- VR schedules, last-fire timestamps, and failure counters now participate in both full backup/restore and QuickSync setting upserts/deletes. Character reading preferences and all durable `vr_*` stores continue through their existing character/IndexedDB coverage.
+- Verification: VR, local-settings, QuickSync, and full-backup suites passed (76 tests before the dedicated scheduling assertion), followed by a successful production build.
+
 This file is the handoff log for the Silis-Aliya SullyOS fork. Keep it short, practical, and updated after every upstream merge or custom feature change.
 
 ## Next-Window Prompt
@@ -1335,3 +1350,51 @@ Last recorded stable deployment was `ecc01ab` on remote `master` from 2026-07-21
   - all 16 `utils/workbench*.test.ts` files (49 tests passed)
   - `pnpm build`
   - mobile viewport inspection at 390 x 844; Code header, conversation area, index handle, composer and attachment controls do not overlap.
+
+# 2026-08-20 Upstream Maintenance: Translation, Browser Back, Story Compatibility, And Conversation Restraint
+
+## Adopted / In Integration
+
+- Added the per-character expanded bilingual display preference: when translation is enabled, the original and translation can be rendered together instead of toggling each bubble. The preference is included in full backup/import.
+- Added a browser-history guard for non-native web sessions. An edge-back/browser-back action while an app is open is re-routed to Sully's existing layered `handleBack` behavior instead of immediately leaving the site. Deep-link cleanup preserves the current history state marker.
+- Added an opt-in Story Theater compatibility switch, `omitSamplingParams`. Normal Story Theater requests retain the preset's `top_p`, `frequency_penalty`, and `presence_penalty`; only an explicitly enabled per-story switch omits them for providers that reject advanced sampling fields. Do not restore the old behavior of silently dropping default-valued sampling fields for every provider.
+- Added the confirmed memory-prompt restraint wording:
+  - Pinned notes are remembered context, not a per-turn task list. They should not cause repeated progress checks or scheduling on the user's behalf.
+  - Windowsill anticipations affect emotional texture rather than forcing repeated mentions.
+- Added the confirmed conversational time-framing wording. It is intended only where a user is actively talking to a character; time influences tone and state, but does not automatically end a late-night conversation. Background generators must not receive this line as if a user were present.
+
+## Upstream Work Still To Finish Before Calling This Batch Fully Synced
+
+- VR World per-character reading-preference UI and scheduler selection are not yet merged. The intended behavior is: selected novels are preferred for that character; no selection retains all-library rotation.
+- Story network-failure diagnosis has not yet been brought over. It must scope the extra "story context / assistant prefill / sampling" explanation to `剧情见面生成` requests only; ordinary chat, memory, and other fetches must retain generic diagnosis.
+
+## Verification And Publishing Rule
+
+- A production `pnpm build` passed after the in-progress integration changes.
+- Do not describe the whole batch as released until the remaining VR/diagnosis work is merged, task files are committed without unrelated Memory Palace worktree changes, `master` is pushed, and the Vercel deployment succeeds.
+
+# 2026-08-20 AMSG 2.0 Instant Chat Integration
+
+- Added an independent `instantChatEnabled` global setting. It controls only user-initiated cloud chat; it does not enable the character's scheduled AMSG proactive-message switch and does not replace the fork's local proactive wake scheduler.
+- Added the client `/instant-chat` submission path, persistent pending receipt, explicit failure reporting, and cloud outbox recovery on startup / foreground resume.
+- Kept legacy Instant Push as the priority route when it is still configured, preventing one user message from being submitted to both cloud channels. The settings UI requires users to turn old Instant Push off before enabling AMSG instant chat.
+- Added the Worker `/instant-chat` wrapper and immediate task execution path. Instant tasks bypass only proactive-message gates (disabled scheduling, active-chat yield, music-wake yield, and conversation-expiry checks); ordinary scheduled proactive tasks retain all existing fork guards.
+- Added a bounded per-character `chat_outbox` fallback so a generated reply can be recovered when Web Push is silently lost. No API key, Worker token, message body, or push endpoint is written to diagnostic logs.
+- Updated the generated AMSG Worker bundle.
+- Verification passed:
+  - `pnpm vitest run utils/activeMsgClient.test.ts utils/activeMsgRuntime.test.ts utils/amsgFirePack.test.ts worker/amsg/src/index.test.ts` (371 tests)
+  - `pnpm vitest run utils/amsgInstantChat.test.ts` (30 tests)
+  - `pnpm build`
+- This integration is local only at the time of writing; it has not been committed, pushed, or deployed.
+
+# 2026-08-20 Unified Fast Reply In The AMSG Worker
+
+- Mounted the maintained Instant `/instant`, `/continue`, `/version`, and `/blob/*` handlers inside the existing AMSG Worker bundle. Fast user-initiated replies keep the SSE + backup Web Push delivery contract and no longer pass through the minute-based `scheduled_messages` queue.
+- Scheduled AMSG tasks and the fork's proactive-wake runtime remain separate. Enabling fast reply disables only the older `/instant-chat` takeover switch; it does not enable, disable, cancel, or duplicate proactive tasks.
+- The Active Message 2.0 settings panel now configures the shared AMSG Worker URL as the fast-reply endpoint, reuses `AMSG_SERVER_TOKEN` as the client token, enables send-to-reply behavior, and uses multipart for oversized requests. A second Instant Worker and second D1 blob setup are no longer required.
+- The chat lightning button uses the fast route whenever that route is ready; otherwise it retains the local foreground path.
+- Updated the delivery-mailbox test to use a live timestamp instead of an already-expired fixed fixture date.
+- Verification passed:
+  - `pnpm vitest run worker/amsg/src/deliveryMailbox.test.ts worker/amsg/src/index.test.ts utils/instantPushClient.test.ts utils/amsgInstantChat.test.ts` (177 tests)
+  - `pnpm build`
+- This integration is local only at the time of writing; both the website and the AMSG Worker bundle must be published before the new switch works on the deployed app.

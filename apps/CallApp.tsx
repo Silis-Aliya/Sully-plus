@@ -104,6 +104,8 @@ import {
   type CompanionAvatarSource,
 } from '../utils/companionAvatar';
 import { addCompanionModelOutfit, addUploadedCompanionOutfit } from '../utils/companionWardrobe';
+import VoiceFavoriteActionSheet from '../components/voice/VoiceFavoriteActionSheet';
+import { getVoiceFavorite, removeVoiceFavorite, saveVoiceFavorite } from '../utils/voiceFavorites';
 type CallState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'ended' | 'error';
 type CallMode = 'voice' | 'video';
 type VideoCallLayout = 'stage' | 'story' | 'mini';
@@ -534,6 +536,9 @@ const CallApp: React.FC = () => {
   const sttSessionRef = useRef<SttSession | null>(null);
   const sttSupported = useMemo(() => isSttSupported(), []);
   const [audioUrl, setAudioUrl] = useState<string>('');
+  const [voiceFavoriteTarget, setVoiceFavoriteTarget] = useState<CallBubble | null>(null);
+  const [voiceFavoriteSaved, setVoiceFavoriteSaved] = useState(false);
+  const [voiceFavoriteBusy, setVoiceFavoriteBusy] = useState(false);
   const [traceId, setTraceId] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
@@ -1471,6 +1476,33 @@ const CallApp: React.FC = () => {
       console.error('[Call] download audio failed', error);
       addToast('语音文件已失效或无法读取，请重新生成后再下载', 'error');
     }
+  };
+  const callFavoriteKey = (bubble: CallBubble) => `${currentSessionId}:${bubble.id}`;
+  const openCallVoiceFavorite = async (bubble: CallBubble) => {
+    setVoiceFavoriteTarget(bubble);
+    setVoiceFavoriteSaved(!!(await getVoiceFavorite('call', callFavoriteKey(bubble))));
+  };
+  const toggleCallVoiceFavorite = async () => {
+    const bubble = voiceFavoriteTarget;
+    if (!bubble?.audioUrl || !selectedChar) return;
+    setVoiceFavoriteBusy(true);
+    try {
+      const sourceKey = callFavoriteKey(bubble);
+      if (voiceFavoriteSaved) {
+        await removeVoiceFavorite('call', sourceKey);
+        setVoiceFavoriteSaved(false);
+        addToast('已取消收藏语音', 'success');
+      } else {
+        const blob = await fetchBlobForShare(bubble.audioUrl, 'audio/mpeg');
+        const parsed = extractVoiceTag(bubble.text);
+        await saveVoiceFavorite({ source: 'call', sourceKey, charId: selectedChar.id, charName: selectedChar.name, sourceTimestamp: bubble.timestamp, originalText: parsed.display || bubble.text, spokenText: cleanVoiceMarkupForDisplay(parsed.voiceText) || parsed.display || bubble.text, language: voiceLang || undefined, blob });
+        setVoiceFavoriteSaved(true);
+        addToast('已收藏到语音收藏', 'success');
+      }
+    } catch (error) {
+      console.error('[Call] favorite audio failed', error);
+      addToast('收藏语音失败，请重新生成后再试', 'error');
+    } finally { setVoiceFavoriteBusy(false); }
   };
   useEffect(() => {
     if (!callStartedAt || ['idle', 'ended'].includes(callState)) return;
@@ -3357,6 +3389,7 @@ ${sentencePlan}`;
               <div className="mt-2 flex gap-2 flex-wrap">
                 {bubble.audioUrl && <button onClick={() => { playAudio(bubble.audioUrl, bubble.performanceTimeline, estimateSpeechMs(bubble.text)); trackEvent('重播一条通话语音'); }} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">重播语音</button>}
                 {bubble.audioUrl && <button onClick={() => handleDownloadCallAudio(bubble.audioUrl, bubble.timestamp)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">下载</button>}
+                {bubble.audioUrl && <button onClick={() => void openCallVoiceFavorite(bubble)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">收藏</button>}
                 {isLatest && <button onClick={() => handleRerollAssistant(bubble)} disabled={!!rerollingBubbleId} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15 disabled:opacity-40">{rerollingBubbleId === bubble.id ? '换一种说法…' : '换个说法'}</button>}
               </div>
             )}
@@ -3476,6 +3509,8 @@ ${sentencePlan}`;
         onPause={() => { setIsAudioPlaying(false); clearPerformanceCueTimers(); if (callState === 'speaking') setCallState('listening'); }}
         onEnded={() => { setIsAudioPlaying(false); clearPerformanceCueTimers(); if (callState === 'speaking') setCallState('listening'); }}
       />
+      <VoiceFavoriteActionSheet open={!!voiceFavoriteTarget} favorited={voiceFavoriteSaved} busy={voiceFavoriteBusy}
+        title="通话语音" preview={voiceFavoriteTarget?.text} onToggle={() => void toggleCallVoiceFavorite()} onClose={() => setVoiceFavoriteTarget(null)} />
       {showUserCameraModePicker && callMode === 'video' && (
         <UserCameraModePicker
           mode={userCameraMode}

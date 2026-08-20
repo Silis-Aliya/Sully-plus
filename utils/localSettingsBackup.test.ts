@@ -133,6 +133,21 @@ describe('localSettingsBackup', () => {
         expect(localStorage.getItem('amsg2_global_config_v1')).toBe(config);
     });
 
+    it('backs up and incrementally restores VR scheduler state', () => {
+        const schedule = '{"char-1":{"charId":"char-1","intervalMs":3600000}}';
+        localStorage.setItem('vr_schedules', schedule);
+        localStorage.setItem('vr_last_fire', '{"char-1":123}');
+        localStorage.setItem('vr_fail_streak', '{"char-1":2}');
+        const snapshot = exportLocalStorageSettings();
+        expect(snapshot).toMatchObject({ vr_schedules: schedule, vr_last_fire: '{"char-1":123}', vr_fail_streak: '{"char-1":2}' });
+        localStorage.clear();
+        applyLocalStorageSettingsPatch(snapshot, []);
+        expect(localStorage.getItem('vr_schedules')).toBe(schedule);
+        applyLocalStorageSettingsPatch({}, ['vr_schedules', 'vr_last_fire', 'vr_fail_streak']);
+        expect(localStorage.getItem('vr_schedules')).toBeNull();
+        expect(localStorage.getItem('vr_fail_streak')).toBeNull();
+    });
+
     it('marks a synced Active Message config deletion so stale device data stays deleted', () => {
         localStorage.setItem('amsg2_global_config_v1', '{"userId":"old"}');
 

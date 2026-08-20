@@ -11,9 +11,12 @@ import { clearDateResumeAttempt } from '../../utils/dateSessionRecovery';
 import { cleanTextForTts, VALID_EMOTIONS } from '../../utils/minimaxTts';
 import { synthesizeSpeech, characterHasVoice } from '../../utils/ttsRouter';
 import { resolveTtsProvider } from '../../utils/ttsProvider';
-import { cleanTextForTtsFish } from '../../utils/fishAudioTts';
+import { cleanTextForTtsFish, stripFishMarkupForDisplay } from '../../utils/fishAudioTts';
 import { planNovelLoadMore } from '../../utils/dateSessionHistory';
 import { getPendingReplyText } from '../../utils/pendingReply';
+import { fetchBlobForShare } from '../../utils/shareExport';
+import VoiceFavoriteActionSheet from '../voice/VoiceFavoriteActionSheet';
+import { getVoiceFavorite, removeVoiceFavorite, saveVoiceFavorite } from '../../utils/voiceFavorites';
 
 // 语音情绪标记 [v:xxx]：跟立绘情绪 [emotion] 分开的独立通道。立绘的 happy 是
 // 夸张的表情、语音的 happy 是音色情绪，两者强度/语义差异大，不能一概而论。
@@ -194,7 +197,7 @@ const DateSession: React.FC<DateSessionProps> = ({
     const [dateVoicePlaying, setDateVoicePlaying] = useState(false);
     const [galVoiceLoading, setGalVoiceLoading] = useState(false);
     const [showVoiceLangPicker, setShowVoiceLangPicker] = useState(false);
-    const voiceCacheRef = useRef<Record<string, string>>({});
+    const voiceCacheRef = useRef<Record<string, { url: string; spokenText: string }>>({});
     const [novelVoiceLoading, setNovelVoiceLoading] = useState<Set<string>>(new Set());
     const [novelPlayingId, setNovelPlayingId] = useState<string | null>(null);
     const [novelVisibleCount, setNovelVisibleCount] = useState(NOVEL_MESSAGE_WINDOW_SIZE);
@@ -205,11 +208,14 @@ const DateSession: React.FC<DateSessionProps> = ({
     // voice effect (which keys off currentText only). undefined = 不传情绪，自然朗读。
     // A ref so it doesn't churn the effect's deps.
     const currentLineEmotionRef = useRef<string | undefined>(undefined);
+    const [voiceFavoriteTarget, setVoiceFavoriteTarget] = useState<{ sourceKey: string; originalText: string; sourceTimestamp: number; voiceEmotion?: string } | null>(null);
+    const [voiceFavoriteSaved, setVoiceFavoriteSaved] = useState(false);
+    const [voiceFavoriteBusy, setVoiceFavoriteBusy] = useState(false);
 
     const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
     const VOICE_LANG_OPTIONS = [{v:'',l:'默认'},{v:'en',l:'EN'},{v:'ja',l:'JP'},{v:'ko',l:'KR'},{v:'fr',l:'FR'},{v:'es',l:'ES'}];
 
-    const translateAndSpeak = async (text: string, emotion?: string): Promise<string | null> => {
+    const translateAndSpeak = async (text: string, emotion?: string): Promise<{ url: string; spokenText: string } | null> => {
         if (!characterHasVoice(char, apiConfig)) return null;
         try {
             // 鱼声保留 inline cue，用 Fish 专属清洗；MiniMax 走原来的清洗。
@@ -232,11 +238,12 @@ const DateSession: React.FC<DateSessionProps> = ({
                     if (translated) ttsText = translated;
                 } catch { /* use original */ }
             }
-            return await synthesizeSpeech(ttsText, char, apiConfig, {
+            const url = await synthesizeSpeech(ttsText, char, apiConfig, {
                 languageBoost: voiceLang || undefined,
                 groupId: apiConfig.minimaxGroupId || undefined,
                 emotion,
             });
+            return { url, spokenText: resolveTtsProvider(apiConfig) === 'fishaudio' ? stripFishMarkupForDisplay(ttsText) : ttsText };
         } catch (err: any) {
             console.warn('Date TTS failed:', err?.message);
             return null;
@@ -262,18 +269,18 @@ const DateSession: React.FC<DateSessionProps> = ({
         const cacheKey = dialogueText;
         const play = async () => {
             // Check cache first
-            let url = voiceCacheRef.current[cacheKey];
-            if (!url) {
+            let speech = voiceCacheRef.current[cacheKey];
+            if (!speech) {
                 setGalVoiceLoading(true);
-                url = await translateAndSpeak(dialogueText, currentLineEmotionRef.current) || '';
+                speech = await translateAndSpeak(dialogueText, currentLineEmotionRef.current) || undefined;
                 if (cancelled) return;
                 setGalVoiceLoading(false);
-                if (!url) return;
-                voiceCacheRef.current[cacheKey] = url;
+                if (!speech) return;
+                voiceCacheRef.current[cacheKey] = speech;
             }
             if (cancelled) return;
             if (!dateAudioRef.current) dateAudioRef.current = new Audio();
-            dateAudioRef.current.src = url;
+            dateAudioRef.current.src = speech.url;
             dateAudioRef.current.onended = () => setDateVoicePlaying(false);
             dateAudioRef.current.play().catch(() => {});
             setDateVoicePlaying(true);
@@ -293,16 +300,16 @@ const DateSession: React.FC<DateSessionProps> = ({
         }
         const dialogueText = extractDialogueText(currentText);
         const cacheKey = dialogueText;
-        let url = voiceCacheRef.current[cacheKey];
-        if (!url) {
+        let speech = voiceCacheRef.current[cacheKey];
+        if (!speech) {
             setGalVoiceLoading(true);
-            url = await translateAndSpeak(dialogueText, currentLineEmotionRef.current) || '';
+            speech = await translateAndSpeak(dialogueText, currentLineEmotionRef.current) || undefined;
             setGalVoiceLoading(false);
-            if (!url) { addToast('语音合成失败，请稍后重试', 'error'); return; }
-            voiceCacheRef.current[cacheKey] = url;
+            if (!speech) { addToast('语音合成失败，请稍后重试', 'error'); return; }
+            voiceCacheRef.current[cacheKey] = speech;
         }
         if (!dateAudioRef.current) dateAudioRef.current = new Audio();
-        dateAudioRef.current.src = url;
+        dateAudioRef.current.src = speech.url;
         dateAudioRef.current.onended = () => setDateVoicePlaying(false);
         dateAudioRef.current.play().catch(() => {});
         setDateVoicePlaying(true);
@@ -313,8 +320,8 @@ const DateSession: React.FC<DateSessionProps> = ({
     // 且命中同一条持久缓存（ttsCache/IndexedDB）——退出见面再进来点旧台词也能从本地缓存秒取，
     // 不必按不同的 key 重新联网合成。
     const handleNovelLinePlay = async (lineKey: string, dialogueText: string, voiceEmotion?: string) => {
-        const cachedUrl = voiceCacheRef.current[dialogueText];
-        if (cachedUrl) {
+        const cached = voiceCacheRef.current[dialogueText];
+        if (cached) {
             // Already have URL (from GAL or previous novel play), just play/pause
             if (!dateAudioRef.current) dateAudioRef.current = new Audio();
             if (novelPlayingId === lineKey) {
@@ -322,22 +329,53 @@ const DateSession: React.FC<DateSessionProps> = ({
                 setNovelPlayingId(null);
                 return;
             }
-            dateAudioRef.current.src = cachedUrl;
+            dateAudioRef.current.src = cached.url;
             dateAudioRef.current.onended = () => setNovelPlayingId(null);
             dateAudioRef.current.play().catch(() => {});
             setNovelPlayingId(lineKey);
             return;
         }
         setNovelVoiceLoading(prev => new Set(prev).add(lineKey));
-        const url = await translateAndSpeak(dialogueText, voiceEmotion);
+        const speech = await translateAndSpeak(dialogueText, voiceEmotion);
         setNovelVoiceLoading(prev => { const n = new Set(prev); n.delete(lineKey); return n; });
-        if (!url) { addToast('语音合成失败，请稍后重试', 'error'); return; }
-        voiceCacheRef.current[dialogueText] = url;
+        if (!speech) { addToast('语音合成失败，请稍后重试', 'error'); return; }
+        voiceCacheRef.current[dialogueText] = speech;
         if (!dateAudioRef.current) dateAudioRef.current = new Audio();
-        dateAudioRef.current.src = url;
+        dateAudioRef.current.src = speech.url;
         dateAudioRef.current.onended = () => setNovelPlayingId(null);
         dateAudioRef.current.play().catch(() => {});
         setNovelPlayingId(lineKey);
+    };
+
+    const openDateVoiceFavorite = async (target: { sourceKey: string; originalText: string; sourceTimestamp: number; voiceEmotion?: string }) => {
+        setVoiceFavoriteTarget(target);
+        setVoiceFavoriteSaved(!!(await getVoiceFavorite('date', target.sourceKey).catch(() => null)));
+    };
+    const toggleDateVoiceFavorite = async () => {
+        const target = voiceFavoriteTarget;
+        if (!target || voiceFavoriteBusy) return;
+        setVoiceFavoriteBusy(true);
+        try {
+            if (voiceFavoriteSaved) {
+                await removeVoiceFavorite('date', target.sourceKey);
+                setVoiceFavoriteSaved(false);
+                addToast('已取消收藏语音', 'success');
+            } else {
+                let speech = voiceCacheRef.current[target.originalText];
+                if (!speech) {
+                    speech = await translateAndSpeak(target.originalText, target.voiceEmotion) || undefined;
+                    if (speech) voiceCacheRef.current[target.originalText] = speech;
+                }
+                if (!speech) throw new Error('语音合成失败');
+                const blob = await fetchBlobForShare(speech.url, 'audio/mpeg');
+                await saveVoiceFavorite({ source: 'date', sourceKey: target.sourceKey, charId: char.id, charName: char.name, sourceTimestamp: target.sourceTimestamp, originalText: target.originalText, spokenText: speech.spokenText, language: voiceLang || undefined, blob });
+                setVoiceFavoriteSaved(true);
+                addToast('已收藏见面语音', 'success');
+            }
+        } catch (error) {
+            console.error('[Date] favorite audio failed', error);
+            addToast('收藏失败，请确认语音可正常播放', 'error');
+        } finally { setVoiceFavoriteBusy(false); }
     };
 
     // Back Handler
@@ -992,7 +1030,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                         <p className={`flex-1 whitespace-pre-wrap font-serif text-[18px] text-justify leading-loose tracking-wide pl-4 ${char.dateLightReading ? 'text-stone-700 border-l-2 border-stone-200' : 'text-slate-200 drop-shadow-md border-l-2 border-white/10'}`}>{cleanLine}</p>
                                                         {/* Voice button: only for dialogue lines, not opening */}
                                                         {voiceEnabled && lineIsDialogue && !isOpeningMsg && (
-                                                            <button
+                                                            <><button
                                                                 onClick={(e) => { e.stopPropagation(); const { voiceEmotion: lineVoiceEmotion, rest: lineRest } = extractVoiceEmotionTag(line); handleNovelLinePlay(lineKey, extractDialogueText(lineRest), lineVoiceEmotion); }}
                                                                 className={`shrink-0 mt-2 w-7 h-7 rounded-full flex items-center justify-center transition-all active:scale-90 select-none ${
                                                                     novelPlayingId === lineKey
@@ -1007,7 +1045,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                                                 ) : (
                                                                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
                                                                 )}
-                                                            </button>
+                                                            </button><button onClick={(e) => { e.stopPropagation(); const parsed = extractVoiceEmotionTag(line); void openDateVoiceFavorite({ sourceKey: `${char.id}:${lineKey}`, originalText: extractDialogueText(parsed.rest), sourceTimestamp: msg.timestamp, voiceEmotion: parsed.voiceEmotion }); }} title="收藏语音" className="shrink-0 mt-2 h-7 rounded-full px-2 text-[10px] bg-white/5 text-white/45">收藏</button></>
                                                         )}
                                                     </div>
                                                 );
@@ -1034,7 +1072,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                     <div className="bg-white/90 text-black px-4 py-1 rounded-sm text-xs font-bold tracking-widest uppercase shadow-[0_4px_10px_rgba(0,0,0,0.3)] transform -skew-x-12">{char.name}</div>
                                     {/* Voice play button next to name */}
                                     {voiceEnabled && !isTextAnimating && !isShowingOpening && isDialogueLine(currentText) && (
-                                        <button
+                                        <><button
                                             onClick={(e) => { e.stopPropagation(); handleGalVoiceToggle(); }}
                                             className={`w-6 h-6 rounded-full flex items-center justify-center transition-all active:scale-90 ${dateVoicePlaying ? 'bg-white/30 text-white/90' : 'bg-white/10 text-white/40 hover:bg-white/20'}`}
                                         >
@@ -1045,7 +1083,7 @@ const DateSession: React.FC<DateSessionProps> = ({
                                             ) : (
                                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.3 2.84A1.5 1.5 0 0 0 4 4.11v11.78a1.5 1.5 0 0 0 2.3 1.27l9.344-5.891a1.5 1.5 0 0 0 0-2.538L6.3 2.841Z" /></svg>
                                             )}
-                                        </button>
+                                        </button><button onClick={(e) => { e.stopPropagation(); const originalText = extractDialogueText(currentText); void openDateVoiceFavorite({ sourceKey: `${char.id}:visual:${originalText}`, originalText, sourceTimestamp: Date.now(), voiceEmotion: currentLineEmotionRef.current }); }} className="h-6 rounded-full bg-white/10 px-2 text-[9px] text-white/55">收藏</button></>
                                     )}
                                 </div>
                                 <p className="text-white/90 text-[16px] leading-relaxed font-light tracking-wide drop-shadow-md mt-2">{displayedText}{isTextAnimating && <span className="inline-block w-2 h-4 bg-white/70 ml-1 animate-pulse align-middle"></span>}</p>
@@ -1093,6 +1131,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                     <DateSettings char={char} onBack={() => setShowSettings(false)} />
                 </div>
             )}
+
+            <VoiceFavoriteActionSheet open={!!voiceFavoriteTarget} favorited={voiceFavoriteSaved} busy={voiceFavoriteBusy} title="见面语音" preview={voiceFavoriteTarget?.originalText} onToggle={() => void toggleDateVoiceFavorite()} onClose={() => { if (!voiceFavoriteBusy) setVoiceFavoriteTarget(null); }} />
 
             {/* Exit Modal */}
             <Modal isOpen={showExitModal} title="暂时离开?" onClose={() => setShowExitModal(false)} footer={<div className="flex gap-3 w-full"><button onClick={() => setShowExitModal(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl text-slate-600 font-bold">留在这里</button><button onClick={handleExitClick} className="flex-1 py-3 bg-slate-800 text-white rounded-2xl font-bold">保存并退出</button></div>}>

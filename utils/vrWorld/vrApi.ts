@@ -18,6 +18,10 @@ export interface VRApiCall {
     ok: boolean;
     ms: number;
     error?: string;
+    charId?: string;
+    kind?: 'skipped' | 'throttled' | 'tripped';
+    note?: string;
+    charEnabled?: boolean;
 }
 
 // 旧版本曾把数据放在 localStorage，这里做一次性迁移到 IndexedDB。

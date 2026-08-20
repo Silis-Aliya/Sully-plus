@@ -154,6 +154,7 @@ import {
   stampMailboxPayloads,
   type DeliveryMailboxDb,
 } from './deliveryMailbox';
+import instantPushWorker from '../../instant-push/src/index';
 
 interface Env extends NativeFcmEnv {
   AMSG_MASTER_KEY: string;
@@ -1998,11 +1999,39 @@ export default {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
     const method = request.method.toUpperCase();
 
+    // 快速普通回复通道：把原 Instant Push 挂进同一个 AMSG Worker。它直接保持 SSE
+    // 请求并并发发送 Web Push，不经过 scheduled_messages / 分钟 cron；主动消息 2.0
+    // 仍只走下面的任务调度，两条链路只共享 VAPID 与浏览器订阅，互不改对方开关/任务。
+    //
+    // AMSG_SERVER_TOKEN 复用成 Instant 的 client token，用户只需维护一份 secret。
+    // multipart 是默认的大回复运输方式，因此这里不要求为快速通道再建第二套 D1 表。
+    const isDirectInstantPath = pathname === '/instant'
+      || pathname === '/continue'
+      || pathname === '/version'
+      || pathname.startsWith('/blob/');
+    if (isDirectInstantPath) {
+      if (!ctx || typeof ctx.waitUntil !== 'function') {
+        return jsonWithCors(500, {
+          success: false,
+          error: { code: 'EXECUTION_CONTEXT_MISSING', message: '快速回复通道缺少 Worker execution context' },
+        });
+      }
+      return instantPushWorker.fetch(request, {
+        ...env,
+        AMSG_CLIENT_TOKEN: env.AMSG_SERVER_TOKEN,
+        AMSG_OVERSIZE_TRANSPORT: 'multipart',
+        AMSG_ENABLE_D1_BLOBSTORE: 'false',
+      }, ctx);
+    }
+
     if (pathname.endsWith('/config-check')) {
       if (method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS_HEADERS });
       // 刻意不校验 X-Client-Token：worker 配了口令而前端没填正是要诊断的情形之一，
       // 校验了就查不出来。作为交换，这里只回「配没配」，不回任何值。
-      return jsonWithCors(200, { success: true, data: { ...inspectWorkerEnv(env), instantChat: true } });
+      return jsonWithCors(200, {
+        success: true,
+        data: { ...inspectWorkerEnv(env), instantChat: true, directInstant: true },
+      });
     }
 
     if (pathname.endsWith('/debug')) {

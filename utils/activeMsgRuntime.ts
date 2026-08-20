@@ -1655,7 +1655,7 @@ const handleDeepLink = () => {
   if (charId !== null || openApp !== null) {
     currentUrl.searchParams.delete('openApp');
     currentUrl.searchParams.delete('activeMsgCharId');
-    window.history.replaceState({}, '', currentUrl.toString());
+    window.history.replaceState(window.history.state, '', currentUrl.toString());
   }
 };
 

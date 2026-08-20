@@ -4,14 +4,15 @@ import {
     ArrowLeft, Plus, Trash, BookOpen, Planet, Clock, Play, CaretRight, X,
     UploadSimple, PencilSimple, FlipHorizontal, CaretLeft, Sparkle,
     CircleNotch, TextAa, Palette, Pause, MusicNotes, Queue, Question, Check, Gear,
-    SpeakerHigh, SpeakerSlash,
+    SpeakerHigh, SpeakerSlash, MagnifyingGlass,
 } from '@phosphor-icons/react';
 import TheaterPanel from './theater/TheaterPanel';
 import { CreatorIframe, type ChibiResult } from '../components/Like520Event';
 import { useMusic, type Song } from '../context/MusicContext';
 import { DB } from '../utils/db';
 import { useResilientAssetUrl, attachAudioMirrorFallback } from '../utils/assetUrl';
-import { VRScheduler } from '../utils/vrWorld/scheduler';
+import { VRScheduler, VR_FAIL_LIMIT } from '../utils/vrWorld/scheduler';
+import { collectVRDiagnostics } from '../utils/vrWorld/diagnostics';
 import { VR_ROOMS, getRoom, VR_DEFAULT_INTERVAL_MIN, SIGNAL_EPIGRAPH, signalActFor, signalActRanges, SIGNAL_POEMS_PER_BOOKLET, SIGNAL_EVENT_ENDED, SIGNAL_MEMORIAL_CLOSING } from '../utils/vrWorld/constants';
 import { buildNovelAsync, groupAnnotationsBySeg, getBookmark } from '../utils/vrWorld/novel';
 import { decodeBytes } from '../utils/vrWorld/decodeText';
@@ -146,6 +147,8 @@ const VRWorldApp: React.FC = () => {
     const [showHelp, setShowHelp] = useState(false);
     // 启用流程：设定 chibi 后回调启用
     const [pendingEnable, setPendingEnable] = useState<string | null>(null);
+    const [readingPreferenceCharId, setReadingPreferenceCharId] = useState<string | null>(null);
+    const readingPreferenceChar = useMemo(() => characters.find(char => char.id === readingPreferenceCharId) || null, [characters, readingPreferenceCharId]);
 
     // 初次进入彼方：自动弹出玩法说明（看过一次后不再自动弹）
     useEffect(() => {
@@ -233,6 +236,7 @@ const VRWorldApp: React.FC = () => {
 
     // 返回键：有弹层先关弹层（阅读器/房间/上传/捏人），而不是直接退回桌面
     useEffect(() => registerBackHandler(() => {
+        if (readingPreferenceCharId) { setReadingPreferenceCharId(null); return true; }
         if (chibiEditChar) { setChibiEditChar(null); setPendingEnable(null); return true; }
         if (chibiEditUser) { setChibiEditUser(false); return true; }
         if (showUpload) { setShowUpload(false); return true; }
@@ -240,7 +244,7 @@ const VRWorldApp: React.FC = () => {
         if (readerNovel) { setReaderNovel(null); return true; }
         if (enterRoom) { setEnterRoom(null); return true; }
         return false; // 无弹层 → 交回默认（关闭 App）
-    }), [registerBackHandler, chibiEditChar, chibiEditUser, showUpload, readerJump, readerNovel, enterRoom]);
+    }), [registerBackHandler, readingPreferenceCharId, chibiEditChar, chibiEditUser, showUpload, readerJump, readerNovel, enterRoom]);
 
     // 从动态/批注点回原文：peek 模式打开阅读器跳到该段，不动用户书签
     const jumpToAnnotation = useCallback((novelId: string | undefined, segIdx: number) => {
@@ -378,11 +382,11 @@ const VRWorldApp: React.FC = () => {
                         <UserVRPanel userProfile={userProfile} updateUserProfile={updateUserProfile}
                             onEditChibi={() => setChibiEditUser(true)} onBroadcast={onUserVRBroadcast} addToast={addToast} />
                         <SettingsView characters={characters} updateCharacter={updateCharacter} addToast={addToast}
-                            novelCount={novels.length} onReload={reloadAll}
-                            onRequestEnable={requestEnable} onEditChibi={setChibiEditChar} />
+                            novels={novels} onReload={reloadAll} onRequestEnable={requestEnable}
+                            onEditChibi={setChibiEditChar} onEditReadingPreference={char => setReadingPreferenceCharId(char.id)} />
                     </div>
                 ) : (
-                    <VRApiSettings apiPresets={apiPresets} chatApi={apiConfig} addToast={addToast} />
+                    <VRApiSettings apiPresets={apiPresets} chatApi={apiConfig} addToast={addToast} characters={characters} />
                 )}
             </div>
 
@@ -393,6 +397,13 @@ const VRWorldApp: React.FC = () => {
                     characters={characters} userName={userName} onUserBoardPost={onUserBoardPost} addToast={addToast} />
             )}
             {showHelp && <HelpModal onClose={() => setShowHelp(false)} />}
+            {readingPreferenceChar && <NovelPreferenceModal char={readingPreferenceChar} novels={novels}
+                onClose={() => setReadingPreferenceCharId(null)} onSave={novelIds => {
+                    const current = readingPreferenceChar.vrState || { enabled: false, intervalMinutes: VR_DEFAULT_INTERVAL_MIN };
+                    updateCharacter(readingPreferenceChar.id, { vrState: { ...current, preferredNovelIds: novelIds.length ? novelIds : undefined } });
+                    addToast?.(novelIds.length ? `已为 ${readingPreferenceChar.name} 优先选择 ${novelIds.length} 本书` : `${readingPreferenceChar.name} 将从全书库自动轮换`, 'success');
+                    setReadingPreferenceCharId(null);
+                }} />}
             {readerNovel && <ReaderModal novel={readerNovel} characters={characters} onClose={() => setReaderNovel(null)} />}
             {readerJump && <ReaderModal novel={readerJump.novel} characters={characters} initialSeg={readerJump.seg} peek onClose={() => setReaderJump(null)} />}
             {showUpload && (
@@ -3292,18 +3303,43 @@ const UserVRPanel: React.FC<{
 
 // ============ 接入设置 ============
 const INTERVAL_OPTIONS = [60, 120, 180, 360, 720];
+const NovelPreferenceModal: React.FC<{ char: CharacterProfile; novels: VRWorldNovel[]; onSave: (ids: string[]) => void; onClose: () => void }> = ({ char, novels, onSave, onClose }) => {
+    const validIds = useMemo(() => new Set(novels.map(novel => novel.id)), [novels]);
+    const [selected, setSelected] = useState<Set<string>>(() => new Set((char.vrState?.preferredNovelIds || []).filter(id => validIds.has(id))));
+    const [query, setQuery] = useState('');
+    const [page, setPage] = useState(0);
+    const filtered = useMemo(() => { const q = query.trim().toLocaleLowerCase(); return q ? novels.filter(n => `${n.title}\n${n.author || ''}`.toLocaleLowerCase().includes(q)) : novels; }, [novels, query]);
+    const pageCount = Math.max(1, Math.ceil(filtered.length / 18));
+    const currentPage = Math.min(page, pageCount - 1);
+    const visible = filtered.slice(currentPage * 18, currentPage * 18 + 18);
+    const toggle = (id: string) => setSelected(current => { const next = new Set(current); next.has(id) ? next.delete(id) : next.add(id); return next; });
+    return <div className="fixed inset-0 z-[340] flex items-end justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+        <div className="flex h-[min(86dvh,760px)] w-full max-w-md flex-col overflow-hidden rounded-t-[28px]" style={{ background: 'linear-gradient(180deg,#1d1a31,#0f0d1c)', paddingBottom: vrBottomPad('0px') }} onClick={e => e.stopPropagation()}>
+            <header className="shrink-0 border-b border-white/10 px-4 pb-3 pt-4">
+                <div className="flex items-center gap-3"><div className="min-w-0 flex-1"><h2 className="text-[15px] font-bold">{char.name} 的阅读偏好</h2><p className="mt-1 text-[10.5px] text-indigo-200/55">不选择就是全书库自动轮换；选中后优先在这些书里轮换。</p></div><button onClick={onClose} className="grid h-9 w-9 place-items-center rounded-full"><X size={18}/></button></div>
+                <label className="mt-3 flex h-10 items-center gap-2 rounded-xl bg-white/[.07] px-3"><MagnifyingGlass size={15}/><input value={query} onChange={e => { setQuery(e.target.value); setPage(0); }} placeholder={`搜索 ${novels.length} 本小说`} className="min-w-0 flex-1 bg-transparent text-[12px] outline-none"/></label>
+                <div className="mt-2 text-[10px] text-indigo-200/45">{selected.size ? `已优先 ${selected.size} 本` : '当前：自动轮换全部小说'}</div>
+            </header>
+            <main className="vr-reader-scroll min-h-0 flex-1 overflow-y-auto px-4 py-1">{visible.length ? visible.map(novel => { const active = selected.has(novel.id); const bookmark = getBookmark(char.vrState?.novelBookmarks, novel.id); return <button key={novel.id} onClick={() => toggle(novel.id)} className="flex w-full items-center gap-3 border-b border-white/[.07] py-3 text-left"><span className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border ${active ? 'border-indigo-400 bg-indigo-400' : 'border-white/20'}`}>{active && <Check size={12}/>}</span><span className="min-w-0 flex-1"><span className="block truncate text-[12.5px] font-semibold">{novel.title}</span><span className="block truncate text-[9.5px] text-indigo-200/40">{novel.author ? `${novel.author} · ` : ''}{novel.segments.length} 段{bookmark ? ` · ${Math.round(bookmark / Math.max(1, novel.segments.length) * 100)}%` : ''}</span></span></button>; }) : <div className="grid h-40 place-items-center text-[11px] text-indigo-200/35">没有找到这本书</div>}</main>
+            <footer className="shrink-0 border-t border-white/10 px-4 pt-3">{pageCount > 1 && <div className="mb-3 flex items-center justify-center gap-4 text-[10px]"><button onClick={() => setPage(v => Math.max(0, v - 1))} disabled={!currentPage}><CaretLeft/></button><span>{currentPage + 1} / {pageCount}</span><button onClick={() => setPage(v => Math.min(pageCount - 1, v + 1))} disabled={currentPage >= pageCount - 1}><CaretRight/></button></div>}<div className="flex gap-2"><button onClick={() => setSelected(new Set())} className="flex-1 rounded-xl border border-white/15 py-2.5 text-[12px]">恢复自动轮换</button><button onClick={() => onSave([...selected])} className="flex-1 rounded-xl bg-indigo-500 py-2.5 text-[12px] font-bold">保存偏好</button></div></footer>
+        </div>
+    </div>;
+};
 const SettingsView: React.FC<{
     characters: CharacterProfile[];
     updateCharacter: (id: string, updates: Partial<CharacterProfile>) => void;
     addToast?: (msg: string, type?: any) => void;
-    novelCount: number; onReload: () => void;
+    novels: VRWorldNovel[]; onReload: () => void;
     onRequestEnable: (char: CharacterProfile) => void;
     onEditChibi: (char: CharacterProfile) => void;
-}> = ({ characters, updateCharacter, addToast, novelCount, onReload, onRequestEnable, onEditChibi }) => {
+    onEditReadingPreference: (char: CharacterProfile) => void;
+}> = ({ characters, updateCharacter, addToast, novels, onReload, onRequestEnable, onEditChibi, onEditReadingPreference }) => {
     const [pickFor, setPickFor] = useState<CharacterProfile | null>(null);
     // 接入列表的分组筛选（characters 由 props 传入，这里单独取 characterGroups 即可）
     const { characterGroups } = useOS();
     const [settingsGroupId, setSettingsGroupId] = useState<string>(GROUP_FILTER_ALL);
+    const novelCount = novels.length;
+    const validNovelIds = useMemo(() => new Set(novels.map(novel => novel.id)), [novels]);
     const go = (room?: VRRoomId) => {
         if (!pickFor) return;
         VRScheduler.triggerNow(pickFor.id, room);
@@ -3326,6 +3362,7 @@ const SettingsView: React.FC<{
         <div className="space-y-3">
             <p className="text-[11px] text-indigo-300/60 leading-relaxed">
                 启用后，角色会按设定的间隔自己登入「彼方」，在图书馆读你上传的小说、写批注。每次活动会在 ta 的聊天里留下动态卡片，也会被记忆总结捕捉。
+                连续 {VR_FAIL_LIMIT} 次调不通模型会自动暂停，不会一直空跑。
                 {novelCount === 0 && <span className="text-amber-300/80"> 书库还空着，先去「书库」上传一本。</span>}
             </p>
             {characters.length === 0 && <p className="text-[11px] text-indigo-300/50 py-4 text-center">还没有角色。</p>}
@@ -3339,6 +3376,8 @@ const SettingsView: React.FC<{
                 const enabled = !!st?.enabled;
                 const interval = st?.intervalMinutes || VR_DEFAULT_INTERVAL_MIN;
                 const chibi = getChibi(char);
+                const preferredCount = (st?.preferredNovelIds || []).filter(id => validNovelIds.has(id)).length;
+                const failStreak = VRScheduler.getFailStreak(char.id);
                 return (
                     <div key={char.id} className="rounded-2xl p-3.5 backdrop-blur-sm" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.07)' }}>
                         <div className="flex items-center gap-2.5">
@@ -3349,7 +3388,7 @@ const SettingsView: React.FC<{
                             </button>
                             <div className="flex-1 min-w-0">
                                 <div className="text-[13px] font-bold truncate">{char.name}</div>
-                                {enabled ? <div className="text-[10px] text-indigo-300/60">每 {interval >= 60 ? `${interval / 60} 小时` : `${interval} 分`}登入一次</div>
+                                {enabled ? <div className="text-[10px] text-indigo-300/60">每 {interval >= 60 ? `${interval / 60} 小时` : `${interval} 分`}登入一次{failStreak > 0 && <span className="text-amber-300/80"> · 连续失败 {failStreak} 次</span>}</div>
                                     : <div className="text-[10px] text-indigo-300/40">{chibi.isFallback ? '未设形象 · 未接入' : '未接入'}</div>}
                             </div>
                             <button onClick={() => enabled ? disable(char) : onRequestEnable(char)}
@@ -3373,6 +3412,7 @@ const SettingsView: React.FC<{
                                 </button>
                             </>
                         )}
+                        {novelCount > 0 && <button onClick={() => onEditReadingPreference(char)} className="mt-2.5 flex w-full items-center gap-2 border-t border-white/[.07] pt-2.5 text-left"><BookOpen size={13} weight="fill"/><span className="text-[11px] font-semibold">阅读偏好</span><span className="ml-auto text-[10px] text-indigo-300/45">{preferredCount ? `优先 ${preferredCount} 本` : '自动轮换全部'}</span><CaretRight size={11}/></button>}
                     </div>
                 );
             })}
@@ -3392,12 +3432,13 @@ const SettingsView: React.FC<{
 };
 
 // ============ 彼方 · API 设置 + 调用记录 ============
-const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; addToast?: (m: string, t?: any) => void }> = ({ apiPresets, chatApi, addToast }) => {
+const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; characters: CharacterProfile[]; addToast?: (m: string, t?: any) => void }> = ({ apiPresets, chatApi, characters, addToast }) => {
     const [vrApi, setVr] = useState<APIConfig | null>(null);
     const [log, setLog] = useState<VRApiCall[]>([]);
     const [testing, setTesting] = useState(false);
     const [testResult, setTestResult] = useState<string | null>(null);
     const [presetsOpen, setPresetsOpen] = useState(false);   // 折叠「保存的预设」长列表
+    const [diagnosing, setDiagnosing] = useState(false);
 
     useEffect(() => {
         void getVRApi().then(setVr);
@@ -3432,7 +3473,16 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
         } catch (e: any) { setTestResult(`连接失败: ${e.message}`); } finally { setTesting(false); }
     };
 
-    const okCount = log.filter(l => l.ok).length;
+    const calls = log.filter(l => !l.kind);
+    const okCount = calls.filter(l => l.ok).length;
+    const copyDiagnostics = async () => {
+        setDiagnosing(true);
+        try {
+            const text = await collectVRDiagnostics(characters, chatApi);
+            await navigator.clipboard.writeText(text);
+            addToast?.('彼方排障快照已复制', 'success');
+        } catch { addToast?.('快照生成失败', 'error'); } finally { setDiagnosing(false); }
+    };
 
     return (
         <div className="space-y-3">
@@ -3502,22 +3552,20 @@ const VRApiSettings: React.FC<{ apiPresets: ApiPreset[]; chatApi: APIConfig; add
             <div className="rounded-2xl p-3" style={{ background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.07)' }}>
                 <div className="flex items-center gap-1.5 mb-2">
                     <span className="text-[10px] tracking-[0.2em] text-indigo-200/60" style={{ fontFamily: `'Noto Serif SC',serif` }}>调用记录</span>
-                    <span className="text-[9.5px] text-white/40 rounded-full px-1.5 leading-tight" style={{ background: 'rgba(255,255,255,.08)' }}>{log.length}{log.length ? ` · 成功${okCount}` : ''}</span>
-                    {log.length > 0 && <button onClick={() => { void clearVRApiLog(); setLog([]); }} className="ml-auto text-[10px] text-white/40 hover:text-rose-300/80">清空</button>}
+                    <span className="text-[9.5px] text-white/40 rounded-full px-1.5 leading-tight" style={{ background: 'rgba(255,255,255,.08)' }}>{calls.length}{calls.length ? ` · 成功${okCount}` : ''}</span>
+                    <button onClick={() => void copyDiagnostics()} disabled={diagnosing} className="ml-auto text-[10px] text-indigo-200/60 disabled:opacity-40">{diagnosing ? '收集中…' : '复制排障快照'}</button>
+                    {log.length > 0 && <button onClick={() => { void clearVRApiLog(); setLog([]); }} className="text-[10px] text-white/40 hover:text-rose-300/80">清空</button>}
                 </div>
                 {log.length === 0 ? (
                     <p className="text-[10.5px] text-white/35 py-2 text-center">还没有调用。角色每次登入彼方触发的模型调用都会记在这里，方便你对账。</p>
                 ) : (
                     <div className="space-y-1">
-                        {log.slice(0, 60).map((l, i) => (
-                            <div key={i} className="flex items-center gap-2 text-[10.5px] py-1 border-b border-white/5 last:border-0">
-                                <span className={`shrink-0 ${l.ok ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>{l.ok ? '●' : '○'}</span>
-                                <span className="text-white/75 truncate">{l.charName || '—'}</span>
-                                <span className="text-indigo-300/40 shrink-0">{l.room ? getRoom(l.room as VRRoomId).name : ''}</span>
-                                <span className="ml-auto text-white/30 shrink-0 tabular-nums">{(l.ms / 1000).toFixed(1)}s</span>
-                                <span className="text-white/35 shrink-0 tabular-nums w-[68px] text-right">{new Date(l.ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                            </div>
-                        ))}
+                        {log.slice(0, 60).map((l, i) => <div key={i} className="flex items-start gap-2 text-[10.5px] py-1 border-b border-white/5 last:border-0">
+                            <span className={`shrink-0 ${l.kind ? 'text-amber-400/70' : l.ok ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>{l.kind ? '◌' : l.ok ? '●' : '○'}</span>
+                            <span className="text-white/75 truncate shrink-0">{l.charName || l.charId?.slice(-4) || '—'}</span>
+                            {l.kind ? <span className="min-w-0 flex-1 text-amber-200/55">{l.note}</span> : <><span className="text-indigo-300/40 shrink-0">{l.room ? getRoom(l.room as VRRoomId).name : ''}</span><span className="ml-auto text-white/30 shrink-0 tabular-nums">{(l.ms / 1000).toFixed(1)}s</span></>}
+                            <span className="text-white/35 shrink-0 tabular-nums w-[68px] text-right">{new Date(l.ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>)}
                     </div>
                 )}
             </div>

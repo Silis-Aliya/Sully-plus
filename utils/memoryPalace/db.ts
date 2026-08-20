@@ -12,6 +12,18 @@ import type {
 } from './types';
 import { DIGEST_REPORT_KEEP } from './types';
 import { bm25Index } from './bm25Index';
+import {
+    mirrorAnticipationDeletionToOmbreIfConfigured,
+    mirrorAnticipationToOmbreIfConfigured,
+    mirrorDigestReportDeletionToOmbreIfConfigured,
+    mirrorDigestReportToOmbreIfConfigured,
+    mirrorEventBoxDeletionToOmbreIfConfigured,
+    mirrorEventBoxToOmbreIfConfigured,
+    mirrorMemoryNodeDeletionToOmbreIfConfigured,
+    mirrorMemoryNodeToOmbreIfConfigured,
+    mirrorRoomPlateDeletionToOmbreIfConfigured,
+    mirrorRoomPlateToOmbreIfConfigured,
+} from './ombreBridge';
 import type { VectorIndexEntry as VectorBackupIndexEntry } from '../backupFormat';
 
 // ─── Store 名称常量 ────────────────────────────────────
@@ -130,6 +142,7 @@ export const MemoryNodeDB = {
         // touchAccess 之类只改 metadata 的写入会被自动跳过。
         bm25Index.onNodeSaved(node);
         syncNodeMetadataToRemote(node);
+        mirrorMemoryNodeToOmbreIfConfigured(node);
     },
 
     getById: (id: string) => getByKey<MemoryNode>(STORE_MEMORY_NODES, id),
@@ -137,6 +150,7 @@ export const MemoryNodeDB = {
     delete: async (id: string) => {
         await deleteByKey(STORE_MEMORY_NODES, id);
         bm25Index.onNodeDeleted(id);
+        mirrorMemoryNodeDeletionToOmbreIfConfigured(id);
     },
 
     getByCharId: (charId: string) =>
@@ -171,6 +185,7 @@ export const MemoryNodeDB = {
             tx.onerror = () => reject(tx.error);
         });
         bm25Index.onNodesSaved(nodes);
+        nodes.forEach(mirrorMemoryNodeToOmbreIfConfigured);
     },
 
     /** 更新访问记录（检索后调用） */
@@ -598,11 +613,17 @@ export const TopicBoxDB = {
 // ─── EventBox CRUD ────────────────────────────────────
 
 export const EventBoxDB = {
-    save: (box: EventBox) => put<EventBox>(STORE_EVENT_BOXES, box),
+    save: async (box: EventBox) => {
+        await put<EventBox>(STORE_EVENT_BOXES, box);
+        mirrorEventBoxToOmbreIfConfigured(box);
+    },
 
     getById: (id: string) => getByKey<EventBox>(STORE_EVENT_BOXES, id),
 
-    delete: (id: string) => deleteByKey(STORE_EVENT_BOXES, id),
+    delete: async (id: string) => {
+        await deleteByKey(STORE_EVENT_BOXES, id);
+        mirrorEventBoxDeletionToOmbreIfConfigured(id);
+    },
 
     getByCharId: (charId: string) =>
         getAllByIndex<EventBox>(STORE_EVENT_BOXES, 'charId', charId),
@@ -611,13 +632,14 @@ export const EventBoxDB = {
     saveMany: async (boxes: EventBox[]): Promise<void> => {
         if (boxes.length === 0) return;
         const db = await openDB();
-        return new Promise((resolve, reject) => {
+        await new Promise<void>((resolve, reject) => {
             const tx = db.transaction(STORE_EVENT_BOXES, 'readwrite');
             const store = tx.objectStore(STORE_EVENT_BOXES);
             for (const box of boxes) store.put(box);
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });
+        boxes.forEach(mirrorEventBoxToOmbreIfConfigured);
     },
 };
 
@@ -629,7 +651,10 @@ export function plateId(charId: string, room: PlateRoom): string {
 }
 
 export const RoomPlateDB = {
-    save: (plate: RoomPlate) => put<RoomPlate>(STORE_ROOM_PLATES, plate),
+    save: async (plate: RoomPlate) => {
+        await put<RoomPlate>(STORE_ROOM_PLATES, plate);
+        mirrorRoomPlateToOmbreIfConfigured(plate);
+    },
 
     get: (charId: string, room: PlateRoom) =>
         getByKey<RoomPlate>(STORE_ROOM_PLATES, plateId(charId, room)),
@@ -637,8 +662,11 @@ export const RoomPlateDB = {
     getByCharId: (charId: string) =>
         getAllByIndex<RoomPlate>(STORE_ROOM_PLATES, 'charId', charId),
 
-    delete: (charId: string, room: PlateRoom) =>
-        deleteByKey(STORE_ROOM_PLATES, plateId(charId, room)),
+    delete: async (charId: string, room: PlateRoom) => {
+        const id = plateId(charId, room);
+        await deleteByKey(STORE_ROOM_PLATES, id);
+        mirrorRoomPlateDeletionToOmbreIfConfigured(id);
+    },
 };
 
 // ─── DigestReport CRUD（消化日志） ────────────────────
@@ -647,6 +675,7 @@ export const DigestReportDB = {
     /** 保存并修剪：每角色只留最近 DIGEST_REPORT_KEEP 条 */
     save: async (report: DigestReport): Promise<void> => {
         await put<DigestReport>(STORE_DIGEST_REPORTS, report);
+        mirrorDigestReportToOmbreIfConfigured(report);
         try {
             const all = await getAllByIndex<DigestReport>(STORE_DIGEST_REPORTS, 'charId', report.charId);
             if (all.length > DIGEST_REPORT_KEEP) {
@@ -655,6 +684,7 @@ export const DigestReportDB = {
                     .slice(DIGEST_REPORT_KEEP);
                 for (const old of overflow) {
                     await deleteByKey(STORE_DIGEST_REPORTS, old.id);
+                    mirrorDigestReportDeletionToOmbreIfConfigured(old.id);
                 }
             }
         } catch { /* 修剪失败不影响本条保存 */ }
@@ -665,17 +695,26 @@ export const DigestReportDB = {
         getAllByIndex<DigestReport>(STORE_DIGEST_REPORTS, 'charId', charId)
             .then(list => list.sort((a, b) => b.createdAt - a.createdAt)),
 
-    delete: (id: string) => deleteByKey(STORE_DIGEST_REPORTS, id),
+    delete: async (id: string) => {
+        await deleteByKey(STORE_DIGEST_REPORTS, id);
+        mirrorDigestReportDeletionToOmbreIfConfigured(id);
+    },
 };
 
 // ─── Anticipation CRUD ────────────────────────────────
 
 export const AnticipationDB = {
-    save: (ant: Anticipation) => put<Anticipation>(STORE_ANTICIPATIONS, ant),
+    save: async (ant: Anticipation) => {
+        await put<Anticipation>(STORE_ANTICIPATIONS, ant);
+        mirrorAnticipationToOmbreIfConfigured(ant);
+    },
 
     getById: (id: string) => getByKey<Anticipation>(STORE_ANTICIPATIONS, id),
 
-    delete: (id: string) => deleteByKey(STORE_ANTICIPATIONS, id),
+    delete: async (id: string) => {
+        await deleteByKey(STORE_ANTICIPATIONS, id);
+        mirrorAnticipationDeletionToOmbreIfConfigured(id);
+    },
 
     getByCharId: (charId: string) =>
         getAllByIndex<Anticipation>(STORE_ANTICIPATIONS, 'charId', charId),

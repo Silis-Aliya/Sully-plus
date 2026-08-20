@@ -22,6 +22,7 @@ import { INSTANT_WORKER_VERSION } from '../../utils/instantWorkerVersion';
 import { trackEvent } from '../../utils/analytics';
 import { FAQ_TARGET_SECTION_KEY, CHANGELOG_2026_05_27 } from '../UpdateNotificationEvent';
 import { InstantPushConfig, AppID } from '../../types';
+import { ActiveMsgStore } from '../../utils/activeMsgStore';
 
 interface InstantPushSettingsModalProps {
   open: boolean;
@@ -314,12 +315,32 @@ export const InstantPushSettingsModal: React.FC<InstantPushSettingsModalProps> =
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const cfg = currentCfg();
     saveInstantConfig(cfg);
+    // 旧 Instant 与 AMSG 2.0「即时对话」都会接管用户刚发送的同一轮，不能同时开。
+    // 这里只关即时对话这一粒开关；AMSG 全局配置、角色任务、主动唤醒和 PushSubscription
+    // 全部保留，因此启用旧 Instant 不会再把主动消息 2.0 一起关掉。
+    let disabledAmsgInstantChat = false;
+    if (cfg.enabled) {
+      try {
+        const amsgConfig = await ActiveMsgStore.getGlobalConfig();
+        if (amsgConfig.instantChatEnabled) {
+          await ActiveMsgStore.saveGlobalConfig({ instantChatEnabled: false });
+          disabledAmsgInstantChat = true;
+        }
+      } catch (error) {
+        console.warn('[InstantPushSettings] 无法核对 AMSG 即时对话开关', error);
+      }
+    }
     // 保存为启用状态视为「已按当前 worker 版本配好」，避免随后被无意义地提醒更新。
     if (cfg.enabled) markWorkerBuildSeen();
-    addToast('Instant Push 配置已保存', 'success');
+    addToast(
+      disabledAmsgInstantChat
+        ? 'Instant Push 已保存；已关闭 AMSG 即时对话，主动消息与主动唤醒保持不变'
+        : 'Instant Push 配置已保存',
+      'success',
+    );
     onClose();
   };
 
