@@ -280,6 +280,15 @@ export function bucketStorageBytes(bytes: number): string {
   return '1GB+';
 }
 
+/** Storage use as a share of the browser quota; never send precise values. */
+export function bucketStorageWatermark(usageBytes: number, quotaBytes: number): string {
+  const ratio = usageBytes / quotaBytes;
+  if (ratio < 0.25) return '<25%';
+  if (ratio < 0.5) return '25-50%';
+  if (ratio < 0.8) return '50-80%';
+  return '80%+';
+}
+
 /**
  * 上报数据规模档位，每次会话最多一次。
  *
@@ -292,6 +301,8 @@ export function trackDataScaleOnce(params: {
   maxMemoryCount: number;
   maxMessageCount: number;
   storageBytes: number | null;
+  storageQuotaBytes: number | null;
+  persistedStorage: boolean | null;
   standalone: boolean;
 }): void {
   if (reportedScales.has('data-scale')) return;
@@ -303,6 +314,10 @@ export function trackDataScaleOnce(params: {
     单角色最大聊天条数: bucketMessageCount(params.maxMessageCount),
     // 浏览器不给配额信息时（Safari 部分版本、隐私模式）这一项直接缺席，不猜、不填 0。
     ...(params.storageBytes === null ? {} : { 本地存储占用: bucketStorageBytes(params.storageBytes) }),
+    ...(params.storageBytes === null || !params.storageQuotaBytes ? {} : {
+      存储水位: bucketStorageWatermark(params.storageBytes, params.storageQuotaBytes),
+    }),
+    ...(params.persistedStorage === null ? {} : { 持久化许可: params.persistedStorage ? '已获得' : '未获得' }),
     全屏运行: params.standalone ? '是' : '否',
   });
 }
