@@ -15,6 +15,7 @@
 // 惰性迁移由各消费方（壁纸加载、进入小屋）在读到 data: 时顺手 put 成 Blob 完成。
 
 import { useEffect, useState } from 'react';
+import { dataUrlToBlob, blobToDataUrl, hashBlob } from '@rei-standard/blob-store';
 import { DB } from './db';
 import type { AppearancePreset } from '../types';
 
@@ -54,8 +55,13 @@ export async function getBlobForRef(ref: string): Promise<Blob | null> {
 /**
  * 删除令牌对应的 Blob（best-effort）。
  * 注意：同一令牌可能被多处引用（小屋自定义素材的 image 会被复制进摆放的 item.image），
- * 所以调用方需自行确认无人再引用后才删，否则会删出「碎图」。当前消费方从简：不主动删，
+ * 所以调用方需自行确认无人再引用后才删，否则会删出「碎图」。多数消费方从简：不主动删，
  * 残留孤儿 Blob 由后续 GC 处理，宁可占一点空间也不冒破图风险。
+ *
+ * 少数字段（桌面静态形象 / 视频舞台背景 / 桌面背景 / 通话快照 / 假摄像头图）确实会在
+ * 换图时直接删掉旧 Blob——它们的图来自用户当场选的文件，一份令牌只归自己。这批字段
+ * 登记在 utils/blobDedupe.ts 的 collectUnmergeableRefs 里，令牌合并会整组绕开它们。
+ * 新增这类裸删调用点时，记得把字段一并登记过去。
  */
 export async function deleteBlobRef(ref: string | undefined | null): Promise<void> {
     if (ref && isBlobRef(ref)) {
@@ -108,55 +114,74 @@ export async function deleteBlobRefIfUnreferenced(ref: string | undefined | null
 }
 
 // ─── data URL ⇄ Blob 互转 ───────────────────────────────────────
+// 语义随 SDK：dataUrlToBlob 非法输入抛错、非 base64 退化 UTF-8 编码；
+// blobToDataUrl 优先 FileReader，无 FileReader 环境（Worker / Node 测试）退化 arrayBuffer 手编。
+export { dataUrlToBlob, blobToDataUrl };
 
-/** `data:<mime>;base64,xxxx` → Blob。非 base64 data URL 会抛错。 */
-export function dataUrlToBlob(dataUrl: string): Blob {
-    const comma = dataUrl.indexOf(',');
-    if (comma < 0) throw new Error('Invalid data URL');
-    const header = dataUrl.slice(0, comma);
-    const mimeMatch = header.match(/^data:([^;]+)/);
-    const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
-    if (!/;base64/i.test(header)) {
-        // 非 base64（极少见，如 utf8 编码的 svg），退化成 UTF-8 编码。
-        return new Blob([decodeURIComponent(dataUrl.slice(comma + 1))], { type: mime });
-    }
-    const binary = atob(dataUrl.slice(comma + 1));
-    const len = binary.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
-    return new Blob([bytes], { type: mime });
-}
+// ─── 内容记忆：同一份图别存第二遍 ───────────────────────────────
+//
+// 惰性迁移分散在各消费点（壁纸加载、进小屋、图标、捏人器部件），彼此不知道对方转过什么。
+// 导入过「同一张图内联在好几处」的旧备份后，这些入口会在几分钟里把同一份 base64 各转一遍，
+// 库里于是躺着好几份一模一样的 Blob。这层记忆按内容哈希把它们收敛到同一个令牌上。
+//
+// key 用哈希而不是 data URL：后者动辄几 MB，缓存它等于把 base64 又请回内存，
+// 那正是 blobRef 要解决的问题。
+//
+// 只在进程内有效（刷新即空）。跨会话的重复交给「优化资源存储」——它扫全库按内容合并，
+// 并在开头拿扫描结果给这份记忆预热，于是转换时能直接复用库里已经有的那份。
+const contentMemo = new Map<string, string>();
 
 /**
- * Blob → `data:<mime>;base64,xxxx`。浏览器主线程走 FileReader（高效）；
- * 没有 FileReader 的环境（Worker / Node 测试）退化到 arrayBuffer + base64 手编。
+ * 用扫库结果预热内容记忆。tokens 按创建时间升序，取第一个（也是合并时的保留方）。
+ *
+ * 调用方要先滤掉「被裸删字段引用」的令牌（见 utils/blobDedupe.ts 的 collectUnmergeableRefs）：
+ * 复用到那种令牌，等于让新字段和一个「换图就直接删」的字段共享 Blob，对方一删这边就破图。
  */
-export async function blobToDataUrl(blob: Blob): Promise<string> {
-    if (typeof FileReader !== 'undefined') {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
-            reader.onerror = () => reject(reader.error || new Error('blobToDataUrl failed'));
-            reader.readAsDataURL(blob);
-        });
+export function primeContentMemo(byHash: Map<string, string[]>): void {
+    for (const [hash, tokens] of byHash) {
+        if (tokens.length > 0) contentMemo.set(hash, tokens[0]);
     }
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    let binary = '';
-    const CHUNK = 0x8000; // 分块拼字符串，避开 String.fromCharCode 的参数上限
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-    }
-    const mime = blob.type || 'application/octet-stream';
-    return `data:${mime};base64,${btoa(binary)}`;
+}
+
+/** 仅测试用：清空内容记忆，避免用例之间串味。 */
+export function clearContentMemo(): void {
+    contentMemo.clear();
 }
 
 /**
- * 把一个 data: 图片存成 Blob 并返回令牌（惰性迁移用）。转换失败时回退返回原字符串，
- * 保证调用方永远拿到一个可渲染的值，不会因迁移失败而丢图。
+ * 存 Blob，但先看看同样内容的是不是已经有了——有就复用它的令牌，不再存第二份。
+ * 算不出哈希（非安全上下文没有 crypto.subtle）时退化成普通 put，功能照旧、只是不去重。
+ *
+ * 只给迁移路径用。用户当场上传的图仍走 putImageBlob 各存各的：那几个字段换图时是
+ * 裸删旧 Blob 的，共享会让一次删除波及别人（见 deleteBlobRef 的注释）。
+ */
+export async function putImageBlobDeduped(blob: Blob): Promise<{ token: string; reused: boolean }> {
+    let hash: string | null = null;
+    try { hash = await hashBlob(blob); } catch { hash = null; }
+
+    if (hash) {
+        const remembered = contentMemo.get(hash);
+        // 记住的令牌可能已经不在了：它写进某个字段后那个字段又被改掉，Blob 成孤儿被 GC 收走。
+        // 直接还回去就是个死令牌，所以确认 Blob 还在才复用。
+        if (remembered) {
+            if (await getBlobForRef(remembered)) return { token: remembered, reused: true };
+            contentMemo.delete(hash);
+        }
+    }
+
+    const token = await putImageBlob(blob);
+    if (hash) contentMemo.set(hash, token);
+    return { token, reused: false };
+}
+
+/**
+ * 把一个 data: 图片存成 Blob 并返回令牌（惰性迁移用）。同内容的图已经存过就复用它，
+ * 不再存第二份。转换失败时回退返回原字符串，保证调用方永远拿到一个可渲染的值，
+ * 不会因迁移失败而丢图。
  */
 export async function migrateDataUrlToRef(dataUrl: string): Promise<string> {
     try {
-        return await putImageBlob(dataUrlToBlob(dataUrl));
+        return (await putImageBlobDeduped(dataUrlToBlob(dataUrl))).token;
     } catch {
         return dataUrl;
     }
