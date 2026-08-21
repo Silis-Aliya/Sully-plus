@@ -24,6 +24,8 @@ import { buildEmojiContextStr, buildGroupHistoryBlock, buildDirectorInstruction,
 import { dispatchMemberActions } from '../utils/groupChat/dispatch';
 import { completeGroupChatWithMcp } from '../utils/groupChat/mcp';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
+import { useBlobRefUrl } from '../utils/blobRef';
+import TokenImg from '../components/os/TokenImg';
 // 群聊输入区/表情面板已改用共享 ChatInputArea（其表情网格自带 useIncrementalReveal 增量渲染），
 // master 上给旧内联表情抽屉加的增量渲染随旧抽屉一并退役。
 import { UsersThree, Money, GearSix, Image as ImageIcon, ArrowsClockwise, PaintBrush, BellSimpleRinging, Code, Question } from '@phosphor-icons/react';
@@ -141,6 +143,7 @@ const GroupMessageItem = React.memo(({
 }) => {
     const avatar = isUser ? userAvatar : char?.avatar;
     const name = isUser ? '我' : char?.name || '未知成员';
+    const bubbleBgUrl = useBlobRefUrl(styleConfig.backgroundImage);
 
     // pointer-event 手势（对齐私聊 MessageItem 的方案）：600ms 长按 → 操作菜单；
     // 触屏左滑 ≤-52px → 引用回复（带位移动画）；鼠标右键 → 操作菜单
@@ -252,12 +255,12 @@ const GroupMessageItem = React.memo(({
                         if (selectionMode) handleClick(e);
                         else onImageClick(msg.content);
                     }}>
-                        <img src={msg.content} className="max-w-[200px] max-h-[200px] rounded-xl shadow-sm border border-black/5" loading="lazy" />
+                        <TokenImg value={msg.content} className="max-w-[200px] max-h-[200px] rounded-xl shadow-sm border border-black/5" loading="lazy" />
                     </div>
                 );
             case 'emoji':
                 // 尺寸跟随外观 → 表情包大小（--sully-emoji-size 三挡，默认 96px = 原 w-24）
-                return <img src={msg.content} className="sully-emoji-msg max-w-[var(--sully-emoji-size,96px)] max-h-[var(--sully-emoji-size,96px)] object-contain drop-shadow-sm hover:scale-110 transition-transform" />;
+                return <TokenImg value={msg.content} className="sully-emoji-msg max-w-[var(--sully-emoji-size,96px)] max-h-[var(--sully-emoji-size,96px)] object-contain drop-shadow-sm hover:scale-110 transition-transform" />;
             case 'transfer':
                 return (
                     <div onClick={(e) => { if (selectionMode) handleClick(e); }}>
@@ -288,11 +291,11 @@ const GroupMessageItem = React.memo(({
                             ...(isUser ? { borderTopRightRadius: 4 } : { borderTopLeftRadius: 4 }),
                         }}
                     >
-                        {styleConfig.backgroundImage && (
+                        {bubbleBgUrl && (
                             <div
                                 className="absolute inset-0 pointer-events-none"
                                 style={{
-                                    backgroundImage: `url(${styleConfig.backgroundImage})`,
+                                    backgroundImage: `url(${bubbleBgUrl})`,
                                     backgroundSize: 'cover',
                                     backgroundPosition: 'center',
                                     opacity: styleConfig.backgroundImageOpacity ?? 0.5,
