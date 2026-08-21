@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import TokenImg from '../components/os/TokenImg';
 import { Microphone, SpeakerHigh, SpeakerSlash, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretDown, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Check, Moon, Sun } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { extractContent, safeFetchJson } from '../utils/safeApi';
@@ -2939,7 +2940,7 @@ ${sentencePlan}`;
                   className="call-contact-card relative w-full rounded-[20px] border border-[#e2e8f0] bg-white px-4 py-3.5 text-left shadow-[0_2px_8px_rgba(30,41,59,0.03)] transition active:scale-[0.98]">
                   <div className="flex items-center gap-3.5">
                     <button type="button" onClick={() => setSelectedCharId(char.id)} className="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center font-semibold shrink-0 bg-[#475569] text-white outline-none">
-                      {char.avatar ? <img src={char.avatar} alt={char.name} className="w-full h-full object-cover" /> : (char.name?.[0] || '角')}
+                      {char.avatar ? <TokenImg value={char.avatar} alt={char.name} className="w-full h-full object-cover" /> : (char.name?.[0] || '角')}
                     </button>
                     <button type="button" onClick={() => setSelectedCharId(char.id)} className="min-w-0 flex-1 text-left outline-none">
                       <div className="call-contact-name truncate text-[15px] font-bold text-[#1e293b]">{char.name}</div>
@@ -3143,7 +3144,7 @@ ${sentencePlan}`;
             return (
             <div key={record.id} role="button" tabIndex={0} onClick={() => { setRecordDetailId(record.id); setViewMode('record-detail'); }} onKeyDown={event => { if (event.key === 'Enter') { setRecordDetailId(record.id); setViewMode('record-detail'); } }} className="history-card w-full rounded-[20px] border border-[#e2e8f0] bg-white p-4 text-left shadow-[0_2px_8px_rgba(30,41,59,.03)] outline-none transition active:scale-[.99]">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#475569] text-sm font-semibold text-white">{recordCharacter?.avatar ? <img src={recordCharacter.avatar} alt="" className="h-full w-full object-cover" /> : record.characterName[0] || '角'}</div>
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#475569] text-sm font-semibold text-white">{recordCharacter?.avatar ? <TokenImg value={recordCharacter.avatar} alt="" className="h-full w-full object-cover" /> : record.characterName[0] || '角'}</div>
                 <div className="min-w-0 flex-1">
                   <div className="history-name text-[15px] font-bold text-[#1e293b]">{record.characterName}</div>
                   <div className="history-meta mt-0.5 text-xs text-[#64748b]">{record.mode === 'video' ? '视频' : '通话'} · {formatDuration(record.durationSec)} · {turnCount}轮对话</div>
@@ -3509,7 +3510,7 @@ ${sentencePlan}`;
             <div className="absolute -inset-1 rounded-full" style={{ boxShadow: `0 0 0 1px ${accentColor}55, inset 0 0 24px ${accentColor}33` }} />
             <div className={`absolute inset-0 rounded-full border ${displayCallState === 'speaking' ? 'animate-ping' : 'opacity-40'}`} style={{ borderColor: `${accentColor}66` }} />
             {selectedChar?.avatar
-              ? <img src={selectedChar.avatar} alt={selectedChar.name} draggable={false} className="relative z-10 h-full w-full rounded-full object-cover" style={{ boxShadow: `0 0 30px ${accentColor}55` }} />
+              ? <TokenImg value={selectedChar.avatar} alt={selectedChar.name} draggable={false} className="relative z-10 h-full w-full rounded-full object-cover" style={{ boxShadow: `0 0 30px ${accentColor}55` }} />
               : <div className="relative z-10 flex h-full w-full items-center justify-center rounded-full text-4xl font-serif" style={{ backgroundColor: `${accentColor}55` }}>{selectedChar?.name?.[0] || '角'}</div>}
             <AvatarTouchFeedback
               characterName={selectedChar?.name || '对方'}

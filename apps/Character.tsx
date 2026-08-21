@@ -1,5 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import TokenImg from '../components/os/TokenImg';
 import { useOS } from '../context/OSContext';
 import { AppID, CharacterProfile, CharacterExportData, UserImpression, MemoryFragment } from '../types';
 import { SlidersHorizontal, SpeakerHigh, Books, BookOpen } from '@phosphor-icons/react';
@@ -56,7 +57,7 @@ const CharacterCard: React.FC<{
     >
         <div className="flex items-center gap-3">
             <div className="w-10 h-10 shrink-0 rounded-full overflow-hidden bg-[#e2e2e8]">
-                <img src={char.avatar} className="w-full h-full object-cover" alt={char.name} />
+                <TokenImg value={char.avatar} className="w-full h-full object-cover" alt={char.name} />
             </div>
             <div className="flex-1 min-w-0 pr-6">
                 <h3 className="text-[14px] leading-5 font-semibold truncate text-[#1c1c1e]">
@@ -1283,7 +1284,7 @@ ${isInitialGeneration ? `
                        <div className="space-y-6 animate-fade-in">
                            <div className="flex items-center gap-5">
                                <div className="relative group cursor-pointer w-24 h-24 shrink-0" onClick={() => fileInputRef.current?.click()}>
-                                   <div className="w-full h-full rounded-[2rem] shadow-md bg-white border-4 border-white overflow-hidden relative"><img src={formData.avatar} className={`w-full h-full object-cover ${isCompressing ? 'opacity-50 blur-sm' : ''}`} alt="A" /></div>
+                                   <div className="w-full h-full rounded-[2rem] shadow-md bg-white border-4 border-white overflow-hidden relative"><TokenImg value={formData.avatar} className={`w-full h-full object-cover ${isCompressing ? 'opacity-50 blur-sm' : ''}`} alt="A" /></div>
                                    <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleFileChange} />
                                </div>
                                <div className="flex-1 space-y-3">
