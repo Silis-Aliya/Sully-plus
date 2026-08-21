@@ -30,6 +30,7 @@ import {
 import { AMSG_CHAT_PRESENCE_KEY, AmsgChatPresence } from './amsgChatPresence';
 import { AMSG_MUSIC_WAKE_PRESENCE_KEY, AmsgMusicWakePresence } from './amsgMusicWakePresence';
 import { isIOSStandaloneWebApp } from './iosStandalone';
+import { resolveBlobRefsDeep } from './blobRef';
 import {
   AMSG_FIRE_PACK_KEY,
   AMSG_SWITCH_CONTROL_KEY,
@@ -654,6 +655,50 @@ const flattenToText = (content: unknown[]): string => content
   .map((part: any) => part?.type === 'text' ? String(part.text ?? '') : '')
   .filter(Boolean).join('\n') || '[图片]';
 
+/**
+ * 上云前把聊天消息里的图片令牌（`blobref:<id>`）还原成 data URL，返回一份独立副本。
+ *
+ * 两条理由，缺一条都不能省这一步：
+ *   · worker 那边没有 IndexedDB，令牌到了云端谁也解不开。浏览器里那层「发请求前统一
+ *     还原」（utils/apiBlobRefs.ts）够不到 worker 自己发出去的请求，图会静默消失；
+ *   · 令牌只有几十字节，而它代表的图可能几 MB。先算预算再还原的话，一份「看着没超」
+ *     的包还原后照样超限，下面那道体积闸等于白设。所以顺序是死的：**先还原，再算预算**。
+ *
+ * resolveBlobRefsDeep 原地改对象，所以先深拷贝再交给它——调用方那串 fullMessages
+ * 本地这一轮还要用，一个字节都不能被改。拷贝发生在还原之前，拷的是还带着短令牌的
+ * 小结构，不是几 MB 的 base64。
+ */
+export const resolveChatMessagesForUpload = async (
+  messages: Array<{ role: string; content: unknown }>,
+): Promise<Array<{ role: string; content: unknown }>> => {
+  const copy = messages.map((message) => ({
+    role: message.role,
+    content: message.content === null || typeof message.content !== 'object'
+      ? message.content
+      : (typeof structuredClone === 'function'
+        ? structuredClone(message.content)
+        : JSON.parse(JSON.stringify(message.content))),
+  }));
+  await resolveBlobRefsDeep(copy);
+  return copy;
+};
+
+/**
+ * 本地那串 fullMessages → fire_pack 的 `chat.messages`。
+ *
+ * **原样搬运**：带图片的消息本地是结构化的（`[{type:'text'},{type:'image_url'}]`，
+ * 图片是 base64 data URL），这里一个字都不动地带上云——即时对话的整个前提就是
+ * 「云端跑出来的回复和本地跑出来的一模一样」，模型看不看得见图片是这里面差别最大的一项。
+ *
+ * 唯一的例外是体积：一条 client_state 有硬上限（见 CHAT_CONTENT_BUDGET_BYTES）。
+ * 超了就**从最老的消息开始**丢图片本体（换成它自己的文字段，也就是以前那种拍平结果），
+ * 一条一条丢到进预算为止。最新那条用户消息的图片永远不丢——用户刚发的这张图正是
+ * 这一轮要聊的东西，把它丢了等于答非所问，而用户完全看不出来。
+ *
+ * 丢到只剩最新那条还是超预算 → 抛错，走「即时对话发送失败」那条明路，绝不悄悄把
+ * 当前这轮截断。报错分两种：删掉最新那张图能救回来的，指向图片；纯文本本身就超限的
+ * （长角色卡 + 世界书 + 近史），如实说上下文太大——这种情况用户没有图可删。
+ */
 export const toFirePackChatMessages = (
   messages: Array<{ role: string; content: unknown }>,
 ): Array<{ role: string; content: AmsgFirePackChatContent }> => {
@@ -1775,7 +1820,7 @@ export const ActiveMsgClient = {
     await this.ensurePushDeliveryTarget();
     const now = Date.now();
     const firePack = await buildFirePack(char, userProfile, groups, realtimeConfig);
-    firePack.chat = { messages: toFirePackChatMessages(chatMessages), builtAt: now };
+    firePack.chat = { messages: toFirePackChatMessages(await resolveChatMessagesForUpload(chatMessages)), builtAt: now };
     const clientTaskId = crypto.randomUUID();
     const avatarUrl = toRemoteAvatarUrl(char.avatar);
     const taskPayload: Record<string, unknown> = {

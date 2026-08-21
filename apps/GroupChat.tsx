@@ -24,7 +24,7 @@ import { buildEmojiContextStr, buildGroupHistoryBlock, buildDirectorInstruction,
 import { dispatchMemberActions } from '../utils/groupChat/dispatch';
 import { completeGroupChatWithMcp } from '../utils/groupChat/mcp';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
-import { useBlobRefUrl } from '../utils/blobRef';
+import { useBlobRefUrl, isBlobRef, getBlobForRef, migrateDataUrlToRef } from '../utils/blobRef';
 import TokenImg from '../components/os/TokenImg';
 // 群聊输入区/表情面板已改用共享 ChatInputArea（其表情网格自带 useIncrementalReveal 增量渲染），
 // master 上给旧内联表情抽屉加的增量渲染随旧抽屉一并退役。
@@ -825,7 +825,9 @@ const GroupChat: React.FC = () => {
     const handleImageFile = async (file: File) => {
         try {
             const base64 = await processImage(file, { maxWidth: 600, quality: 0.7, forceJpeg: true });
-            handleSendMessage(base64, 'image');
+            // 群聊图消息存令牌，二进制单独躺在 blob_assets 里（省掉 base64 那 ~33% 的膨胀）。
+            // 同一张图之前存过就复用它的令牌；转不动时原样还回这条 data URL，图不会丢。
+            handleSendMessage(await migrateDataUrlToRef(base64), 'image');
         } catch (err) {
             addToast('图片发送失败', 'error');
         }
@@ -870,7 +872,17 @@ const GroupChat: React.FC = () => {
         setModalType('packet-detail');
     }, []);
 
-    const handleGroupImageClick = useCallback((url: string) => window.open(url, '_blank'), []);
+    // 点图看大图：新标签页只认得真正的 URL，blobref 令牌得先换成 objectURL 再开
+    // （data: 顶层导航被浏览器挡，只能走 objectURL）。开完不立刻回收——新标签页还在
+    // 用它加载；留一分钟再 revoke，图早读完了，也不至于把整张图一直挂在内存里。
+    const handleGroupImageClick = useCallback(async (url: string) => {
+        if (!isBlobRef(url)) { window.open(url, '_blank'); return; }
+        const blob = await getBlobForRef(url);
+        if (!blob) { addToast('图片数据已丢失', 'error'); return; }
+        const objectUrl = URL.createObjectURL(blob);
+        window.open(objectUrl, '_blank');
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    }, [addToast]);
     const handleGroupReply = useCallback((target: Message) => { setReplyTarget(target); trackEvent('引用回复一条群消息'); }, []);
 
     // 用户抢/收/退：updater 内重跑状态机（以库内最新 claims 判重，防与 AI 派发并发双写）
