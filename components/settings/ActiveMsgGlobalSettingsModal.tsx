@@ -382,7 +382,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
 
     const nextEnabled = !isUnifiedInstantOn();
     if (nextEnabled && !(await ActiveMsgClient.probeInstantChatSupport())) {
-      addToast('这台 Worker 还没有后台队列；请先 Sync fork 并重新部署 AMSG Worker。', 'error');
+      addToast('这台 Worker 还不支持即时对话；请先 Sync fork 并重新部署 AMSG Worker。', 'error');
       return;
     }
     // 新通道打开时关闭旧的长 SSE Instant，避免同一轮被两条云端路径同时接管。

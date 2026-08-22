@@ -1,5 +1,12 @@
 # SullyOS Fork Maintenance Log
 
+## 2026-08-22 Instant Manual Trigger And Optional Queue
+
+- Ordinary chat sends now only save the message; unified instant chat, legacy Instant Push, and local generation start only after the user taps the top-bar lightning button.
+- AMSG Queue is no longer a capability or default deployment requirement. Without a Queue binding, the Worker starts through `waitUntil` and retains the per-minute cron fallback.
+- Removed the undeclared Queue binding from the default `wrangler.toml`, preventing fresh Git deployments from failing because the Queue does not exist yet.
+- Verification: 33 focused instant-chat tests passed and `pnpm build` completed successfully.
+
 ## 2026-08-20 VR Reading, Story Diagnosis, And Voice Favorite Entrypoints
 
 - Added per-character VR reading preference UI with search, pagination, automatic full-library fallback, randomized rotation, and last-book avoidance.
