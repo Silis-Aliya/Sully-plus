@@ -131,9 +131,11 @@ const Chat: React.FC = () => {
     // 角色切换「登场」过场是否显示。切换/进入角色时由 useLayoutEffect 在绘制前置真，覆盖住加载、避免闪到新聊天。
     const [showEntry, setShowEntry] = useState(false);
 
-    // 2026-08-20 统一模式首版误把 AMSG 地址存成了旧 Instant SSE 配置。
-    // 只迁移“Instant URL 正好等于 AMSG Worker URL”的配置：关闭旧 SSE，打开 D1 + Queue；
-    // 独立部署在另一个地址的旧 Instant 不受影响，且仍然只有点闪电才会触发。
+    // 上游的两条即时回复通道是互斥的：AMSG 即时对话一旦开启，旧 Instant SSE 就必须关闭。
+    // 不能按 Worker URL 是否相同来决定——用户通常正是分别部署了两台 Worker；两边同时开着时
+    // useChatAI 会让旧 Instant 优先，顶栏 ⚡便会卡在最长 300 秒的 SSE 等待里，看起来像没触发。
+    // 旧版误把 AMSG 地址填进 Instant 的配置仍兼容迁移：地址相同且新 Worker 支持即时对话时，
+    // 自动打开 AMSG；已经打开 AMSG 的设备则无条件清掉遗留的旧 Instant 开关。
     useEffect(() => {
         let cancelled = false;
         void (async () => {
@@ -142,10 +144,16 @@ const Chat: React.FC = () => {
             try {
                 const amsg = await ActiveMsgStore.getGlobalConfig();
                 if (cancelled || !amsg.workerUrl?.trim()) return;
-                if (normalizeWorkerUrl(instant.workerUrl) !== normalizeWorkerUrl(amsg.workerUrl)) return;
-                if (!(await ActiveMsgClient.probeInstantChatSupport()) || cancelled) return;
-                saveInstantConfig({ ...instant, enabled: false, autoTriggerOnSend: false });
-                await ActiveMsgStore.saveGlobalConfig({ instantChatEnabled: true });
+                if (amsg.instantChatEnabled) {
+                    saveInstantConfig({ ...instant, enabled: false, autoTriggerOnSend: false });
+                    return;
+                }
+                if (normalizeWorkerUrl(instant.workerUrl) === normalizeWorkerUrl(amsg.workerUrl)
+                    && await ActiveMsgClient.probeInstantChatSupport()
+                    && !cancelled) {
+                    saveInstantConfig({ ...instant, enabled: false, autoTriggerOnSend: false });
+                    await ActiveMsgStore.saveGlobalConfig({ instantChatEnabled: true });
+                }
             } catch (error) {
                 console.warn('[Chat] 统一快速回复自动触发迁移失败', error);
             }
@@ -1496,8 +1504,11 @@ const Chat: React.FC = () => {
     // 顶栏 ⚡ 是唯一手动触发入口。useChatAI 按设置选择 D1 + Queue、独立旧 Instant
     // 或本地 fetch；主动消息 2.0 的定时任务和用户自己的主动唤醒不受影响。
     const handleManualTrigger = () => {
-        // 上一轮还在跑时 triggerAI 会静默 reject，提前挡掉即可。
-        if (isTyping) return;
+        // 上一轮还在本机拼装/发送时不能再起第二轮；明确告诉用户，别让点击像失灵。
+        if (isTyping) {
+            addToast('上一轮还在发送中，请稍等片刻；若一直不结束，重新进入聊天即可恢复。', 'info');
+            return;
+        }
         triggerAI(messages);
     };
 
