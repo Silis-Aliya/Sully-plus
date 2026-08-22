@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { trackEvent } from '../../utils/analytics';
 
 // SullyOS 冷启动「世界入场」电影化序列 —— 取代传统黑屏 spinner。
@@ -51,15 +51,6 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
 
   useEffect(() => {
     try { sessionStorage.setItem(BOOT_SEEN_KEY, '1'); } catch { /* ignore */ }
-  }, []);
-
-  useLayoutEffect(() => {
-    const html = document.documentElement;
-    const previous = html.style.backgroundColor;
-    html.style.backgroundColor = '#05060f';
-    return () => {
-      html.style.backgroundColor = previous;
-    };
   }, []);
 
   // 「数据就绪 且 停留够 HOLD」→ 退场；否则一直呼吸等待。
@@ -129,14 +120,8 @@ const BootSequence: React.FC<Props> = ({ dataReady, wallpaper, onDone }) => {
     <div
       onClick={skip}
       aria-label="Sully Plus"
-      className="fixed left-0 right-0 z-[9999] overflow-hidden select-none cursor-pointer"
+      className="fixed inset-0 z-[9999] overflow-hidden select-none cursor-pointer"
       style={{
-        // 直接把「同一幅开机画面」上下各延伸 64px。不能用透明层：透明后面就是
-        // iOS 首帧的白色 canvas；也不能只补深色，因为会跟用户壁纸/星云断层。
-        // top=-64 与 height=可见高度+128 配对，画面中心仍在原来的屏幕中心，logo
-        // 不会被推偏，但背景、星点和暗角会真实铺过 Home Indicator 区域。
-        top: '-64px',
-        height: 'calc(var(--app-height, 100lvh) + 128px)',
         background: '#05060f',
         opacity: exiting ? 0 : 1,
         transition: `opacity ${EXIT}ms ease-in`,

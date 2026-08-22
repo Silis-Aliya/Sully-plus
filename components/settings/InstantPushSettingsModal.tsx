@@ -41,6 +41,7 @@ export const InstantPushSettingsModal: React.FC<InstantPushSettingsModalProps> =
   const [workerUrl, setWorkerUrl] = useState('');
   const [clientToken, setClientToken] = useState('');
   const [enabled, setEnabled] = useState(false);
+  const [autoTriggerOnSend, setAutoTriggerOnSend] = useState(false);
   const [useD1BlobStore, setUseD1BlobStore] = useState(false);
   const [d1Available, setD1Available] = useState(false);
   const [d1CheckedAt, setD1CheckedAt] = useState<number | undefined>(undefined);
@@ -77,6 +78,7 @@ export const InstantPushSettingsModal: React.FC<InstantPushSettingsModalProps> =
     setWorkerUrl(cfg.workerUrl);
     setClientToken(cfg.clientToken ?? '');
     setEnabled(cfg.enabled);
+    setAutoTriggerOnSend(cfg.autoTriggerOnSend ?? false);
     setUseD1BlobStore(!!cfg.useD1BlobStore && !!cfg.d1Available);
     setD1Available(!!cfg.d1Available);
     setD1CheckedAt(cfg.d1CheckedAt);
@@ -105,7 +107,7 @@ export const InstantPushSettingsModal: React.FC<InstantPushSettingsModalProps> =
     enabled,
     workerUrl: normalizedWorkerUrl,
     clientToken: clientToken.trim() || undefined,
-    autoTriggerOnSend: false,
+    autoTriggerOnSend,
     useD1BlobStore: canUseD1 ? useD1BlobStore : false,
     d1Available: canUseD1,
     d1CheckedAt: canUseD1 ? d1CheckedAt : undefined,
@@ -460,9 +462,20 @@ export const InstantPushSettingsModal: React.FC<InstantPushSettingsModalProps> =
             <span className="text-[12px] text-slate-600 font-medium">启用 Instant Push</span>
           </label>
 
-          <p className="text-[11px] text-slate-400 leading-relaxed">
-            发消息只保存内容；需要角色回复时请点击聊天顶栏 ⚡。Instant Push 只负责后台生成和通知送达。
-          </p>
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoTriggerOnSend}
+              onChange={(e) => setAutoTriggerOnSend(e.target.checked)}
+              className="accent-indigo-500 mt-0.5"
+            />
+            <span className="text-[12px] text-slate-600 font-medium leading-relaxed">
+              发送后自动触发回复
+              <span className="block text-[11px] text-slate-400 font-normal">
+                关闭时发完文本仍需手动点 ⚡ 触发，跟本地模式一致；开启后发文本即自动让角色回复。
+              </span>
+            </span>
+          </label>
 
           <div className="border-t border-slate-200 pt-3 space-y-2">
             <div className="flex items-start justify-between gap-3">

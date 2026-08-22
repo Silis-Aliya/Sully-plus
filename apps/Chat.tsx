@@ -1274,8 +1274,23 @@ const Chat: React.FC = () => {
         await reloadMessages(visibleCountRef.current);
         setShowPanel('none');
 
-        // 普通聊天始终由用户点顶栏 ⚡ 才触发回复。Instant / D1 Queue 只决定点 ⚡ 后
-        // 在哪里生成、如何后台送达，绝不能把“开启后台通道”偷换成“发送即自动回复”。
+        // Instant Push 模式：发完文本自动触发 AI（响应在 worker 端跑、后台 push 回写聊天页）。
+        // 本地模式仍维持手动触发以保留现有 UX。triggerAI 内部会从 DB 拉完整历史，
+        // 闭包里的 messages 还没包含刚写入的 user msg 也没关系。
+        // 仅文本消息触发；image / xhs_card 等卡片消息不触发，与本地手动行为对齐。
+        // autoTriggerOnSend gate：instant ready 也只在用户显式开启"发送后自动触发"时才自动回复，
+        // 否则保留手动 ⚡（避免"启用 instant = 自动回复"的反直觉强绑定）。
+        const instantCfg = loadInstantConfig();
+        if ((type === 'text' || type === 'voice') && isInstantConfigReady(instantCfg) && instantCfg.autoTriggerOnSend) {
+            // 上一轮还在跑时直接跳过：triggerAI 内部会因 isTyping=true 静默 reject，
+            // 提前 guard 避免点亮"准备中"指示灯后没人来清，UI 灯被卡住。
+            if (isTyping) return;
+            // 标记"准备中"三个点：拼接+发送期间显示，SSE POST 入队 (onInstantPosted) 后清除。
+            setInstantSendingActive(true);
+            const latestMessages = await DB.getRecentMessagesByCharId(char.id, char.contextLimit || 500, true)
+                .catch(() => messages);
+            triggerAI(latestMessages, undefined, () => setInstantSendingActive(false));
+        }
     };
 
     const handleSendVoice = async (blob: Blob, durationSec: number, mimeType: string) => {
@@ -1480,17 +1495,10 @@ const Chat: React.FC = () => {
 
     // 顶栏 ⚡ 是唯一手动触发入口。useChatAI 按设置选择 D1 + Queue、独立旧 Instant
     // 或本地 fetch；主动消息 2.0 的定时任务和用户自己的主动唤醒不受影响。
-    const handleManualTrigger = async () => {
+    const handleManualTrigger = () => {
         // 上一轮还在跑时 triggerAI 会静默 reject，提前挡掉即可。
         if (isTyping) return;
-        // 手动 ⚡ 也给“正在准备发送”的可见反馈。D1 即时对话返回 202、旧 Instant
-        // 完成 POST 或本地请求正式进入生成后，triggerAI 才 resolve；无论成功失败都熄灯。
-        setInstantSendingActive(true);
-        try {
-            await triggerAI(messages);
-        } finally {
-            setInstantSendingActive(false);
-        }
+        triggerAI(messages);
     };
 
     const handleReroll = async () => {

@@ -1806,10 +1806,10 @@ export const ActiveMsgClient = {
     try {
       const config = await ensureWorkerReady();
       const { status, body } = await fetchWithAuthRaw('config-check', config, { method: 'GET' }, '即时对话能力探测');
-      // Queue 只是加速器，不是即时对话的正确性门槛。没有 Queue 时 Worker 会用
-      // waitUntil 立即起跑，并由每分钟 cron 兜底；把 instantQueue 当硬条件会让已经
-      // 能处理 /instant-chat 的部署被前端误判成不可用。
-      return status === 200 && body?.success === true && body?.data?.instantChat === true;
+      return status === 200
+        && body?.success === true
+        && body?.data?.instantChat === true
+        && body?.data?.instantQueue === true;
     } catch { return false; }
   },
 
