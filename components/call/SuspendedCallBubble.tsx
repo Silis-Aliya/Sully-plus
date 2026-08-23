@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { CharacterProfile } from '../../types';
 import { getChibi } from '../../utils/vrWorld/chibi';
 import { clampBubblePos, resolveInsets } from '../../utils/floatingBallBounds';
 import { resolveVideoCallBackground, resolveVideoCallForeground } from '../../utils/videoCallBackground';
 import { useBlobRefUrl } from '../../utils/blobRef';
+import { DEFAULT_STAGE_FRAMING } from '../../utils/avatarPerformance';
 import type { SuspendedCallInfo } from '../../context/OSContext';
 import VRMVideoCallStage from './VRMVideoCallStage';
 
@@ -34,6 +35,14 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, ca
   const [quickText, setQuickText] = useState('');
   const videoBackgroundUrl = useBlobRefUrl(resolveVideoCallBackground(character));
   const videoForegroundUrl = useBlobRefUrl(resolveVideoCallForeground(character));
+  const miniVideoFraming = useMemo(() => {
+    const base = character.videoAvatar?.framing || DEFAULT_STAGE_FRAMING;
+    const multiplier = character.videoAvatar?.format === 'live2d' ? 1.9 : 1.55;
+    return {
+      ...base,
+      scale: Math.min(3.4, Math.max(1.8, base.scale * multiplier)),
+    };
+  }, [character.videoAvatar?.format, character.videoAvatar?.framing]);
 
   const sendQuickText = () => {
     const text = quickText.trim();
@@ -122,6 +131,7 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, ca
               characterName={character.name}
               fallbackAvatar={character.avatar}
               model={character.videoAvatar}
+              baseFraming={miniVideoFraming}
               motionState="idle"
               accentColor="#60a5fa"
               backgroundUrl={videoBackgroundUrl}
