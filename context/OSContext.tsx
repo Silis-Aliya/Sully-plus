@@ -4525,6 +4525,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                   videoCallForegroundMode: c.videoCallForegroundMode,
                                   videoCallForegroundSchedule: c.videoCallForegroundSchedule,
                                   videoCallForegroundPlacement: c.videoCallForegroundPlacement,
+                                  videoCallForegroundPlacementSchedule: c.videoCallForegroundPlacementSchedule,
                               }
                           };
                           return processObject(extracted);

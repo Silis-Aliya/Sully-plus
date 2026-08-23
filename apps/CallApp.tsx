@@ -13,7 +13,7 @@ import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
 import { startStt, isSttSupported, type SttSession } from '../utils/speechToText';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
-import { getVideoCallBackgroundPreset, resolveVideoCallBackground, resolveVideoCallBackgroundPeriod, resolveVideoCallForeground, type VideoCallBackgroundPeriod, type VideoCallBackgroundSegmentCount } from '../utils/videoCallBackground';
+import { getVideoCallBackgroundPreset, resolveVideoCallBackground, resolveVideoCallBackgroundPeriod, resolveVideoCallForeground, resolveVideoCallForegroundPlacement, type VideoCallBackgroundPeriod, type VideoCallBackgroundSegmentCount } from '../utils/videoCallBackground';
 import {
   injectMemoryPalace,
 } from '../utils/memoryPalace/pipeline';
@@ -594,6 +594,7 @@ const CallApp: React.FC = () => {
   const [expandedBackgroundPeriod, setExpandedBackgroundPeriod] = useState<VideoCallBackgroundPeriod | null>(null);
   const [stageLayerPicker, setStageLayerPicker] = useState<'background' | 'foreground'>('background');
   const [foregroundEditing, setForegroundEditing] = useState(false);
+  const [foregroundEditingPeriod, setForegroundEditingPeriod] = useState<VideoCallBackgroundPeriod | null>(null);
   const [stageClock, setStageClock] = useState(() => Date.now());
   const [videoCallLayout, setVideoCallLayout] = useState<VideoCallLayout>(loadVideoCallLayout);
   const [userCameraPreviewSize, setUserCameraPreviewSize] = useState<UserCameraPreviewSize>(loadUserCameraPreviewSize);
@@ -2685,7 +2686,15 @@ ${sentencePlan}`;
   const stageBackgroundPeriods = getVideoCallBackgroundPreset(selectedChar);
   const stageBackgroundUrl = useBlobRefUrl(activeStageBackground);
   const activeStageForeground = selectedChar ? resolveVideoCallForeground(selectedChar, new Date(stageClock)) : undefined;
-  const stageForegroundUrl = useBlobRefUrl(activeStageForeground);
+  const editedStageForeground = foregroundEditingPeriod
+    ? selectedChar?.videoCallForegroundSchedule?.[foregroundEditingPeriod] || selectedChar?.videoCallForeground
+    : activeStageForeground;
+  const stageForegroundUrl = useBlobRefUrl(editedStageForeground);
+  const stageForegroundPlacement = selectedChar
+    ? (foregroundEditingPeriod
+      ? selectedChar.videoCallForegroundPlacementSchedule?.[foregroundEditingPeriod] || selectedChar.videoCallForegroundPlacement
+      : resolveVideoCallForegroundPlacement(selectedChar, new Date(stageClock)))
+    : undefined;
   const stageLayerMode = stageLayerPicker === 'foreground' ? selectedChar?.videoCallForegroundMode : selectedChar?.videoCallBackgroundMode;
   const stageLayerSingle = stageLayerPicker === 'foreground' ? selectedChar?.videoCallForeground : selectedChar?.videoCallBackground;
   const stageLayerSchedule = stageLayerPicker === 'foreground' ? selectedChar?.videoCallForegroundSchedule : selectedChar?.videoCallBackgroundSchedule;
@@ -2737,6 +2746,7 @@ ${sentencePlan}`;
         addToast(period ? '时段图片已保存' : `${stageLayerPicker === 'foreground' ? '舞台前景' : '视频背景'}已更新`, 'success');
         if (stageLayerPicker === 'foreground') {
           setShowBgPicker(false);
+          setForegroundEditingPeriod(period || null);
           setForegroundEditing(true);
         }
       } catch (error: any) {
@@ -2749,6 +2759,7 @@ ${sentencePlan}`;
   };
   const openBgPicker = (layer: 'background' | 'foreground' = 'background') => {
     setStageLayerPicker(layer);
+    setForegroundEditingPeriod(null);
     const current = layer === 'foreground' ? selectedChar?.videoCallForeground : selectedChar?.videoCallBackground;
     setBgUrlInput(current && !isBlobRef(current) ? current : '');
     const schedule = (layer === 'foreground' ? selectedChar?.videoCallForegroundSchedule : selectedChar?.videoCallBackgroundSchedule) || {};
@@ -2767,7 +2778,10 @@ ${sentencePlan}`;
     }
     await applyStageBackground(url);
     setShowBgPicker(false);
-    if (stageLayerPicker === 'foreground') setForegroundEditing(true);
+    if (stageLayerPicker === 'foreground') {
+      setForegroundEditingPeriod(null);
+      setForegroundEditing(true);
+    }
     addToast(`${stageLayerPicker === 'foreground' ? '舞台前景' : '视频背景'}已更新`, 'success');
   };
   const applyScheduledBgUrlInput = async (period: VideoCallBackgroundPeriod) => {
@@ -2779,9 +2793,34 @@ ${sentencePlan}`;
     await applyScheduledStageBackground(period, url);
     if (stageLayerPicker === 'foreground') {
       setShowBgPicker(false);
+      setForegroundEditingPeriod(period);
       setForegroundEditing(true);
     }
     addToast('时段图片已保存', 'success');
+  };
+  const updateForegroundPlacement = (placement: NonNullable<CharacterProfile['videoCallForegroundPlacement']>) => {
+    if (!selectedChar) return;
+    if (foregroundEditingPeriod && selectedChar.videoCallForegroundMode === 'time') {
+      updateCharacter(selectedChar.id, {
+        videoCallForegroundPlacementSchedule: {
+          ...(selectedChar.videoCallForegroundPlacementSchedule || {}),
+          [foregroundEditingPeriod]: placement,
+        },
+      });
+      return;
+    }
+    updateCharacter(selectedChar.id, { videoCallForegroundPlacement: placement });
+  };
+  const finishForegroundPlacementEditing = () => {
+    if (!selectedChar) return;
+    const placement = stageForegroundPlacement || { x: 0, y: 0, scale: 1 };
+    updateForegroundPlacement({ ...placement, locked: true });
+    const periodLabel = foregroundEditingPeriod
+      ? stageBackgroundPeriods.find(item => item.id === foregroundEditingPeriod)?.label
+      : '';
+    setForegroundEditing(false);
+    setForegroundEditingPeriod(null);
+    addToast(periodLabel ? `${periodLabel}前景位置已锁定` : '舞台前景位置已锁定', 'success');
   };
 
   const avatarImportOverlay = avatarImportStatus ? (
@@ -3375,14 +3414,10 @@ ${sentencePlan}`;
             accentColor={accentColor}
             backgroundUrl={stageBackgroundUrl}
             foregroundUrl={stageForegroundUrl}
-            foregroundPlacement={selectedChar?.videoCallForegroundPlacement}
+            foregroundPlacement={stageForegroundPlacement}
             foregroundEditing={foregroundEditing}
-            onForegroundPlacementChange={placement => selectedChar && updateCharacter(selectedChar.id, { videoCallForegroundPlacement: placement })}
-            onForegroundEditingDone={() => {
-              if (selectedChar) updateCharacter(selectedChar.id, { videoCallForegroundPlacement: { ...(selectedChar.videoCallForegroundPlacement || { x: 0, y: 0, scale: 1 }), locked: true } });
-              setForegroundEditing(false);
-              addToast('舞台前景位置已锁定', 'success');
-            }}
+            onForegroundPlacementChange={updateForegroundPlacement}
+            onForegroundEditingDone={finishForegroundPlacementEditing}
             onChooseModel={() => openCallSetupGuide('model')}
             onChooseLive2DFolder={chooseLive2DDirectory}
             onConfigureActions={() => setShowLive2DSettings(true)}
@@ -3756,11 +3791,17 @@ ${sentencePlan}`;
             </div>
             {stageLayerPicker === 'foreground' && activeStageForeground && (
               <button
-                onClick={() => { setShowBgPicker(false); setForegroundEditing(true); }}
+                onClick={() => {
+                  setShowBgPicker(false);
+                  setForegroundEditingPeriod(stageLayerMode === 'time' ? activeStageBackgroundPeriod : null);
+                  setForegroundEditing(true);
+                }}
                 className="keep-white sticky top-0 z-10 w-full rounded-2xl py-3 text-sm font-semibold text-white shadow-lg"
                 style={{ backgroundColor: accentColor }}
               >
-                进入画面调整位置与缩放
+                {stageLayerMode === 'time'
+                  ? `调整当前「${stageBackgroundPeriods.find(item => item.id === activeStageBackgroundPeriod)?.label || '时段'}」前景位置与缩放`
+                  : '进入画面调整位置与缩放'}
               </button>
             )}
             {stageLayerMode !== 'time' ? (
@@ -3811,6 +3852,19 @@ ${sentencePlan}`;
                             <button onClick={() => chooseStageBackgroundFile(period.id)} className={`flex-1 rounded-xl border px-3 py-2.5 text-xs font-medium ${lightTheme ? 'border-[#d9e1ec] bg-[#ffffff]' : 'border-white/15 bg-white/[0.06]'}`}>{saved ? '替换本地图片' : '选择本地图片'}</button>
                             {saved && <button onClick={() => void applyScheduledStageBackground(period.id, undefined)} className={`rounded-xl px-3 py-2.5 text-xs ${lightTheme ? 'text-[#8b6670]' : 'text-rose-200/70'}`}>清除</button>}
                           </div>
+                          {stageLayerPicker === 'foreground' && saved && (
+                            <button
+                              onClick={() => {
+                                setShowBgPicker(false);
+                                setForegroundEditingPeriod(period.id);
+                                setForegroundEditing(true);
+                              }}
+                              className="keep-white mt-2 w-full rounded-xl py-2.5 text-xs font-semibold text-white active:scale-[0.98]"
+                              style={{ backgroundColor: accentColor }}
+                            >
+                              调整「{period.label}」的位置与缩放
+                            </button>
+                          )}
                           <div className="mt-2 flex gap-2">
                             <input value={bgScheduleUrlInputs[period.id] || ''} onChange={e => setBgScheduleUrlInputs(current => ({ ...current, [period.id]: e.target.value }))} placeholder="https:// 该时段图片直链"
                               className={`flex-1 min-w-0 rounded-xl px-3 py-2.5 text-xs outline-none border ${lightTheme ? 'border-[#d9e1ec] bg-[#ffffff] placeholder:text-[#9aa6b8]' : 'border-white/10 bg-black/25 placeholder:text-white/25'}`} />

@@ -106,7 +106,15 @@ describe('v2 真实链路：分片 → 组装 → importFullData', () => {
 
         // media_only 形状：没有 characters 字段（关键！），只有 mediaAssets + 过滤后的 image 消息
         const backupData = {
-            mediaAssets: [{ charId: 'c1', avatar: 'new-avatar', backgrounds: {} }],
+            mediaAssets: [{
+                charId: 'c1',
+                avatar: 'new-avatar',
+                backgrounds: {
+                    videoCallForegroundPlacementSchedule: {
+                        morning: { x: 4, y: -2, scale: 1.3, locked: true },
+                    },
+                },
+            }],
             messages: [{ id: 2, charId: 'c1', type: 'image', content: 'img' }],
         };
         const zip = new FakeZip();
@@ -120,6 +128,7 @@ describe('v2 真实链路：分片 → 组装 → importFullData', () => {
         expect(c1.name).toBe('Alice');        // 文字字段存活
         expect(c1.bio).toBe('text-bio');      // 文字字段存活
         expect(c1.avatar).toBe('new-avatar'); // 媒体被 patch
+        expect(c1.videoCallForegroundPlacementSchedule?.morning).toEqual({ x: 4, y: -2, scale: 1.3, locked: true });
         // 老文字消息 id1 没被清，新 image id2 加上（patch/merge，不 clear）
         const msgIds = (await DB.getRawStoreData('messages')).map((m: any) => m.id).sort();
         expect(msgIds).toEqual([1, 2]);

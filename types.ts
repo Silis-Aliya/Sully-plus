@@ -2645,6 +2645,8 @@ export interface CharacterProfile {
   videoCallForegroundSchedule?: Partial<Record<'morning' | 'noon' | 'afternoon' | 'dusk' | 'evening' | 'night' | 'day', string>>;
   /** 前景共享构图；保存后默认锁定，避免通话时误拖。 */
   videoCallForegroundPlacement?: { x: number; y: number; scale: number; locked?: boolean };
+  /** 时间模式下各时段独立的前景构图；缺失时回退到共享构图。 */
+  videoCallForegroundPlacementSchedule?: Partial<Record<'morning' | 'noon' | 'afternoon' | 'dusk' | 'evening' | 'night' | 'day', { x: number; y: number; scale: number; locked?: boolean }>>;
   /**
    * 触感陪伴桌面（companion 皮肤）的背景：`preset:<id>`（内置华丽渐变场景）、
    * `blobref:<id>` 令牌（本地图片，备份由 resolveBlobRefsDeep 还原）或 http(s)
@@ -3785,6 +3787,7 @@ export interface FullBackupData {
             videoCallForegroundMode?: 'single' | 'time';
             videoCallForegroundSchedule?: CharacterProfile['videoCallForegroundSchedule'];
             videoCallForegroundPlacement?: CharacterProfile['videoCallForegroundPlacement'];
+            videoCallForegroundPlacementSchedule?: CharacterProfile['videoCallForegroundPlacementSchedule'];
         };
     }[];
 

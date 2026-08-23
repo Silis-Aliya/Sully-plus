@@ -3626,6 +3626,7 @@ export const DB = {
               videoCallForegroundMode: media.backgrounds?.videoCallForegroundMode ?? c.videoCallForegroundMode,
               videoCallForegroundSchedule: media.backgrounds?.videoCallForegroundSchedule || c.videoCallForegroundSchedule,
               videoCallForegroundPlacement: media.backgrounds?.videoCallForegroundPlacement || c.videoCallForegroundPlacement,
+              videoCallForegroundPlacementSchedule: media.backgrounds?.videoCallForegroundPlacementSchedule || c.videoCallForegroundPlacementSchedule,
               roomConfig: c.roomConfig ? {
                   ...c.roomConfig,
                   wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,

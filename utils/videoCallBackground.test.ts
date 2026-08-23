@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveVideoCallBackground, resolveVideoCallBackgroundPeriod, resolveVideoCallForeground } from './videoCallBackground';
+import { resolveVideoCallBackground, resolveVideoCallBackgroundPeriod, resolveVideoCallForeground, resolveVideoCallForegroundPlacement } from './videoCallBackground';
 
 describe('video call time backgrounds', () => {
   const character = { customTimezoneEnabled: true, customTimezone: 'Asia/Shanghai' };
@@ -30,6 +30,23 @@ describe('video call time backgrounds', () => {
       videoCallForegroundMode: 'time',
       videoCallForegroundSchedule: {},
     }, new Date('2026-08-23T22:30:00Z'))).toBe('desk-default');
+  });
+
+  it('uses an independent foreground placement for each time period', () => {
+    const fallback = { x: 0, y: 0, scale: 1, locked: true };
+    const morning = { x: 12, y: -8, scale: 1.4, locked: true };
+    expect(resolveVideoCallForegroundPlacement({
+      ...character,
+      videoCallForegroundMode: 'time',
+      videoCallForegroundPlacement: fallback,
+      videoCallForegroundPlacementSchedule: { morning },
+    }, new Date('2026-08-23T22:30:00Z'))).toEqual(morning);
+    expect(resolveVideoCallForegroundPlacement({
+      ...character,
+      videoCallForegroundMode: 'time',
+      videoCallForegroundPlacement: fallback,
+      videoCallForegroundPlacementSchedule: {},
+    }, new Date('2026-08-23T22:30:00Z'))).toEqual(fallback);
   });
 
   it.each([

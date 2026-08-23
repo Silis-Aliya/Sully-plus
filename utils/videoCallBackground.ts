@@ -80,3 +80,16 @@ export function resolveVideoCallForeground(
   const legacy = period === 'afternoon' ? schedule?.day : period === 'dusk' ? schedule?.evening : undefined;
   return schedule?.[period] || legacy || character.videoCallForeground;
 }
+
+export function resolveVideoCallForegroundPlacement(
+  character: Pick<CharacterProfile,
+    'videoCallForegroundMode' | 'videoCallForegroundPlacement' | 'videoCallForegroundPlacementSchedule' |
+    'videoCallBackgroundSegmentCount' | 'customTimezone' | 'customTimezoneEnabled'>,
+  now = new Date(),
+): CharacterProfile['videoCallForegroundPlacement'] {
+  if (character.videoCallForegroundMode !== 'time') return character.videoCallForegroundPlacement;
+  const period = resolveVideoCallBackgroundPeriod(character, now);
+  const schedule = character.videoCallForegroundPlacementSchedule;
+  const legacy = period === 'afternoon' ? schedule?.day : period === 'dusk' ? schedule?.evening : undefined;
+  return schedule?.[period] || legacy || character.videoCallForegroundPlacement;
+}

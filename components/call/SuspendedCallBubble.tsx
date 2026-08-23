@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { CharacterProfile } from '../../types';
 import { getChibi } from '../../utils/vrWorld/chibi';
 import { clampBubblePos, resolveInsets } from '../../utils/floatingBallBounds';
-import { resolveVideoCallBackground, resolveVideoCallForeground } from '../../utils/videoCallBackground';
+import { resolveVideoCallBackground, resolveVideoCallForeground, resolveVideoCallForegroundPlacement } from '../../utils/videoCallBackground';
 import { useBlobRefUrl } from '../../utils/blobRef';
 import { DEFAULT_STAGE_FRAMING } from '../../utils/avatarPerformance';
 import type { SuspendedCallInfo } from '../../context/OSContext';
@@ -136,7 +136,7 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, ca
               accentColor="#60a5fa"
               backgroundUrl={videoBackgroundUrl}
               foregroundUrl={videoForegroundUrl}
-              foregroundPlacement={character.videoCallForegroundPlacement}
+              foregroundPlacement={resolveVideoCallForegroundPlacement(character)}
               onChooseModel={() => undefined}
               companionMode
               framingEditable={false}
