@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Microphone, SpeakerHigh, SpeakerSlash, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check } from '@phosphor-icons/react';
+import { Microphone, SpeakerHigh, SpeakerSlash, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Check } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
@@ -505,12 +505,8 @@ const CallApp: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<ViewMode>('role-select');
   const [selectedCharId, setSelectedCharId] = useState<string>(activeCharacterId || characters[0]?.id || '');
-  const ROLES_PER_PAGE = 6;
+  const [pendingDirectCallCharId, setPendingDirectCallCharId] = useState('');
   const [roleGroupId, setRoleGroupId] = useState<string>(GROUP_FILTER_ALL); // 选人页的分组筛选
-  const [rolePage, setRolePage] = useState<number>(() => {
-    const i = characters.findIndex(c => c.id === (activeCharacterId || characters[0]?.id));
-    return i > 0 ? Math.floor(i / 6) : 0;
-  });
   const [recordDetailId, setRecordDetailId] = useState<string>('');
   const [callState, setCallState] = useState<CallState>('idle');
   const [callMode, setCallMode] = useState<CallMode>(() => {
@@ -519,8 +515,16 @@ const CallApp: React.FC = () => {
   });
   // 电话 App 独立的浅色主题偏好（覆盖选人页/通话中/视频/记录页）
   const [callTheme, setCallTheme] = useState<'dark' | 'light'>(() => {
-    try { return localStorage.getItem('sully-call-theme-v1') === 'light' ? 'light' : 'dark'; }
-    catch { return 'dark'; }
+    try {
+      // Soft Modern UI 首次上线时统一迁到冷灰蓝浅色皮肤；之后仍允许用户自行切换。
+      if (!localStorage.getItem('sully-call-soft-modern-v1')) {
+        localStorage.setItem('sully-call-soft-modern-v1', '1');
+        localStorage.setItem('sully-call-theme-v1', 'light');
+        return 'light';
+      }
+      return localStorage.getItem('sully-call-theme-v1') === 'dark' ? 'dark' : 'light';
+    }
+    catch { return 'light'; }
   });
   const lightTheme = callTheme === 'light';
   useEffect(() => {
@@ -1664,6 +1668,15 @@ const CallApp: React.FC = () => {
     }
     beginSelectedCall('off');
   };
+  useEffect(() => {
+    if (!pendingDirectCallCharId || pendingDirectCallCharId !== selectedCharId) return;
+    setPendingDirectCallCharId('');
+    requestSelectedCall();
+  }, [pendingDirectCallCharId, selectedCharId]);
+  const requestDirectCall = (characterId: string) => {
+    setSelectedCharId(characterId);
+    setPendingDirectCallCharId(characterId);
+  };
   const finishCallSetupGuide = () => {
     try { localStorage.setItem(CALL_SETUP_GUIDE_KEY, 'complete'); } catch { /* private WebView */ }
     beginSelectedCall(setupCameraMode);
@@ -2630,9 +2643,6 @@ ${sentencePlan}`;
   ) : null;
   if (viewMode === 'role-select') {
     const groupChars = filterCharactersByGroup(characters, characterGroups, roleGroupId);
-    const totalPages = Math.max(1, Math.ceil(groupChars.length / ROLES_PER_PAGE));
-    const page = Math.min(rolePage, totalPages - 1);
-    const pagedChars = groupChars.slice(page * ROLES_PER_PAGE, page * ROLES_PER_PAGE + ROLES_PER_PAGE);
     return (
       <div className={`relative h-full w-full bg-gradient-to-b text-white flex flex-col overflow-hidden ${lightTheme ? 'sully-call-light from-[#f5f2fd] via-[#eef0f8] to-[#e9ecf5]' : 'from-[#140d28] via-[#0a0613] to-[#05030c]'}`}>
         {lightTheme && <style>{CALL_LIGHT_THEME_CSS}</style>}
@@ -2668,13 +2678,13 @@ ${sentencePlan}`;
             onClose={closeCallSetupGuide}
           />
         )}
-        {/* floating sparkles */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        {/* 深色旧皮肤保留星点；Soft Modern 浅色皮肤保持干净。 */}
+        {!lightTheme && <div className="absolute inset-0 overflow-hidden pointer-events-none">
           {CALL_SPARKLES.map((p, i) => (
             <span key={i} className="absolute rounded-full bg-white animate-pulse"
               style={{ top: p.top, left: p.left, width: p.s, height: p.s, opacity: 0.5, animationDelay: `${i * 0.4}s`, boxShadow: `0 0 6px ${accentColor}` }} />
           ))}
-        </div>
+        </div>}
         {/* top-right character art bleed */}
         {selectedChar?.avatar && (
           <div className="absolute top-0 right-0 w-48 h-60 pointer-events-none"
@@ -2690,42 +2700,55 @@ ${sentencePlan}`;
             paddingBottom: 'max(1.25rem, var(--safe-bottom, 0px))',
           }}
         >
-          {/* header */}
+          {/* Soft Modern 顶栏：返回 / 语音视频切换 / 通话记录 */}
           <div className="shrink-0">
-            <div className="text-[10px] tracking-[0.42em] text-white/35 font-semibold">CHAT WITH</div>
-            <h1 className="mt-1 text-[2rem] font-bold leading-tight inline-flex items-start gap-1.5">
-              想找谁聊聊？
-              <span className="text-sm mt-1" style={{ color: accentColor, textShadow: `0 0 10px ${accentColor}` }}>✦</span>
-            </h1>
-            <p className="text-sm text-white/45 mt-1">选一个人，拨过去吧。</p>
+            <div className="flex items-center justify-between">
+              <button onClick={closeApp} aria-label="返回" className="flex h-9 w-9 items-center justify-center rounded-full border border-[#e2e8f0] bg-white text-[#334155] active:scale-95">
+                <CaretLeft size={18} weight="bold" />
+              </button>
+              <div className="flex w-[140px] gap-0.5 rounded-[14px] bg-[#e2e8f0] p-[3px]">
+                <button onClick={() => setCallMode('voice')} className={`flex-1 rounded-[11px] py-2 text-xs font-semibold transition ${callMode === 'voice' ? 'bg-white text-[#1e293b] shadow-sm' : 'text-[#64748b]'}`}>语音</button>
+                <button onClick={() => setCallMode('video')} className={`flex-1 rounded-[11px] py-2 text-xs font-semibold transition ${callMode === 'video' ? 'bg-white text-[#1e293b] shadow-sm' : 'text-[#64748b]'}`}>视频</button>
+              </div>
+              <button onClick={() => { setViewMode('history'); trackEvent('打开通话记录'); }} aria-label="通话记录" className="flex h-9 w-9 items-center justify-center rounded-full border border-[#e2e8f0] bg-white text-[#334155] active:scale-95">
+                <Clock size={17} weight="bold" />
+              </button>
+            </div>
+            <h1 className="mt-5 text-[26px] font-bold leading-tight tracking-[-0.5px] text-[#1e293b]">拨号连线</h1>
+            <p className="mt-1 text-xs text-[#64748b]">选择角色，建立{callMode === 'video' ? '视频' : '语音'}通讯</p>
           </div>
 
           {/* 分组筛选（没建分组时不渲染） */}
           <CharacterGroupFilterBar characters={characters} groups={characterGroups} dark={!lightTheme}
-            value={roleGroupId} onChange={(id) => { setRoleGroupId(id); setRolePage(0); }} className="mt-4 shrink-0" />
+            value={roleGroupId} onChange={setRoleGroupId} className="mt-4 shrink-0" />
 
-          {/* character cards (6 / page) */}
+          {/* 3028：联系人本身就是拨号入口，不再先选中、再到底部发起。 */}
           <div className="mt-4 min-h-[5rem] flex-1 overflow-y-auto overscroll-contain no-scrollbar space-y-2.5 pr-0.5" data-testid="call-character-picker">
-            {pagedChars.map(char => {
+            {groupChars.map(char => {
               const selected = selectedCharId === char.id;
               return (
-                <button key={char.id} onClick={() => setSelectedCharId(char.id)}
-                  className="relative w-full rounded-3xl px-4 py-3.5 text-left border backdrop-blur-md transition active:scale-[0.99]"
-                  style={selected
-                    ? { borderColor: accentColor, background: `${accentColor}22`, boxShadow: `0 0 18px ${accentColor}55, inset 0 0 18px ${accentColor}1f` }
-                    : { borderColor: 'rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.04)' }}>
+                <div key={char.id}
+                  className="relative w-full rounded-[20px] border border-[#e2e8f0] bg-white px-4 py-3.5 text-left shadow-[0_2px_8px_rgba(30,41,59,0.03)] transition active:scale-[0.98]">
                   <div className="flex items-center gap-3.5">
-                    <div className="w-12 h-12 rounded-full overflow-hidden border flex items-center justify-center font-semibold shrink-0"
-                      style={{ borderColor: selected ? accentColor : 'rgba(255,255,255,0.25)', backgroundColor: `${accentColor}40` }}>
+                    <button type="button" onClick={() => setSelectedCharId(char.id)} className="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center font-semibold shrink-0 bg-[#475569] text-white">
                       {char.avatar ? <img src={char.avatar} alt={char.name} className="w-full h-full object-cover" /> : (char.name?.[0] || '角')}
+                    </button>
+                    <button type="button" onClick={() => setSelectedCharId(char.id)} className="min-w-0 flex-1 text-left">
+                      <div className="truncate text-[15px] font-bold text-[#1e293b]">{char.name}</div>
+                      <div className="mt-0.5 truncate text-xs text-[#64748b]">{char.description || '等待建立通讯连接'}</div>
+                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {callMode === 'video' && selected && (
+                        <button type="button" onClick={() => openCallSetupGuide('model')} aria-label={`设置${char.name}的视频形象`} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f1f5f9] text-[#64748b] active:scale-90">
+                          <Gear size={15} weight="fill" />
+                        </button>
+                      )}
+                      <button type="button" onClick={() => requestDirectCall(char.id)} aria-label={`${callMode === 'video' ? '视频呼叫' : '呼叫'}${char.name}`} className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#3b82f6] text-white shadow-[0_4px_12px_rgba(59,130,246,.25)] active:scale-90">
+                        {callMode === 'video' ? <VideoCamera size={17} weight="fill" /> : <Phone size={17} weight="fill" />}
+                      </button>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-[15px] truncate" style={selected ? { color: accentColor } : undefined}>{char.name}</div>
-                      <div className="text-xs text-white/45 mt-0.5 truncate">{char.description || '点击编辑设定...'}</div>
-                    </div>
-                    <span className="text-base shrink-0" style={{ color: selected ? accentColor : 'rgba(255,255,255,0.25)' }}>✦</span>
                   </div>
-                </button>
+                </div>
               );
             })}
             {!groupChars.length && (
@@ -2733,43 +2756,9 @@ ${sentencePlan}`;
             )}
           </div>
 
-          {/* pagination */}
-          {totalPages > 1 && (
-            <div className="shrink-0 flex items-center justify-center gap-3 pt-3">
-              <button disabled={page === 0} onClick={() => setRolePage(p => Math.max(0, p - 1))}
-                className="w-7 h-7 rounded-full border border-white/15 bg-white/[0.04] flex items-center justify-center text-white/70 disabled:opacity-25 active:scale-90 transition">
-                <CaretLeft size={14} weight="bold" />
-              </button>
-              <div className="flex items-center gap-1.5">
-                {Array.from({ length: totalPages }).map((_, i) => (
-                  <button key={i} onClick={() => setRolePage(i)} aria-label={`第${i + 1}页`}
-                    className="rounded-full transition-all" style={{ width: i === page ? 16 : 6, height: 6, background: i === page ? accentColor : 'rgba(255,255,255,0.25)' }} />
-                ))}
-              </div>
-              <button disabled={page >= totalPages - 1} onClick={() => setRolePage(p => Math.min(totalPages - 1, p + 1))}
-                className="w-7 h-7 rounded-full border border-white/15 bg-white/[0.04] flex items-center justify-center text-white/70 disabled:opacity-25 active:scale-90 transition">
-                <CaretRight size={14} weight="bold" />
-              </button>
-            </div>
-          )}
-
-          {/* actions */}
-          <div className="shrink-0 pt-4 space-y-2.5" data-testid="call-role-actions">
-            <div className="flex items-center gap-1 rounded-2xl border border-white/10 bg-black/20 p-1">
-              <button
-                onClick={() => setCallMode('voice')}
-                className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-medium transition ${callMode === 'voice' ? 'bg-white/12 text-white' : 'text-white/40'}`}
-              >
-                <Phone size={15} weight={callMode === 'voice' ? 'fill' : 'regular'} /> 语音
-              </button>
-              <button
-                onClick={() => setCallMode('video')}
-                className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-medium transition ${callMode === 'video' ? 'bg-white/12 text-white' : 'text-white/40'}`}
-                style={callMode === 'video' ? { boxShadow: `inset 0 0 0 1px ${accentColor}55` } : undefined}
-              >
-                <VideoCamera size={15} weight={callMode === 'video' ? 'fill' : 'regular'} /> 视频
-              </button>
-            </div>
+          {/* 3028 的视频设置抽屉仍承接现有模型/摄像头能力。 */}
+          {callMode === 'video' && selectedChar && (
+          <div className="shrink-0 pt-3 space-y-2" data-testid="call-role-actions">
             {callMode === 'video' && (
               <div className="space-y-2">
                 <button
@@ -2893,34 +2882,8 @@ ${sentencePlan}`;
                 </details>
               </div>
             )}
-            <button onClick={requestSelectedCall}
-              className="relative w-full py-3.5 rounded-2xl overflow-hidden transition active:scale-[0.98]"
-              style={{ background: `linear-gradient(to right, ${accentColor}26, ${accentColor}4d, ${accentColor}26)`, border: `1px solid ${accentColor}80`, boxShadow: `0 0 22px ${accentColor}40` }}>
-              <span className="absolute inset-[3px] rounded-xl border border-white/10 pointer-events-none" />
-              <span className="absolute left-5 top-1/2 -translate-y-1/2 text-xs" style={{ color: accentColor }}>✦</span>
-              <span className="absolute right-5 top-1/2 -translate-y-1/2 text-xs text-white/60">✦</span>
-              <span className="relative text-white/90 text-[15px]">
-                {selectedChar ? <>{callMode === 'video' ? '视频接通 ' : '拨给 '}<span className="font-serif italic text-xl align-baseline" style={{ textShadow: `0 0 12px ${accentColor}` }}>{selectedChar.name}</span></> : '开始通话'}
-              </span>
-            </button>
-            <button onClick={() => { setViewMode('history'); trackEvent('打开通话记录'); }}
-              className="relative w-full py-3 rounded-2xl border border-white/15 bg-white/[0.04] backdrop-blur-md text-white/80 flex items-center justify-center gap-2 transition active:scale-[0.98] hover:bg-white/[0.08]">
-              <Clock size={16} weight="bold" style={{ color: accentColor }} /> 通话记录
-            </button>
-            <div className="flex items-center justify-between pt-1">
-              <button onClick={() => openApp(AppID.Settings)} title="设置"
-                className="w-9 h-9 rounded-full border border-white/15 bg-white/[0.04] flex items-center justify-center text-white/60 active:scale-90 transition">
-                <Gear size={16} weight="fill" />
-              </button>
-              <button onClick={closeApp} className="flex items-center gap-2 text-sm text-white/45 active:scale-95 transition">
-                <span style={{ color: accentColor }}>✦</span> 关闭 <span style={{ color: accentColor }}>✦</span>
-              </button>
-              <button onClick={() => setCallTheme(lightTheme ? 'dark' : 'light')} title={lightTheme ? '切换到深色主题' : '切换到浅色主题'}
-                className="w-9 h-9 rounded-full border border-white/15 bg-white/[0.04] flex items-center justify-center text-white/60 active:scale-90 transition">
-                {lightTheme ? <Moon size={16} weight="fill" /> : <Sun size={16} weight="fill" />}
-              </button>
-            </div>
           </div>
+          )}
         </div>
         {showLive2DSettings && selectedChar?.videoAvatar?.format === 'live2d' && (
           <div className="sully-stage-dark" style={{ display: 'contents' }}>
@@ -3066,8 +3029,8 @@ ${sentencePlan}`;
       `}</style>
       {avatarImportOverlay}
       {vroidBetaOverlay}
-      {/* blurred character art */}
-      <div
+      {/* 深色皮肤保留环境光；Soft Modern 让语音/视频的控件颜色保持同一套冷灰蓝。 */}
+      {!lightTheme && <><div
         className="absolute inset-0 bg-cover bg-center scale-125 blur-3xl opacity-30"
         style={{ backgroundImage: selectedChar?.avatar ? `url(${selectedChar.avatar})` : undefined }}
       />
@@ -3076,21 +3039,22 @@ ${sentencePlan}`;
         style={{ background: `radial-gradient(closest-side, ${accentColor}, transparent)` }} />
       <div className="absolute -bottom-20 left-1/2 -translate-x-1/2 w-[150%] h-80 rounded-full blur-3xl opacity-25 pointer-events-none"
         style={{ background: `radial-gradient(closest-side, ${accentColor}, transparent)` }} />
+      </>}
       {/* vignette —— 浅色主题换成柔白薄纱，压住模糊头像但不发灰 */}
-      <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none ${lightTheme ? 'from-white/60 via-[#f2f0fa]/70 to-white/80' : 'from-black/55 via-[#0a0613]/75 to-black/90'}`} />
+      <div className={`absolute inset-0 pointer-events-none ${lightTheme ? 'bg-[#f0f3f8]' : 'bg-gradient-to-b from-black/55 via-[#0a0613]/75 to-black/90'}`} />
       {/* floating sparkles */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      {!lightTheme && <div className="absolute inset-0 overflow-hidden pointer-events-none">
         {CALL_SPARKLES.map((p, i) => (
           <span key={i} className="absolute rounded-full bg-white animate-pulse"
             style={{ top: p.top, left: p.left, width: p.s, height: p.s, opacity: 0.5, animationDelay: `${i * 0.4}s`, boxShadow: `0 0 6px ${accentColor}` }} />
         ))}
-      </div>
+      </div>}
       <div className="relative z-10 flex h-full min-h-0 flex-col overflow-hidden">
         {/* 键盘避让不在这里做 paddingBottom 兜底：交给全局 interactive-widget=resizes-content
             与 iOS 全屏 PWA 的 app 高度跟随可视区（见 utils/iosStandalone.ts），和聊天等其它 App 一致。 */}
       {/* top channel bar */}
       <div className="relative shrink-0 px-5" style={{ paddingTop: 'max(2.25rem, var(--safe-top))' }}>
-        <div className="absolute left-5 leading-tight" style={{ top: 'max(2.25rem, var(--safe-top))' }}>
+        <div className="call-channel-meta absolute left-5 leading-tight" style={{ top: 'max(2.25rem, var(--safe-top))' }}>
           <div className="text-[9px] tracking-[0.28em] text-white/45 font-semibold">{callMode === 'video' ? 'SULLYOS · VIDEO DATE' : 'PRIVATE CHANNEL'}</div>
           <div className="mt-1.5 flex items-center gap-1.5 text-[8px] tracking-[0.22em] text-white/35">
             {callMode === 'video' ? 'CHARACTER LINK' : 'VOICE SYNC'}
@@ -3101,7 +3065,7 @@ ${sentencePlan}`;
             </span>
           </div>
         </div>
-        <div className="absolute right-5 flex items-center gap-1 text-[9px] tracking-[0.2em] text-white/45 font-medium" style={{ top: 'max(2.25rem, var(--safe-top))' }}>
+        <div className="call-signal-meta absolute right-5 flex items-center gap-1 text-[9px] tracking-[0.2em] text-white/45 font-medium" style={{ top: 'max(2.25rem, var(--safe-top))' }}>
           信号良好
           <span className="flex items-end gap-[2px] h-2.5 ml-0.5">
             {[4, 6, 8, 10].map((h, i) => (
