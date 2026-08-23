@@ -9,7 +9,7 @@ import {
     useSystemConfig,
 } from '../context/OSContext';
 import { DB } from '../utils/db';
-import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot } from '../types';
+import { Message, MessageType, MemoryFragment, Emoji, EmojiCategory, DailySchedule, ScheduleSlot, WorkbenchMessage, WorkbenchSummary } from '../types';
 import { processImage } from '../utils/file';
 import { safeResponseJson, extractContent } from '../utils/safeApi';
 import { buildChatFineTuneCss, mergeChatFineTune } from '../utils/chatFineTuneCss';
@@ -2606,6 +2606,27 @@ const Chat: React.FC = () => {
     const handleDeleteMessage = async () => {
         if (!selectedMessage) return;
         const deletedId = selectedMessage.id;
+        if (selectedMessage.type === 'code_card') {
+            let summaryId = selectedMessage.metadata?.workbenchSummaryId as string | undefined;
+            if (!summaryId) {
+                const summaries = await DB.getRecentWorkbenchSummaries(500).catch(() => [] as WorkbenchSummary[]);
+                summaryId = summaries.find(summary => (
+                    summary.content === selectedMessage.content
+                    && (!selectedMessage.metadata?.workbenchSessionId || summary.sessionId === selectedMessage.metadata.workbenchSessionId)
+                ))?.id;
+            }
+            if (summaryId) {
+                const workbenchMessages = await DB.getRawStoreData('workbench_messages').catch(() => [] as WorkbenchMessage[]);
+                const syncedIds = workbenchMessages
+                    .filter((message: WorkbenchMessage) => message.metadata?.progressCard && (
+                        message.metadata?.workbenchSummaryId === summaryId
+                        || (message.content === selectedMessage.content && message.sessionId === selectedMessage.metadata?.workbenchSessionId)
+                    ))
+                    .map((message: WorkbenchMessage) => message.id);
+                await DB.deleteWorkbenchSummary(summaryId);
+                if (syncedIds.length) await DB.deleteWorkbenchMessages(syncedIds);
+            }
+        }
         await DB.deleteMessage(deletedId);
         discardVoiceForMessages([deletedId]);
         // 满血主动消息：云端 fire_pack 里带最近对话原文，删了消息不打脏的话，角色到点
@@ -2615,7 +2636,7 @@ const Chat: React.FC = () => {
         setTotalMsgCount(prev => Math.max(0, prev - 1));
         setModalType('none');
         setSelectedMessage(null);
-        addToast('消息已删除', 'success');
+        addToast(selectedMessage.type === 'code_card' ? 'Code 进度卡已永久删除' : '消息已删除', 'success');
         trackEvent('删除一条消息');
     };
 

@@ -1184,13 +1184,9 @@ const WorkbenchApp: React.FC = () => {
         setCodeMemoryDrafts(Object.fromEntries(sorted.map(memory => [memory.id, memory.content])));
     };
 
-    const loadProgressCards = async (sessionId?: string) => {
-        if (!sessionId) {
-            setProgressCards([]);
-            return;
-        }
+    const loadProgressCards = async (_sessionId?: string) => {
         const rows = await DB.getRecentWorkbenchSummaries(500).catch(() => [] as WorkbenchSummary[]);
-        setProgressCards(rows.filter(item => item.sessionId === sessionId).sort((a, b) => b.createdAt - a.createdAt));
+        setProgressCards(rows.filter(item => !item.hiddenFromCode).sort((a, b) => b.createdAt - a.createdAt));
     };
 
     const refreshModelOptions = async (sourceConfig: WorkbenchBridgeConfig = draftConfig, notify = true) => {
@@ -1503,7 +1499,8 @@ const WorkbenchApp: React.FC = () => {
             )
         );
 
-        const changedWorkbenchMessages = messages
+        const allWorkbenchMessages = await DB.getRawStoreData('workbench_messages').catch(() => [] as WorkbenchMessage[]);
+        const changedWorkbenchMessages = allWorkbenchMessages
             .filter(matchesWorkbenchSummary)
             .map(message => ({
                 ...message,
@@ -1544,43 +1541,11 @@ const WorkbenchApp: React.FC = () => {
     };
 
     const deleteProgressCard = async (card: WorkbenchSummary) => {
-        if (!window.confirm('删除这张 Code 进度卡？Code 对话和角色聊天里的同步卡片也会一起删除。')) return;
-
-        const workbenchMessages = await DB.getRawStoreData('workbench_messages').catch(() => [] as WorkbenchMessage[]);
-        const matchingWorkbenchIds = workbenchMessages
-            .filter((message: WorkbenchMessage) => (
-                message.metadata?.progressCard
-                && (
-                    message.metadata?.workbenchSummaryId === card.id
-                    || (
-                        message.sessionId === card.sessionId
-                        && message.content === card.content
-                    )
-                )
-            ))
-            .map((message: WorkbenchMessage) => message.id);
-        const chatMessages = await DB.getRawStoreData('messages').catch(() => [] as Message[]);
-        const matchingChatMessages = chatMessages.filter((message: Message) => (
-            message.type === 'code_card'
-            && (
-                message.metadata?.workbenchSummaryId === card.id
-                || (
-                    message.metadata?.source === 'workbench_progress'
-                    && message.metadata?.workbenchSessionId === card.sessionId
-                    && message.content === card.content
-                )
-            )
-        ));
-
-        await DB.deleteWorkbenchSummary(card.id);
-        await DB.deleteWorkbenchMessages(matchingWorkbenchIds);
-        await Promise.all(matchingChatMessages.map(message => DB.deleteMessage(message.id)));
-
+        if (!window.confirm('从 Code 进度卡列表隐藏这张卡？角色聊天和原 Code 对话里的卡片都会保留。')) return;
+        await DB.saveWorkbenchSummary({ ...card, hiddenFromCode: true });
         setProgressCards(prev => prev.filter(item => item.id !== card.id));
-        setMessages(prev => prev.filter(message => !matchingWorkbenchIds.includes(message.id)));
         setProgressAuthorMenuCardId(prev => prev === card.id ? null : prev);
-        setConversations(await loadConversations());
-        addToast('Code 进度卡已删除', 'info');
+        addToast('已从 Code 列表隐藏；聊天卡片仍保留', 'info');
     };
 
     const appendAssistantReply = async (
@@ -3358,7 +3323,7 @@ const WorkbenchApp: React.FC = () => {
                         <header className="relative shrink-0 px-4 py-3 bg-white border-b border-slate-200 flex items-center gap-2">
                             <div className="min-w-0 flex-1">
                                 <h2 className="text-sm font-semibold text-slate-900">Code 进度卡</h2>
-                                <p className="mt-0.5 text-[11px] text-slate-400 truncate">{session?.title || '当前对话'} · 手动生成</p>
+                                <p className="mt-0.5 text-[11px] text-slate-400 truncate">全部对话 · 新卡从当前对话生成</p>
                             </div>
                             <button
                                 type="button"
@@ -3489,8 +3454,8 @@ const WorkbenchApp: React.FC = () => {
                                                         type="button"
                                                         onClick={() => { void deleteProgressCard(card); }}
                                                         className="flex h-6 w-6 items-center justify-center rounded-md border border-rose-100 bg-white text-rose-400 active:scale-95"
-                                                        aria-label="删除这张进度卡"
-                                                        title="删除进度卡"
+                                                        aria-label="从 Code 列表隐藏这张进度卡"
+                                                        title="仅从 Code 列表隐藏"
                                                     >
                                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5" aria-hidden="true">
                                                             <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5" />

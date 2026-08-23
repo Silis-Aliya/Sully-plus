@@ -109,6 +109,8 @@ export interface WorkbenchSummary {
   id: string;
   sessionId: string;
   content: string;
+  /** 仅从 Code 全局进度卡面板隐藏；聊天中的同步卡仍保留。 */
+  hiddenFromCode?: boolean;
   source?: 'codex' | 'character';
   sourceName?: string;
   sourceCharacterId?: string;

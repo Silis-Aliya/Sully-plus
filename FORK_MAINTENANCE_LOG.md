@@ -11,6 +11,13 @@
 - Audited portability against the shared image-storage pipeline. Full and media-only backups now include the single background, time-mode choice, segment count, and every scheduled image; full import and character-card import migrate restored data URLs back into `blob_assets`. Character-card export resolves local `blobref` values into portable image data, while QuickSync discovers nested schedule refs and transfers their Blob upserts/deletes incrementally. Blob cleanup now also checks every persisted character before deletion to avoid breaking a shared image.
 - Verification: `pnpm vitest run utils/videoCallBackground.test.ts` (2 tests) and `pnpm build` completed successfully.
 
+## 2026-08-23 Global Code Progress Cards
+
+- The Code progress panel is now a global index across every Code conversation instead of filtering to the currently open session.
+- Removing a card from the Code panel records a panel-only hidden state: the synchronized card remains visible in both the original Code conversation and the character chat.
+- Changing a card author scans all Code conversations and synchronized character-chat cards so every visible copy shares the same author and content.
+- Deleting a whole Code conversation continues to retain its progress-card index. Only long-pressing the card in character chat and choosing delete permanently removes the summary and its Code-side synchronized card, preventing that deleted card from returning to global history.
+
 ## 2026-08-23 Call UI, Live2D Setup, And iOS Launcher Reordering
 
 - Rebuilt the Call app around the supplied `3028` / `5226` / `0210` UI references instead of retaining the legacy SullyOS layout. The landing list, voice call, video call, call history, connection setup, model import, rehearsal, camera, and Live2D action-library pages now share the same soft system gray-blue visual language.
