@@ -61,9 +61,10 @@ import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { CHAT_GEN_EVENTS, isChatReplyGenerating } from '../utils/chatGenEvents';
 import { resolveFishAudioApiKey, stripFishMarkupForDisplay, cleanTextForTtsFish } from '../utils/fishAudioTts';
 import { resolveTtsProvider } from '../utils/ttsProvider';
-import { isInstantConfigReady, loadInstantConfig, normalizeWorkerUrl, saveInstantConfig } from '../utils/instantPushClient';
+import { isInstantConfigReady, loadInstantConfig, saveInstantConfig } from '../utils/instantPushClient';
 import { ActiveMsgStore } from '../utils/activeMsgStore';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
+import { AMSG_INSTANT_CHAT_PENDING_EVENT, getInstantChatPending } from '../utils/amsgInstantChat';
 import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteboxSound, upsertWhiteboxSound, stripWhiteboxSoundDirective, WhiteboxSound } from '../utils/whiteboxSound';
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils/translationLang';
@@ -121,6 +122,9 @@ const Chat: React.FC = () => {
     // Instant Push 路径："准备中"三个点 = 消息正在拼接+发送; 消失 = SSE POST 已排进
     // 浏览器网络栈. 页面关闭时会主动 abort SSE, 让 worker 尽量走 Web Push fallback。
     const [instantSendingActive, setInstantSendingActive] = useState(false);
+    // AMSG 云端受理后本机的 isTyping 会立即结束；真正的「还在等回复」由持久化 pending
+    // 记录驱动，页面重开也应继续显示，直到推送/云端补收把这一轮销账。
+    const [instantChatPending, setInstantChatPendingUi] = useState(false);
     const [instantToolStatus, setInstantToolStatus] = useState<InstantToolUiStatus | null>(null);
     const [totalMsgCount, setTotalMsgCount] = useState(0);
     const [visibleCount, setVisibleCount] = useState(30);
@@ -131,11 +135,22 @@ const Chat: React.FC = () => {
     // 角色切换「登场」过场是否显示。切换/进入角色时由 useLayoutEffect 在绘制前置真，覆盖住加载、避免闪到新聊天。
     const [showEntry, setShowEntry] = useState(false);
 
+    useEffect(() => {
+        const sync = (event?: Event) => {
+            const changedCharId = (event as CustomEvent | undefined)?.detail?.charId;
+            if (changedCharId && changedCharId !== activeCharacterId) return;
+            setInstantChatPendingUi(!!activeCharacterId && !!getInstantChatPending(activeCharacterId));
+        };
+        sync();
+        window.addEventListener(AMSG_INSTANT_CHAT_PENDING_EVENT, sync);
+        return () => window.removeEventListener(AMSG_INSTANT_CHAT_PENDING_EVENT, sync);
+    }, [activeCharacterId]);
+
     // 上游的两条即时回复通道是互斥的：AMSG 即时对话一旦开启，旧 Instant SSE 就必须关闭。
     // 不能按 Worker URL 是否相同来决定——用户通常正是分别部署了两台 Worker；两边同时开着时
     // useChatAI 会让旧 Instant 优先，顶栏 ⚡便会卡在最长 300 秒的 SSE 等待里，看起来像没触发。
-    // 旧版误把 AMSG 地址填进 Instant 的配置仍兼容迁移：地址相同且新 Worker 支持即时对话时，
-    // 自动打开 AMSG；已经打开 AMSG 的设备则无条件清掉遗留的旧 Instant 开关。
+    // 旧版配置自动迁往 AMSG：两台 Worker 地址通常本来就不同，不能拿 URL 相等当迁移门槛；
+    // 只要 AMSG Worker 实测支持即时对话，就关闭旧 Instant 并打开 D1 + Queue 通道。
     useEffect(() => {
         let cancelled = false;
         void (async () => {
@@ -159,9 +174,7 @@ const Chat: React.FC = () => {
                     saveInstantConfig({ ...instant, enabled: false, autoTriggerOnSend: false });
                     return;
                 }
-                if (normalizeWorkerUrl(instant.workerUrl) === normalizeWorkerUrl(amsg.workerUrl)
-                    && await ActiveMsgClient.probeInstantChatSupport()
-                    && !cancelled) {
+                if (await ActiveMsgClient.probeInstantChatSupport() && !cancelled) {
                     saveInstantConfig({ ...instant, enabled: false, autoTriggerOnSend: false });
                     await ActiveMsgStore.saveGlobalConfig({ instantChatEnabled: true });
                 }
@@ -3712,7 +3725,7 @@ const Chat: React.FC = () => {
                         ))}
                     </>
                 )}
-                {(isTyping || recallStatus || searchStatus || diaryStatus || isProactiveComposing || globalReplyComposing) && !selectionMode && (
+                {(isTyping || instantChatPending || recallStatus || searchStatus || diaryStatus || isProactiveComposing || globalReplyComposing) && !selectionMode && (
                     <div className="flex items-end gap-3 px-3 mb-6 animate-fade-in">
                         <img src={char.avatar} className={chatPendingAvatarClass} />
                         <div className="bg-white px-4 py-3 rounded-2xl shadow-sm">
