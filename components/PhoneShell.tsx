@@ -115,6 +115,7 @@ import { Capacitor } from '@capacitor/core';
 import { isIOSStandaloneWebApp, resolveStatusBarMode } from '../utils/iosStandalone';
 import AppErrorBoundary from './os/AppErrorBoundary';
 import GlobalMiniPlayer from './os/GlobalMiniPlayer';
+import SuspendedCallBubble from './call/SuspendedCallBubble';
 import PersonaSimIndicator from './os/PersonaSimIndicator';
 import DreamSimIndicator from './os/DreamSimIndicator';
 import ErrorDialog from './os/ErrorDialog';
@@ -949,17 +950,11 @@ const PhoneShell: React.FC = () => {
               错误指示器、系统调试终端与开关无关、始终在。 */}
           <StatusBar />
           
-          {/* Overlays: Suspended Call Bar */}
-          {suspendedCall && activeApp !== AppID.Call && (
-            <button
-              onClick={resumeCall}
-              className="absolute top-7 left-0 w-full z-[55] flex items-center justify-center gap-2 bg-emerald-500 text-white text-xs font-bold py-1.5 animate-pulse cursor-pointer active:bg-emerald-600 transition-colors"
-            >
-              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-              <span>通话中 · {suspendedCall.charName}</span>
-              <span className="opacity-70">点击返回</span>
-            </button>
-          )}
+          {/* 挂起通话使用彼方 Chibi 独立浮球；和音乐浮球各自保存位置、互不占用。 */}
+          {suspendedCall && activeApp !== AppID.Call && (() => {
+            const character = characters.find(item => item.id === suspendedCall.charId);
+            return character ? <SuspendedCallBubble character={character} onResume={resumeCall} /> : null;
+          })()}
 
           {/* Overlays: Global Mini Player (when music is playing in background) */}
           <GlobalMiniPlayer />
