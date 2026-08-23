@@ -21,6 +21,7 @@ import { appendInstantTraceEntry } from './instantTraceLog';
 const log = makeDebugLogger('instant-push', 'InstantPush');
 
 export const INSTANT_PUSH_CONFIG_KEY = 'instant_push_config_v1';
+const INSTANT_AUTO_TRIGGER_DECOUPLED_KEY = 'instant_push_auto_trigger_decoupled_v1';
 
 // ── Diagnostics ────────────────────────────────────────────────────────────
 //
@@ -369,7 +370,19 @@ function stripLegacyVapid(parsed: Record<string, unknown>): InstantPushConfig {
 export function loadInstantConfig(): InstantPushConfig {
   try {
     const raw = localStorage.getItem(INSTANT_PUSH_CONFIG_KEY);
-    if (raw) return stripLegacyVapid(JSON.parse(raw));
+    if (raw) {
+      const config = stripLegacyVapid(JSON.parse(raw));
+      // 2026-08-20 的快速通道曾把“启用 Instant”与“发送即回复”强绑定，导致已有配置
+      // 在代码修正后仍残留 autoTriggerOnSend=true。只迁移一次，恢复手动 ⚡ 默认；
+      // 用户之后仍可在 Instant Push 专属设置里明确重新开启自动触发。
+      if (!localStorage.getItem(INSTANT_AUTO_TRIGGER_DECOUPLED_KEY)) {
+        const migrated = { ...config, autoTriggerOnSend: false, updatedAt: Date.now() };
+        localStorage.setItem(INSTANT_PUSH_CONFIG_KEY, JSON.stringify(migrated));
+        localStorage.setItem(INSTANT_AUTO_TRIGGER_DECOUPLED_KEY, '1');
+        return migrated;
+      }
+      return config;
+    }
   } catch { /* ignore */ }
   return { ...DEFAULT_CONFIG };
 }

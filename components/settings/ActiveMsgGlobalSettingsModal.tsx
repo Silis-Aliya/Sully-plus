@@ -395,8 +395,9 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
       enabled: nextEnabled,
       workerUrl: normalizeWorkerUrl(config.workerUrl),
       clientToken: config.serverToken?.trim() || undefined,
-      // 用户发完即可切后台或锁屏；普通回复直接在 Worker 内生成并用 Web Push 回来。
-      autoTriggerOnSend: nextEnabled,
+      // 快速通道只决定回复走哪台 Worker，不改变聊天的手动交互：
+      // 发完消息仍需点 ⚡。若用户确实需要自动回复，可在 Instant Push 专属设置里单独开启。
+      autoTriggerOnSend: false,
       // 统一 Worker 的快速链路固定走 multipart，不再要求另一套 Instant D1 表。
       useD1BlobStore: false,
       d1Available: false,
@@ -412,7 +413,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
       enabled: true,
       workerUrl: normalizeWorkerUrl(config.workerUrl),
       clientToken: config.serverToken?.trim() || undefined,
-      autoTriggerOnSend: true,
+      autoTriggerOnSend: false,
     }));
     addToast(
       nextEnabled
@@ -459,7 +460,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
           <div className="bg-cyan-50 border border-cyan-200 rounded-2xl p-4 space-y-2">
             <div className="font-bold text-cyan-900 text-sm">快速即时回复已与 2.0 协同</div>
             <p className="text-xs leading-relaxed text-cyan-800">
-              你发消息后可以直接切后台或锁屏：普通回复由这台 AMSG Worker 立即生成并通过 Web Push 返回；主动消息仍按原来的任务调度运行。
+              点聊天顶部的 ⚡ 后即可切后台或锁屏：普通回复由这台 AMSG Worker 生成并通过 Web Push 返回；主动消息仍按原来的任务调度运行。
             </p>
             <p className="text-[11px] leading-relaxed text-cyan-700">
               两条路径共用同一个 Worker 地址、推送订阅和密钥，不需要再维护单独的 Instant Worker。
@@ -472,7 +473,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
             <div>
               <div className="font-bold text-slate-700">快速即时回复</div>
               <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                开启后，你按发送即可退出画面或锁屏，回复完成时显示系统通知。它不启用、不关闭、也不重复执行角色的主动消息任务。
+                开启后，发送消息不会自动回复；点聊天顶部的 ⚡ 才开始生成，之后可退出画面或锁屏，完成时显示系统通知。它不启用、不关闭、也不重复执行角色的主动消息任务。
               </p>
             </div>
             <button
