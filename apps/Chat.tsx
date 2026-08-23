@@ -61,9 +61,7 @@ import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { CHAT_GEN_EVENTS, isChatReplyGenerating } from '../utils/chatGenEvents';
 import { resolveFishAudioApiKey, stripFishMarkupForDisplay, cleanTextForTtsFish } from '../utils/fishAudioTts';
 import { resolveTtsProvider } from '../utils/ttsProvider';
-import { isInstantConfigReady, loadInstantConfig, normalizeWorkerUrl, saveInstantConfig } from '../utils/instantPushClient';
-import { ActiveMsgStore } from '../utils/activeMsgStore';
-import { ActiveMsgClient } from '../utils/activeMsgClient';
+import { isInstantConfigReady, loadInstantConfig } from '../utils/instantPushClient';
 import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteboxSound, upsertWhiteboxSound, stripWhiteboxSoundDirective, WhiteboxSound } from '../utils/whiteboxSound';
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils/translationLang';
@@ -130,28 +128,6 @@ const Chat: React.FC = () => {
     // 初值 false 让首次打开也是淡入、且不会有"先显示再变透明"的闪烁。
     // 角色切换「登场」过场是否显示。切换/进入角色时由 useLayoutEffect 在绘制前置真，覆盖住加载、避免闪到新聊天。
     const [showEntry, setShowEntry] = useState(false);
-
-    // 2026-08-20 统一模式首版误把 AMSG 地址存成了旧 Instant SSE 配置。
-    // 只迁移“Instant URL 正好等于 AMSG Worker URL”的配置：关闭旧 SSE，打开 D1 + Queue；
-    // 独立部署在另一个地址的旧 Instant 不受影响，且仍然只有点闪电才会触发。
-    useEffect(() => {
-        let cancelled = false;
-        void (async () => {
-            const instant = loadInstantConfig();
-            if (!instant.enabled) return;
-            try {
-                const amsg = await ActiveMsgStore.getGlobalConfig();
-                if (cancelled || !amsg.workerUrl?.trim()) return;
-                if (normalizeWorkerUrl(instant.workerUrl) !== normalizeWorkerUrl(amsg.workerUrl)) return;
-                if (!(await ActiveMsgClient.probeInstantChatSupport()) || cancelled) return;
-                saveInstantConfig({ ...instant, enabled: false, autoTriggerOnSend: false });
-                await ActiveMsgStore.saveGlobalConfig({ instantChatEnabled: true });
-            } catch (error) {
-                console.warn('[Chat] 统一快速回复自动触发迁移失败', error);
-            }
-        })();
-        return () => { cancelled = true; };
-    }, []);
     const WINDOW_RADIUS = 25;
     const [input, setInput] = useState('');
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
@@ -1493,12 +1469,19 @@ const Chat: React.FC = () => {
         await reloadMessages(visibleCountRef.current);
     }, [char, reloadMessages, addToast, characters, userProfile, groups, realtimeConfig]);
 
-    // 顶栏 ⚡ 是唯一手动触发入口。useChatAI 按设置选择 D1 + Queue、独立旧 Instant
-    // 或本地 fetch；主动消息 2.0 的定时任务和用户自己的主动唤醒不受影响。
+    // 顶栏 ⚡ 代表「现在开始等这一轮回复」。旧 Instant Push 已启用时，这个显式动作也
+    // 必须交给 Instant Worker：用户点完就可以切后台/锁屏，回复由 Web Push 送回来。
+    // Instant 未启用时仍固定走本地 API，且不被 AMSG 2.0 的「即时对话」暗中接管。
+    // 两种云端即时通道的互斥在设置保存时收口；主动消息 2.0 的定时任务/主动唤醒不受影响。
     const handleManualTrigger = () => {
         // 上一轮还在跑时 triggerAI 会静默 reject，提前挡掉即可。
         if (isTyping) return;
-        triggerAI(messages);
+        triggerAI(
+            messages,
+            undefined,
+            undefined,
+            isInstantConfigReady() ? undefined : { forceLocal: true },
+        );
     };
 
     const handleReroll = async () => {

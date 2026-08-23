@@ -8714,30 +8714,6 @@ var writeChatOutbox = async (writeState, charId, current, entries) => {
     return current;
   }
 };
-var handleInstantChatQueue = async (args) => {
-  if (args.configError) {
-    console.error(`[amsg] \u5373\u65F6\u5BF9\u8BDD Queue \u6574\u6279\u91CD\u8BD5\uFF1A${args.configError}`);
-    for (const message of args.batch.messages) message.retry({ delaySeconds: 60 });
-    return;
-  }
-  for (const message of args.batch.messages) {
-    if (message.body?.kind !== "instant-chat-tick") {
-      console.warn("[amsg:instant-chat] \u4E22\u5F03\u672A\u77E5 Queue \u6D88\u606F", { kind: message.body?.kind });
-      message.ack();
-      continue;
-    }
-    try {
-      await args.upstream.scheduled({ scheduledTime: Date.now(), cron: INSTANT_TICK_CRON }, args.env);
-      message.ack();
-    } catch (error) {
-      console.error("[amsg:instant-chat] Queue \u6D88\u8D39\u5931\u8D25\uFF0C60 \u79D2\u540E\u91CD\u8BD5", {
-        uuid: message.body.uuid,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      message.retry({ delaySeconds: 60 });
-    }
-  }
-};
 var UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 var constantTimeEqual2 = async (a, b) => {
   const raw = crypto.getRandomValues(new Uint8Array(32));
@@ -8889,32 +8865,20 @@ var handleInstantChat = async (args) => {
       step: "schedule-message"
     });
   }
-  const due = await pullTaskDue(env.DB, uuid, userId, now());
-  let queued = false;
-  if (env.INSTANT_QUEUE && typeof env.INSTANT_QUEUE.send === "function") {
-    try {
-      await env.INSTANT_QUEUE.send(
-        { kind: "instant-chat-tick", uuid, userId, queuedAt: now() },
-        due ? void 0 : { delaySeconds: Math.ceil(INSTANT_TICK_FALLBACK_WAIT_MS / 1e3) }
-      );
-      queued = true;
-    } catch (error) {
-      console.warn("[amsg:instant-chat] Queue \u5165\u961F\u5931\u8D25\uFF08\u6539\u8D70\u7ACB\u5373\u8DF3 / cron \u515C\u5E95\uFF09", error);
-    }
-  }
-  if (!queued && ctx && typeof ctx.waitUntil === "function") {
+  if (ctx && typeof ctx.waitUntil === "function") {
     ctx.waitUntil((async () => {
       try {
+        const due = await pullTaskDue(env.DB, uuid, userId, now());
         if (!due) await sleep(INSTANT_TICK_FALLBACK_WAIT_MS);
         await upstream2.scheduled({ scheduledTime: now(), cron: INSTANT_TICK_CRON }, env);
       } catch (error) {
         console.warn("[amsg:instant-chat] \u7ACB\u5373\u89E6\u53D1\u5931\u8D25\uFF08\u7B49 cron \u515C\u5E95\uFF09", error);
       }
     })());
-  } else if (!queued) {
+  } else {
     console.warn("[amsg:instant-chat] \u8FD0\u884C\u65F6\u6CA1\u7ED9 ctx\uFF0C\u8DF3\u8FC7\u7ACB\u5373\u89E6\u53D1\uFF0C\u7B49 cron \u515C\u5E95");
   }
-  return json2(202, { status: "accepted", uuid, transport: queued ? "queue" : "fallback" });
+  return json2(202, { status: "accepted", uuid });
 };
 
 // worker/amsg/src/nativeFcm.ts
@@ -14832,12 +14796,7 @@ var src_default2 = {
       if (method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS2 });
       return jsonWithCors(200, {
         success: true,
-        data: {
-          ...inspectWorkerEnv(env),
-          instantChat: true,
-          instantQueue: Boolean(env.INSTANT_QUEUE),
-          directInstant: true
-        }
+        data: { ...inspectWorkerEnv(env), instantChat: true, directInstant: true }
       });
     }
     if (pathname.endsWith("/debug")) {
@@ -14879,15 +14838,6 @@ var src_default2 = {
       return;
     }
     return upstream.scheduled(event, env);
-  },
-  async queue(batch, env) {
-    const report = inspectWorkerEnv(env);
-    return handleInstantChatQueue({
-      batch,
-      env,
-      upstream,
-      ...report.ok ? {} : { configError: report.message }
-    });
   }
 };
 export {

@@ -6,7 +6,9 @@ import { ActiveMsgStore, maskActiveMsgUserId } from '../../utils/activeMsgStore'
 import { cancelAllRemoteAmsgTasks, isWorkerUrlCleared, wipeAmsgCloudData } from '../../utils/amsgStateSync';
 import {
   buildCloudflareDashboardUrl,
+  isInstantConfigReady,
   loadInstantConfig,
+  normalizeWorkerUrl,
   saveInstantConfig,
 } from '../../utils/instantPushClient';
 import { generateClientToken } from '../../utils/vapidGen';
@@ -112,7 +114,9 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
 
   const isUnifiedInstantOn = () => {
     if (!config?.workerUrl?.trim()) return false;
-    return config.instantChatEnabled === true;
+    const instant = loadInstantConfig();
+    return instant.enabled
+      && normalizeWorkerUrl(instant.workerUrl) === normalizeWorkerUrl(config.workerUrl);
   };
 
   // 特性探测：确认「过老」（端点 404 → null，或缺关键特性）才亮牌；
@@ -151,7 +155,11 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
     savedWorkerUrlRef.current = nextConfig.workerUrl || '';
     setConfig(nextConfig);
     setPushStatus(nextPushStatus);
-    setInstantOn(nextConfig.instantChatEnabled === true);
+    const instant = loadInstantConfig();
+    setInstantOn(
+      isInstantConfigReady(instant)
+      && normalizeWorkerUrl(instant.workerUrl) === normalizeWorkerUrl(nextConfig.workerUrl || ''),
+    );
     void probeWorkerCaps(Boolean(nextConfig.workerUrl?.trim()));
   };
 
@@ -380,20 +388,32 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
       return;
     }
 
+    const current = loadInstantConfig();
     const nextEnabled = !isUnifiedInstantOn();
-    if (nextEnabled && !(await ActiveMsgClient.probeInstantChatSupport())) {
-      addToast('这台 Worker 还没有后台队列；请先 Sync fork 并重新部署 AMSG Worker。', 'error');
-      return;
-    }
-    // 新通道打开时关闭旧的长 SSE Instant，避免同一轮被两条云端路径同时接管。
-    // 关闭时不自动恢复旧通道，防止用户不知情地回到依赖 iOS 页面存活的传输。
-    if (nextEnabled) {
-      const legacy = loadInstantConfig();
-      saveInstantConfig({ ...legacy, enabled: false, autoTriggerOnSend: false });
-    }
-    await ActiveMsgStore.saveGlobalConfig({ instantChatEnabled: nextEnabled });
-    patchConfig({ instantChatEnabled: nextEnabled });
-    setInstantOn(nextEnabled);
+    saveInstantConfig({
+      ...current,
+      enabled: nextEnabled,
+      workerUrl: normalizeWorkerUrl(config.workerUrl),
+      clientToken: config.serverToken?.trim() || undefined,
+      // 用户发完即可切后台或锁屏；普通回复直接在 Worker 内生成并用 Web Push 回来。
+      autoTriggerOnSend: nextEnabled,
+      // 统一 Worker 的快速链路固定走 multipart，不再要求另一套 Instant D1 表。
+      useD1BlobStore: false,
+      d1Available: false,
+      d1CheckedAt: undefined,
+      d1CheckedWorkerUrl: undefined,
+    });
+    // 老的 /instant-chat 会进 D1 排程；快速 /instant 会保持 SSE 并并发 Push。
+    // 两者不能同时接管同一轮，但这里只关旧即时路径，不碰主动任务和主动唤醒。
+    await ActiveMsgStore.saveGlobalConfig({ instantChatEnabled: false });
+    patchConfig({ instantChatEnabled: false });
+    setInstantOn(nextEnabled && isInstantConfigReady({
+      ...current,
+      enabled: true,
+      workerUrl: normalizeWorkerUrl(config.workerUrl),
+      clientToken: config.serverToken?.trim() || undefined,
+      autoTriggerOnSend: true,
+    }));
     addToast(
       nextEnabled
         ? '快速即时回复已开启；主动消息与主动唤醒保持原样'
@@ -452,7 +472,7 @@ const ActiveMsgGlobalSettingsModal: React.FC<ActiveMsgGlobalSettingsModalProps> 
             <div>
               <div className="font-bold text-slate-700">快速即时回复</div>
               <p className="mt-1 text-xs leading-relaxed text-slate-500">
-                开启后，点聊天顶部的闪电才开始回复；随后可以退出画面或锁屏，完成时显示系统通知。它不启用、不关闭、也不重复执行角色的主动消息任务。
+                开启后，你按发送即可退出画面或锁屏，回复完成时显示系统通知。它不启用、不关闭、也不重复执行角色的主动消息任务。
               </p>
             </div>
             <button
