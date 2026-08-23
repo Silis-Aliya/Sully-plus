@@ -3462,7 +3462,7 @@ ${sentencePlan}`;
           <button onClick={() => setVideoTranscriptExpanded(true)} className="video-record-button shrink-0 rounded-full border border-white/12 px-2.5 py-1.5 text-[9px] text-white/52 active:scale-95">记录</button>
         </div>
       ) : (
-      <div ref={callScrollableRef} className={`flex-1 min-h-0 overflow-y-auto no-scrollbar mx-4 mb-2 px-4 py-3 space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md ${callMode === 'voice' ? 'voice-dialogue-card' : 'video-dialogue-card'}`} style={{ boxShadow: `inset 0 1px 0 ${accentColor}33` }}>
+      <div ref={callScrollableRef} className={`${callMode === 'video' && videoCallLayout === 'stage' && videoTranscriptExpanded ? 'h-[clamp(230px,30dvh,360px)] flex-none' : 'flex-1'} min-h-0 overflow-y-auto no-scrollbar mx-4 mb-2 px-4 py-3 space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md ${callMode === 'voice' ? 'voice-dialogue-card' : 'video-dialogue-card'}`} style={{ boxShadow: `inset 0 1px 0 ${accentColor}33` }}>
         {callMode === 'video' && videoCallLayout === 'stage' && videoTranscriptExpanded && (
           <div className="sticky top-0 z-10 -mx-1 flex justify-end pb-1">
             <button onClick={() => setVideoTranscriptExpanded(false)} className="rounded-full border border-white/10 bg-black/35 px-2.5 py-1 text-[9px] text-white/48 backdrop-blur">收成字幕</button>
