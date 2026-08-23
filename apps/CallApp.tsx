@@ -2714,11 +2714,11 @@ ${sentencePlan}`;
         >
           {/* 3028 顶栏：返回 / 语音视频切换 / 通话记录 */}
           <div className="shrink-0">
-            <div className="flex items-center justify-between">
+            <div className="relative flex min-h-9 items-center justify-between">
               <button onClick={closeApp} aria-label="返回" className="call-home-icon flex h-9 w-9 items-center justify-center rounded-full border border-[#e2e8f0] bg-white text-[#334155] active:scale-95">
                 <CaretLeft size={18} weight="bold" />
               </button>
-              <div className="call-mode-switch flex w-[140px] gap-0.5 rounded-[14px] bg-[#e2e8f0] p-[3px]">
+              <div className="call-mode-switch absolute left-1/2 top-1/2 flex w-[140px] -translate-x-1/2 -translate-y-1/2 gap-0.5 rounded-[14px] bg-[#e2e8f0] p-[3px] max-[370px]:w-[128px]">
                 <button onClick={() => setCallMode('voice')} className={`call-mode-tab flex-1 rounded-[11px] py-2 text-xs font-semibold transition ${callMode === 'voice' ? 'is-active bg-white text-[#1e293b] shadow-sm' : 'text-[#64748b]'}`}>语音</button>
                 <button onClick={() => setCallMode('video')} className={`call-mode-tab flex-1 rounded-[11px] py-2 text-xs font-semibold transition ${callMode === 'video' ? 'is-active bg-white text-[#1e293b] shadow-sm' : 'text-[#64748b]'}`}>视频</button>
               </div>
