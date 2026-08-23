@@ -2663,6 +2663,10 @@ ${sentencePlan}`;
         if (period) await applyScheduledStageBackground(period, ref);
         else await applyStageBackground(ref);
         addToast(period ? '时段图片已保存' : `${stageLayerPicker === 'foreground' ? '舞台前景' : '视频背景'}已更新`, 'success');
+        if (stageLayerPicker === 'foreground') {
+          setShowBgPicker(false);
+          setForegroundEditing(true);
+        }
       } catch (error: any) {
         addToast(error?.message || '背景导入失败', 'error');
       } finally {
@@ -2691,6 +2695,7 @@ ${sentencePlan}`;
     }
     await applyStageBackground(url);
     setShowBgPicker(false);
+    if (stageLayerPicker === 'foreground') setForegroundEditing(true);
     addToast(`${stageLayerPicker === 'foreground' ? '舞台前景' : '视频背景'}已更新`, 'success');
   };
   const applyScheduledBgUrlInput = async (period: VideoCallBackgroundPeriod) => {
@@ -2700,6 +2705,10 @@ ${sentencePlan}`;
       return;
     }
     await applyScheduledStageBackground(period, url);
+    if (stageLayerPicker === 'foreground') {
+      setShowBgPicker(false);
+      setForegroundEditing(true);
+    }
     addToast('时段图片已保存', 'success');
   };
 
@@ -3673,6 +3682,15 @@ ${sentencePlan}`;
                 </button>
               ))}
             </div>
+            {stageLayerPicker === 'foreground' && activeStageForeground && (
+              <button
+                onClick={() => { setShowBgPicker(false); setForegroundEditing(true); }}
+                className="keep-white sticky top-0 z-10 w-full rounded-2xl py-3 text-sm font-semibold text-white shadow-lg"
+                style={{ backgroundColor: accentColor }}
+              >
+                进入画面调整位置与缩放
+              </button>
+            )}
             {stageLayerMode !== 'time' ? (
               <>
                 <button onClick={() => chooseStageBackgroundFile()} className={`w-full py-2.5 rounded-2xl border text-sm transition active:scale-[0.98] ${lightTheme ? 'border-[#d9e1ec] bg-[#ffffff]' : 'border-white/15 bg-white/[0.06]'}`}>
@@ -3686,7 +3704,6 @@ ${sentencePlan}`;
                 {stageLayerSingle && (
                   <button onClick={() => { void applyStageBackground(undefined); addToast('图片已清除', 'success'); }} className="w-full py-2 text-xs opacity-55 transition active:opacity-30">清除图片</button>
                 )}
-                {stageLayerPicker === 'foreground' && stageLayerSingle && <button onClick={() => { setShowBgPicker(false); setForegroundEditing(true); }} className="keep-white w-full rounded-2xl py-2.5 text-sm font-semibold text-white" style={{ backgroundColor: accentColor }}>调整并锁定位置</button>}
               </>
             ) : (
               <>
@@ -3734,7 +3751,6 @@ ${sentencePlan}`;
                 </div>
               </>
             )}
-            {stageLayerPicker === 'foreground' && stageLayerMode === 'time' && activeStageForeground && <button onClick={() => { setShowBgPicker(false); setForegroundEditing(true); }} className="keep-white w-full rounded-2xl py-2.5 text-sm font-semibold text-white" style={{ backgroundColor: accentColor }}>调整当前前景位置</button>}
             <button onClick={() => setShowBgPicker(false)} className="w-full py-2 text-sm opacity-65">完成</button>
           </div>
         </div>
