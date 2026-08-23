@@ -841,19 +841,51 @@ const Launcher: React.FC = () => {
       }
   }, []);
 
-  const reorderAppToIndex = useCallback((source: string, requestedIndex: number) => {
-      const items = launcherAppOrderRef.current;
-      const from = items.indexOf(source);
-      if (from < 0) return;
-      const next = [...items];
-      const [moved] = next.splice(from, 1);
-      // Removing an item before the requested slot shifts that slot one place left.
-      const adjusted = requestedIndex > from ? requestedIndex - 1 : requestedIndex;
-      const to = Math.max(0, Math.min(next.length, adjusted));
-      next.splice(to, 0, moved);
-      launcherAppOrderRef.current = next;
-      setLauncherAppOrder(next);
-  }, []);
+  const moveAppToPagePosition = useCallback((source: string, requestedPage: number, requestedLocalIndex: number) => {
+      // Work with explicit page buckets instead of only a flat order. A flat reorder
+      // immediately back-fills every earlier page, which prevents the iOS behaviour of
+      // intentionally keeping 8 apps on a page that could hold 12.
+      const pageBuckets = appPages
+          .filter(page => page.length > 0)
+          .map(page => page.map(app => app.id as string));
+      const sourcePage = pageBuckets.findIndex(page => page.includes(source));
+      if (sourcePage < 0) return;
+
+      const sourceIndex = pageBuckets[sourcePage].indexOf(source);
+      pageBuckets[sourcePage].splice(sourceIndex, 1);
+
+      let targetPage = Math.max(0, Math.min(requestedPage, pageBuckets.length));
+      // Removing the only app deletes that page, so destinations to its right shift once.
+      if (pageBuckets[sourcePage].length === 0) {
+          pageBuckets.splice(sourcePage, 1);
+          if (sourcePage < targetPage) targetPage -= 1;
+      }
+      while (pageBuckets.length <= targetPage) pageBuckets.push([]);
+
+      const adjustedLocalIndex = sourcePage === targetPage && sourceIndex < requestedLocalIndex
+          ? requestedLocalIndex - 1
+          : requestedLocalIndex;
+      const localIndex = Math.max(0, Math.min(adjustedLocalIndex, pageBuckets[targetPage].length));
+      pageBuckets[targetPage].splice(localIndex, 0, source);
+
+      // An over-full destination pushes its last app onto the following page. Earlier
+      // sparse pages are deliberately not back-filled.
+      for (let pageIndex = targetPage; pageIndex < pageBuckets.length; pageIndex += 1) {
+          const capacity = launcherPageCapacity(pageIndex);
+          if (pageBuckets[pageIndex].length <= capacity) continue;
+          const overflow = pageBuckets[pageIndex].splice(capacity);
+          if (!pageBuckets[pageIndex + 1]) pageBuckets[pageIndex + 1] = [];
+          pageBuckets[pageIndex + 1].unshift(...overflow);
+      }
+
+      const nonEmptyPages = pageBuckets.filter(page => page.length > 0);
+      const nextOrder = nonEmptyPages.flat();
+      const nextStarts = nonEmptyPages.slice(1).map(page => page[0]);
+      launcherAppOrderRef.current = nextOrder;
+      launcherAppPageStartsRef.current = nextStarts;
+      setLauncherAppOrder(nextOrder);
+      setLauncherAppPageStarts(nextStarts);
+  }, [appPages]);
 
   const clearLayoutPressTimer = useCallback(() => {
       if (layoutPressTimer.current) clearTimeout(layoutPressTimer.current);
@@ -1023,18 +1055,17 @@ const Launcher: React.FC = () => {
           pointer.ghost?.remove();
           pointer.targetElement?.classList.remove('launcher-drop-target');
           if (pointer.kind === 'app' && pointer.lastDropIndex !== undefined) {
-              reorderAppToIndex(pointer.key, pointer.lastDropIndex);
-              const nextStarts = launcherAppPageStartsRef.current.filter(id => id !== pointer.key);
-              if (pointer.lastDropCreatesPage) nextStarts.push(pointer.key);
-              launcherAppPageStartsRef.current = nextStarts;
-              setLauncherAppPageStarts(nextStarts);
+              const targetPage = pointer.lastDropPage ?? 0;
+              const pageStart = appPageStartIndices[targetPage] ?? launcherAppOrderRef.current.length;
+              moveAppToPagePosition(pointer.key, targetPage, pointer.lastDropIndex - pageStart);
           } else if (pointer.lastTarget) {
               if (pointer.kind === 'app') {
-                  const nextStarts = launcherAppPageStartsRef.current.filter(id => id !== pointer.key);
-                  launcherAppPageStartsRef.current = nextStarts;
-                  setLauncherAppPageStarts(nextStarts);
+                  const targetPage = appPages.findIndex(page => page.some(app => app.id === pointer.lastTarget));
+                  const targetLocalIndex = targetPage >= 0 ? appPages[targetPage].findIndex(app => app.id === pointer.lastTarget) : 0;
+                  moveAppToPagePosition(pointer.key, Math.max(0, targetPage), Math.max(0, targetLocalIndex));
+              } else {
+                  reorderByTarget(pointer.kind, pointer.key, pointer.lastTarget);
               }
-              reorderByTarget(pointer.kind, pointer.key, pointer.lastTarget);
           }
           void updateTheme({
               launcherAppOrder: launcherAppOrderRef.current,
