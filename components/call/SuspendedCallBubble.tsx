@@ -3,6 +3,7 @@ import { Phone } from '@phosphor-icons/react';
 import type { CharacterProfile } from '../../types';
 import { getChibi } from '../../utils/vrWorld/chibi';
 import { clampBubblePos, resolveInsets } from '../../utils/floatingBallBounds';
+import { loadCreatorPartsForRender } from '../../utils/creatorPartsBlob';
 
 const STORAGE_KEY = 'sully-suspended-call-bubble-position';
 const BUBBLE_SIZE = 64;
@@ -25,8 +26,13 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, on
   const rootRef = useRef<HTMLButtonElement>(null);
   const dragRef = useRef<{ pointerId: number; dx: number; dy: number; moved: boolean } | null>(null);
   const [position, setPosition] = useState(() => readPosition() || { x: -1, y: 96 });
+  const [stateRenderedImage, setStateRenderedImage] = useState<string>();
+  const rendererRef = useRef<HTMLIFrameElement>(null);
   const positionRef = useRef(position);
   const chibi = getChibi(character);
+  const vrSavedState = character.chibiStudio?.vr?.state || character.vrState?.chibi?.state;
+  const needsStateRender = !character.vrState?.chibi?.img && !character.chibiStudio?.vr?.img && !!vrSavedState;
+  const displayedImage = stateRenderedImage || chibi.img;
 
   const clampToShell = (x: number, y: number) => {
     const parent = rootRef.current?.parentElement;
@@ -59,6 +65,41 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, on
     return () => window.removeEventListener('resize', fit);
   }, []);
 
+  useEffect(() => {
+    if (!needsStateRender) return;
+    let disposed = false;
+    let ready = false;
+    let parts: any[] = [];
+    const send = () => {
+      if (!ready || disposed || !rendererRef.current?.contentWindow) return;
+      rendererRef.current.contentWindow.postMessage({
+        type: 'like520_init',
+        payload: {
+          mode: 'char',
+          charName: character.name,
+          savedState: vrSavedState,
+          draftKey: `suspended_call_preview_${character.id}`,
+          extraItems: parts,
+        },
+      }, '*');
+      window.setTimeout(() => rendererRef.current?.contentWindow?.postMessage({ type: 'like520_render_current' }, '*'), 120);
+    };
+    const receive = (event: MessageEvent) => {
+      if (event.source !== rendererRef.current?.contentWindow || !event.data) return;
+      if (event.data.type === 'like520_ready') { ready = true; send(); }
+      if (event.data.type === 'like520_result' && event.data.payload?.transparentDataUrl) {
+        setStateRenderedImage(event.data.payload.transparentDataUrl);
+      }
+    };
+    window.addEventListener('message', receive);
+    loadCreatorPartsForRender().then(items => {
+      if (disposed) return;
+      parts = items.map(item => ({ categoryKey: item.categoryKey, id: item.id, name: item.name, src: item.src, tintable: !!item.tintable, shadowSrc: item.shadowSrc }));
+      send();
+    }).catch(() => send());
+    return () => { disposed = true; window.removeEventListener('message', receive); };
+  }, [character.id, character.name, needsStateRender, vrSavedState]);
+
   const move = (event: React.PointerEvent<HTMLButtonElement>) => {
     const drag = dragRef.current;
     const parent = rootRef.current?.parentElement;
@@ -80,6 +121,7 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, on
   };
 
   return (
+    <>
     <button
       ref={rootRef}
       type="button"
@@ -97,9 +139,9 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, on
       onPointerCancel={() => { dragRef.current = null; }}
     >
       <span className="absolute inset-1 overflow-hidden rounded-full bg-gradient-to-b from-indigo-100/90 to-slate-200/90">
-        {chibi.img ? (
+        {displayedImage ? (
           <img
-            src={chibi.img}
+            src={displayedImage}
             alt=""
             draggable={false}
             className="h-full w-full object-contain object-bottom"
@@ -114,6 +156,17 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, on
       </span>
       <span className="absolute -left-1 -top-1 h-3 w-3 rounded-full border-2 border-white bg-emerald-400 shadow-sm" />
     </button>
+    {needsStateRender && !stateRenderedImage && (
+      <iframe
+        ref={rendererRef}
+        src={`${((import.meta as any).env?.BASE_URL ?? '/').replace(/\/$/, '')}/like520/character_creator.html`}
+        title="彼方形象还原"
+        aria-hidden="true"
+        className="pointer-events-none fixed h-px w-px opacity-0"
+        tabIndex={-1}
+      />
+    )}
+    </>
   );
 };
 

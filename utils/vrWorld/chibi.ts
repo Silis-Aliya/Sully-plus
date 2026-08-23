@@ -22,10 +22,6 @@ export const getChibi = (char: CharacterProfile): ChibiDisplay => {
     if (studioVR) return { img: studioVR, scale: 1, offsetY: 0, flip: false, isFallback: false };
     const sprites = (char.activeSkinSetId && char.dateSkinSets?.find(s => s.id === char.activeSkinSetId)?.sprites)
         || char.sprites || {};
-    // 更早的单槽捏人版本会把 Q 版图只留在 sprites.chibi。
-    if (sprites['chibi'] && !String(sprites['chibi']).startsWith('blobref:')) {
-        return { img: sprites['chibi'], scale: 1, offsetY: 0, flip: false, isFallback: false };
-    }
     const fb = sprites['happy'] || sprites['normal'] || sprites['smile'] || char.avatar || '';
     return { img: fb, scale: 1, offsetY: 0, flip: false, isFallback: true };
 };

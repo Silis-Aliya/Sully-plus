@@ -735,6 +735,9 @@ if (IS_EMBEDDED) {
     } else if (e.data.type === 'like520_roll') {
       // 「彼方·剧院」headless 随机生成一个 NPC 立绘
       rollAndExport();
+    } else if (e.data.type === 'like520_render_current') {
+      // 已有 savedState 的无界面重绘：给旧存档补回丢失的透明预览图，不随机换装。
+      renderCurrentAndExport();
     }
   });
 }
@@ -2147,6 +2150,30 @@ async function rollAndExport() {
   try {
     randomizeAll();
     /* 等两帧让 renderCharacter 把 DOM/图片更新完 */
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    if (typeof html2canvas === "undefined") {
+      await new Promise((res, rej) => {
+        const s = document.createElement("script");
+        s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+        s.onload = res; s.onerror = rej;
+        document.head.appendChild(s);
+      });
+    }
+    const charEl = document.querySelector(".character");
+    const canvas = await html2canvas(charEl, { backgroundColor: null, scale: 2, useCORS: true });
+    const transparentDataUrl = canvas.toDataURL("image/png");
+    window.parent.postMessage({
+      type: 'like520_result',
+      payload: { mode: LIKE520_MODE, dataUrl: transparentDataUrl, frameDataUrl: null, transparentDataUrl, state: JSON.parse(JSON.stringify(state)) }
+    }, '*');
+  } catch (err) {
+    window.parent.postMessage({ type: 'like520_roll_error', payload: { error: String(err && err.message || err) } }, '*');
+  }
+}
+
+async function renderCurrentAndExport() {
+  try {
+    renderCharacter();
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     if (typeof html2canvas === "undefined") {
       await new Promise((res, rej) => {
