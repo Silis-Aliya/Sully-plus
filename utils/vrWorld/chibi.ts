@@ -16,10 +16,6 @@ export interface ChibiDisplay {
 export const getChibi = (char: CharacterProfile): ChibiDisplay => {
     const c = char.vrState?.chibi;
     if (c?.img) return { img: c.img, scale: c.scale ?? 1, offsetY: c.offsetY ?? 0, flip: !!c.flip, isFallback: false };
-    // 一些从旧版/工坊草稿迁移来的角色只有 chibiStudio.vr 的预览图，尚未把图片
-    // 回填到 vrState.chibi。它仍然是“彼方”槽位，必须排在普通头像兜底之前。
-    const studioVR = char.chibiStudio?.vr?.img;
-    if (studioVR) return { img: studioVR, scale: 1, offsetY: 0, flip: false, isFallback: false };
     const sprites = (char.activeSkinSetId && char.dateSkinSets?.find(s => s.id === char.activeSkinSetId)?.sprites)
         || char.sprites || {};
     const fb = sprites['happy'] || sprites['normal'] || sprites['smile'] || char.avatar || '';
