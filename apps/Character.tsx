@@ -35,20 +35,8 @@ import {
     getExternalMemoryOverLimitMessage,
 } from '../utils/memoryPalace/externalMemory';
 
-// ── 神经链接 · 列表页视觉件（淡紫留白风）────────────────────
-// 之前的「星点 + 玻璃饰带 + 华丽头像框」看久了眼花、低端机也重绘卡。
-// 改成留白为主的干净版：纯淡紫底、圆角方钮、朴素圆头像、素白卡片。
-// 无常驻动画 / 无 filter / 无大模糊阴影，既清爽又省电。仅列表页，编辑页不动。
-
-/** 顶栏圆角方钮（squircle）：白底细紫描边 + 线性图标 + 底部小字标签 */
-const ToolButton: React.FC<{ label: string; title?: string; onClick: () => void; children: React.ReactNode }> = ({ label, title, onClick, children }) => (
-    <button onClick={onClick} title={title} className="flex flex-col items-center gap-1.5 active:scale-90 transition-transform">
-        <span className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white border border-violet-200/80 text-violet-500 shadow-[0_2px_6px_rgba(140,120,200,0.10)]">
-            {children}
-        </span>
-        <span className="text-[11px] text-violet-400/90 font-medium tracking-wider">{label}</span>
-    </button>
-);
+// ── 神经链接 · 列表页视觉件（Soft Modern）───────────────────
+// 这里只换列表页 UI；角色数据、分组、导入、删除与详情页逻辑仍走原来的实现。
 
 const CharacterCard: React.FC<{
     char: CharacterProfile;
@@ -59,26 +47,27 @@ const CharacterCard: React.FC<{
 }> = ({ char, active, onClick, onDelete }) => (
     <div
         onClick={onClick}
-        className={`relative px-4 py-3.5 rounded-3xl border bg-white transition-colors cursor-pointer group shrink-0 shadow-[0_2px_10px_rgba(140,120,200,0.07)] ${
-            active ? 'border-violet-300' : 'border-slate-100 hover:border-violet-200'
+        className={`relative px-4 py-3 rounded-[18px] border transition-colors cursor-pointer group shrink-0 ${
+            active ? 'bg-[#e8e8ee] border-[#d4d4dc]' : 'bg-[#f0f0f4] border-transparent hover:border-[#dedee5]'
         }`}
     >
-        <div className="flex items-center gap-4">
-            <div className="w-14 h-14 shrink-0 rounded-full overflow-hidden border border-violet-100 bg-violet-50">
+        <div className="flex items-center gap-3">
+            <div className="w-10 h-10 shrink-0 rounded-full overflow-hidden bg-[#e2e2e8]">
                 <img src={char.avatar} className="w-full h-full object-cover" alt={char.name} />
             </div>
             <div className="flex-1 min-w-0 pr-6">
-                <h3 className="text-lg font-bold truncate text-slate-800">
+                <h3 className="text-[14px] leading-5 font-semibold truncate text-[#1c1c1e]">
                     {char.name}
                 </h3>
-                <p className="text-xs truncate mt-0.5 text-violet-400/80">
-                    {char.description || '暂无描述'}
+                <p className="text-[11px] leading-4 truncate text-[#8e8e93]">
+                    {active ? '信号良好 · 连接中' : (char.description || '等待建立连接')}
                 </p>
             </div>
         </div>
         <button
+            aria-label={`删除 ${char.name}`}
             onClick={onDelete}
-            className="absolute top-1/2 -translate-y-1/2 right-4 w-7 h-7 flex items-center justify-center rounded-full bg-slate-50 border border-slate-100 text-slate-300 hover:text-violet-400 hover:border-violet-200 active:scale-90 transition-colors"
+            className="absolute top-1/2 -translate-y-1/2 right-4 w-[26px] h-[26px] flex items-center justify-center rounded-full bg-[#fafafc] text-[#8e8e93] active:scale-90 transition-transform"
         >
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
@@ -150,6 +139,7 @@ const Character: React.FC = () => {
   const [wbModalSearch, setWbModalSearch] = useState('');
   const [wbModalExpandedCategory, setWbModalExpandedCategory] = useState<string | null>(null);
   const [showGroupModal, setShowGroupModal] = useState(false); // 角色分组管理
+  const [showListMenu, setShowListMenu] = useState(false); // 列表页右上角操作菜单
   const [newGroupName, setNewGroupName] = useState('');
   // 编辑页「新建分组并指派」的内联输入
   const [detailGroupDraft, setDetailGroupDraft] = useState<string | null>(null);
@@ -1133,34 +1123,31 @@ ${isInitialGeneration ? `
   return (
     <div className="h-full w-full bg-slate-50/30 font-light relative">
        {view === 'list' ? (
-           <div className="flex flex-col h-full animate-fade-in relative"
-                style={{ background: 'linear-gradient(180deg, #f5f2fb 0%, #ece6f6 100%)' }}>
-               {/* safe-area: pt 用 max(3.5rem, 刘海高度)，保呼吸感同时更高刘海设备不被挡 */}
-               <div className="px-6 pb-4 shrink-0 flex items-start justify-between" style={{ paddingTop: 'max(3.5rem, var(--safe-top))' }}>
-                   <div className="relative">
-                       <span className="absolute -top-3 -left-2 text-violet-300 text-xs select-none">✦</span>
-                       <span className="absolute -top-1 left-9 text-violet-200 text-[10px] select-none">✦</span>
-                       <h1 className="text-[30px] font-serif font-bold tracking-wide leading-tight text-slate-800">神经链接</h1>
-                       <p className="text-xs text-violet-400/90 mt-2">已建立 <span className="font-bold text-violet-500">{characters.length}</span> 个角色连接</p>
+           <div className="flex flex-col h-full animate-fade-in relative bg-[#fafafc]">
+               <div className="px-6 pb-5 shrink-0" style={{ paddingTop: 'max(1rem, var(--chrome-top))' }}>
+                   <div className="relative flex items-center justify-between mb-5">
+                       <button aria-label="返回" onClick={closeApp} className="w-9 h-9 rounded-full bg-[#f0f0f4] text-[#1c1c1e] flex items-center justify-center active:scale-95 transition-transform">
+                           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]"><path d="M15 18l-6-6 6-6" /></svg>
+                       </button>
+                       <button aria-label="更多操作" onClick={() => setShowListMenu(v => !v)} className="w-9 h-9 rounded-full bg-[#f0f0f4] text-[#1c1c1e] flex items-center justify-center active:scale-95 transition-transform">
+                           <svg viewBox="0 0 24 24" fill="currentColor" className="w-[18px] h-[18px]"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+                       </button>
+                       {showListMenu && (
+                           <>
+                               <button aria-label="关闭菜单" className="fixed inset-0 z-40 cursor-default" onClick={() => setShowListMenu(false)} />
+                               <div className="absolute right-0 top-11 z-50 w-[148px] rounded-2xl border border-[#f0f0f4] bg-white p-1.5 shadow-[0_10px_30px_rgba(0,0,0,0.08),0_2px_8px_rgba(0,0,0,0.04)]">
+                                   <button onClick={() => { setShowListMenu(false); setShowGroupModal(true); trackEvent('打开角色分组管理弹窗'); }} className="w-full flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-[13px] font-semibold text-[#1c1c1e] hover:bg-[#f0f0f4]"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>分组</button>
+                                   <button onClick={() => { setShowListMenu(false); cardImportRef.current?.click(); }} className="w-full flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-[13px] font-semibold text-[#1c1c1e] hover:bg-[#f0f0f4]"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>导入角色</button>
+                                   <button onClick={() => { setShowListMenu(false); void handleAddCharacter(); }} className="w-full flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-[13px] font-semibold text-[#1c1c1e] hover:bg-[#f0f0f4]"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="w-4 h-4"><path d="M12 5v14M5 12h14"/></svg>新建连接</button>
+                               </div>
+                           </>
+                       )}
                    </div>
-                   <div className="flex gap-3 pt-1">
-                        <ToolButton label="分组" title="角色分组管理" onClick={() => { setShowGroupModal(true); trackEvent('打开角色分组管理弹窗'); }}>
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z" />
-                            </svg>
-                        </ToolButton>
-                        <ToolButton label="导入" title="导入角色卡" onClick={() => cardImportRef.current?.click()}>
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-                            </svg>
-                        </ToolButton>
-                        <ToolButton label="关闭" title="关闭" onClick={closeApp}>
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" /></svg>
-                        </ToolButton>
-                        <input type="file" ref={cardImportRef} className="hidden" accept=".json" onChange={handleImportCard} />
-                   </div>
+                   <h1 className="text-[28px] leading-tight font-bold tracking-[-0.5px] text-[#1c1c1e]">神经链接</h1>
+                   <p className="mt-1 text-[12px] text-[#8e8e93]">{characters.length} 个可连接的角色节点</p>
+                   <input type="file" ref={cardImportRef} className="hidden" accept=".json" onChange={handleImportCard} />
                </div>
-               <div className="flex-1 overflow-y-auto px-5 pb-20 no-scrollbar flex flex-col gap-3">
+               <div className="flex-1 overflow-y-auto px-6 pb-[calc(var(--safe-bottom)+1.5rem)] no-scrollbar flex flex-col gap-3">
                    {(() => {
                        // 建过分组 → 按组折叠展开（不再分页，分组本身就把列表变短了）；
                        // 没建过分组 → 维持原来的分页列表，零变化。
@@ -1184,19 +1171,18 @@ ${isInitialGeneration ? `
                                    {sections.map(section => {
                                        const expanded = expandedGroups.includes(section.id);
                                        return (
-                                           <div key={section.id} className="shrink-0">
-                                               {/* 分组条：干净的圆角白卡，左折叠箭头 + 组名 + 数量胶囊，右侧 ">" 指示可展开 */}
+                                           <div key={section.id} className="shrink-0 flex flex-col gap-2">
                                                <button onClick={() => toggleGroupExpanded(section.id)}
-                                                   className={`w-full h-14 flex items-center gap-3 px-5 rounded-2xl bg-white border transition-colors active:scale-[0.99] ${expanded ? 'border-violet-200' : 'border-slate-100 hover:border-violet-200'} shadow-[0_2px_10px_rgba(140,120,200,0.07)]`}>
-                                                   <svg viewBox="0 0 12 12" className={`w-3 h-3 text-violet-400 transition-transform ${expanded ? '' : '-rotate-90'}`}>
+                                                   className="w-full h-12 flex items-center gap-2 px-4 rounded-[18px] bg-[#f0f0f4] transition-transform active:scale-[0.99]">
+                                                   <svg viewBox="0 0 12 12" className={`w-2.5 h-2.5 text-[#1c1c1e] transition-transform ${expanded ? '' : '-rotate-90'}`}>
                                                        <path d="M2 4l4 5 4-5z" fill="currentColor" />
                                                    </svg>
-                                                   <span className="text-base font-bold text-slate-700 tracking-wide truncate">{section.name}</span>
-                                                   <span className="min-w-[26px] px-2 py-0.5 rounded-full bg-violet-100/70 text-[12px] text-violet-500 text-center font-medium tabular-nums">{section.chars.length}</span>
-                                                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={`w-4 h-4 ml-auto text-slate-300 transition-transform ${expanded ? 'rotate-90' : ''}`}><path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" /></svg>
+                                                   <span className="text-[15px] font-semibold text-[#1c1c1e] truncate">{section.name}</span>
+                                                   <span className="px-2 py-0.5 rounded-full bg-[#fafafc] text-[12px] text-[#8e8e93] text-center font-semibold tabular-nums">{section.chars.length}</span>
+                                                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className={`w-4 h-4 ml-auto text-[#8e8e93] transition-transform ${expanded ? '' : '-rotate-90'}`}><path d="M6 9l6 6 6-6"/></svg>
                                                </button>
                                                {expanded && (
-                                                   <div className="flex flex-col gap-3 mt-3">
+                                                   <div className="flex flex-col gap-2">
                                                        {section.chars.map(char => (
                                                            <CharacterCard
                                                                key={char.id}
@@ -1210,14 +1196,14 @@ ${isInitialGeneration ? `
                                                            />
                                                        ))}
                                                        {section.chars.length === 0 && (
-                                                           <div className="text-xs text-violet-300 px-3 pb-1">空分组——在角色「设定」页里指派</div>
+                                                           <div className="text-[11px] text-[#8e8e93] px-3 py-2">空分组——在角色「设定」页里指派</div>
                                                        )}
                                                    </div>
                                                )}
                                            </div>
                                        );
                                    })}
-                                   <button onClick={handleAddCharacter} className="w-full py-4 rounded-3xl border border-dashed border-violet-300/70 text-violet-400 text-sm bg-white/50 hover:bg-white transition-colors flex items-center justify-center gap-2 shrink-0">
+                                   <button onClick={handleAddCharacter} className="w-full py-3.5 rounded-[18px] border border-dashed border-[#d4d4dc] text-[#8e8e93] text-[13px] bg-[#f0f0f4]/60 active:scale-[0.99] transition-transform flex items-center justify-center gap-2 shrink-0">
                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>新建链接
                                    </button>
                                </>
@@ -1241,7 +1227,7 @@ ${isInitialGeneration ? `
                                        }}
                                    />
                                ))}
-                               <button onClick={handleAddCharacter} className="w-full py-4 rounded-3xl border border-dashed border-violet-300/70 text-violet-400 text-sm bg-white/50 hover:bg-white transition-colors flex items-center justify-center gap-2 shrink-0">
+                               <button onClick={handleAddCharacter} className="w-full py-3.5 rounded-[18px] border border-dashed border-[#d4d4dc] text-[#8e8e93] text-[13px] bg-[#f0f0f4]/60 active:scale-[0.99] transition-transform flex items-center justify-center gap-2 shrink-0">
                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>新建链接
                                </button>
                                {totalPages > 1 && (
