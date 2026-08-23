@@ -959,7 +959,7 @@ const PhoneShell: React.FC = () => {
           {/* 挂起通话使用彼方 Chibi 独立浮球；和音乐浮球各自保存位置、互不占用。 */}
           {suspendedCall && activeApp !== AppID.Call && (() => {
             const character = characters.find(item => item.id === suspendedCall.charId);
-            return character ? <SuspendedCallBubble character={character} call={suspendedCall} onResume={resumeCall} /> : null;
+            return character ? <SuspendedCallBubble character={character} call={suspendedCall} onResume={() => resumeCall()} /> : null;
           })()}
 
           {/* Overlays: Global Mini Player (when music is playing in background) */}
