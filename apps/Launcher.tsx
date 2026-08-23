@@ -1203,7 +1203,7 @@ const Launcher: React.FC = () => {
                                   paper={paper}
                               />
                           )}
-                          <div className="grid grid-cols-2 gap-x-3 gap-y-5 w-full">
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-5 w-full max-w-[720px] mx-auto">
                               {pinwheelOrder.map(cell => (
                                   <div
                                       key={cell}
