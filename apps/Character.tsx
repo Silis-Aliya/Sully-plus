@@ -26,6 +26,9 @@ import { COMMON_TIMEZONES } from '../utils/timezone';
 import { toMountedWorldbook } from '../utils/worldbook';
 import { stripSensitiveCardFields } from '../utils/characterCard';
 import { confirmExportSafety } from '../utils/exportGuard';
+import { deepCloneForExport } from '../utils/backupExport';
+import { resolveBlobRefsDeep } from '../utils/blobRef';
+import { migrateVideoCallBackgroundBlobRefs } from '../utils/videoCallBackgroundStorage';
 import { trackEvent } from '../utils/analytics';
 import { sortCharacterGroups, GROUP_FILTER_UNGROUPED } from '../components/character/CharacterGroupFilter';
 import {
@@ -976,10 +979,13 @@ ${isInitialGeneration ? `
       const cardProps = stripSensitiveCardFields(rest);
 
       const exportData: CharacterExportData = {
-          ...cardProps,
+          ...deepCloneForExport(cardProps),
           version: 1,
           type: 'sully_character_card'
       };
+
+      // 角色卡是跨设备文件，不能把只在本机有效的 blobref 令牌直接写进去。
+      await resolveBlobRefsDeep(exportData);
 
       // 导出前明文密钥体检 + 二次确认：正常为「安全，可分享」；若意外检出密钥则中止并提示上报。
       if (!(await confirmExportSafety(exportData))) return;
@@ -1099,7 +1105,8 @@ ${isInitialGeneration ? `
                   mountedWorldbooks: incomingMounted,
               } as CharacterProfile;
 
-              await DB.saveCharacter(newChar);
+              const migratedCard = await migrateVideoCallBackgroundBlobRefs(newChar);
+              await DB.saveCharacter(migratedCard.character);
               trackEvent('导入角色卡');
               // 不要调用 addCharacter()——它不是"刷新"，而是真的新建一个空白
               // "New Character" 并写进 DB，reload 后就会多出一张空白卡。
@@ -1108,7 +1115,7 @@ ${isInitialGeneration ? `
               setTimeout(() => window.location.reload(), 500);
 
               const wbToastSuffix = importedWbCount > 0 ? `，并同步 ${importedWbCount} 本世界书` : '';
-              addToast(`角色 ${newChar.name} 导入成功${wbToastSuffix}`, 'success');
+              addToast(`角色 ${migratedCard.character.name} 导入成功${wbToastSuffix}`, 'success');
 
           } catch (err: any) {
               console.error(err);

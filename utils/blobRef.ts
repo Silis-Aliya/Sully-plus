@@ -83,6 +83,15 @@ export async function deleteBlobRefIfUnreferenced(ref: string | undefined | null
     }
 
     try {
+        const characters = await DB.getAllCharacters();
+        if (characters.some(character => JSON.stringify(character).includes(ref))) {
+            return false;
+        }
+    } catch {
+        return false;
+    }
+
+    try {
         if (typeof localStorage !== 'undefined') {
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);

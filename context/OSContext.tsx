@@ -53,6 +53,7 @@ import {
 import { buildMusicInviteHint, buildMusicWakeHint, buildMusicWakePickableSongs, formatMusicWakePickableSongs, rememberMusicWakePickableSongs, type MusicTrackChangeDetail, type MusicTrackInfo } from '../utils/musicTrackChange';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
 import { resolveCharTimeZone } from '../utils/timezone';
+import { migrateVideoCallBackgroundBlobRefs } from '../utils/videoCallBackgroundStorage';
 import { ActiveMsgStore } from '../utils/activeMsgStore';
 import { charMayHaveCloudState, purgeCharCloudState } from '../utils/amsg2CharCleanup';
 import { markAmsgStateDirty, markAmsgStateDirtyForAll, resumePendingAmsgStateSync, startAmsgMusicWakePresence, stopAmsgMusicWakePresence, syncAmsgToolConfigAndPrompts } from '../utils/amsgStateSync';
@@ -1708,6 +1709,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
             }
         }
 
+        const videoBackgroundCache = new Map<string, string>();
+        let migratedVideoBackgroundCount = 0;
+        finalChars = await Promise.all(finalChars.map(async character => {
+          const result = await migrateVideoCallBackgroundBlobRefs(character, videoBackgroundCache);
+          if (result.migrated) migratedVideoBackgroundCount++;
+          return result.character;
+        }));
+
         let resetAutoContextCount = 0;
         let migratedContextCount = 0;
         finalChars = finalChars.map(c => {
@@ -1717,7 +1726,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (migration.resetAutoContext) resetAutoContextCount++;
           return migration.character;
         });
-        if (migratedContextCount > 0) {
+        if (migratedContextCount > 0 || migratedVideoBackgroundCount > 0) {
           await Promise.all(finalChars.map(c => DB.saveCharacter(c)));
         }
         if (resetAutoContextCount > 0) {
@@ -4493,7 +4502,11 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
                                   chat: c.chatBackground,
                                   date: c.dateBackground,
                                   roomWall: c.roomConfig?.wallImage,
-                                  roomFloor: c.roomConfig?.floorImage
+                                  roomFloor: c.roomConfig?.floorImage,
+                                  videoCall: c.videoCallBackground,
+                                  videoCallMode: c.videoCallBackgroundMode,
+                                  videoCallSegmentCount: c.videoCallBackgroundSegmentCount,
+                                  videoCallSchedule: c.videoCallBackgroundSchedule,
                               }
                           };
                           return processObject(extracted);
@@ -5085,14 +5098,21 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           if (chars.length > 0) {
               let importedAutoContextCount = 0;
               let importedContextMigrated = false;
-              const normalizedChars = chars.map(c => {
+              const videoBackgroundCache = new Map<string, string>();
+              let importedVideoBackgroundMigrated = false;
+              const charsWithStoredVideoBackgrounds = await Promise.all(chars.map(async character => {
+                  const result = await migrateVideoCallBackgroundBlobRefs(character, videoBackgroundCache);
+                  if (result.migrated) importedVideoBackgroundMigrated = true;
+                  return result.character;
+              }));
+              const normalizedChars = charsWithStoredVideoBackgrounds.map(c => {
                   const normalized = normalizeCharacterDefaults(normalizeCharacterImpression(c));
                   const migration = migrateCharacterContextRange(normalized);
                   if (migration.migrated) importedContextMigrated = true;
                   if (migration.resetAutoContext) importedAutoContextCount++;
                   return migration.character;
               });
-              if (importedContextMigrated) {
+              if (importedContextMigrated || importedVideoBackgroundMigrated) {
                   await Promise.all(normalizedChars.map(c => DB.saveCharacter(c)));
               }
               setCharacters(normalizedChars);

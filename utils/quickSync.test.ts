@@ -114,6 +114,10 @@ describe('quickSync settings coverage', () => {
         expect(collectBlobRefIds({
             theme: { wallpaper: 'blobref:img_wallpaper_1' },
             char: { avatar: 'blobref:img_avatar_2' },
+            videoCallBackgroundSchedule: {
+                morning: 'blobref:img_video_morning',
+                night: 'blobref:img_video_night',
+            },
             localStorageSettings: {
                 workbench_bridge_config_v1: JSON.stringify({ codexAvatar: 'blobref:img_code_avatar_4' }),
             },
@@ -121,7 +125,10 @@ describe('quickSync settings coverage', () => {
                 { metadata: { cardImage: 'url(blobref:img_card_3)' } },
                 { content: 'plain text' },
             ],
-        }).sort()).toEqual(['img_avatar_2', 'img_card_3', 'img_code_avatar_4', 'img_wallpaper_1']);
+        }).sort()).toEqual([
+            'img_avatar_2', 'img_card_3', 'img_code_avatar_4',
+            'img_video_morning', 'img_video_night', 'img_wallpaper_1',
+        ]);
     });
 
     it('emits incremental deletions for image blobs that are no longer referenced', () => {

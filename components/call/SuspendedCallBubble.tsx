@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Phone } from '@phosphor-icons/react';
 import type { CharacterProfile } from '../../types';
 import { getChibi } from '../../utils/vrWorld/chibi';
 import { clampBubblePos, resolveInsets } from '../../utils/floatingBallBounds';
@@ -108,9 +107,6 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, on
         ) : (
           <span className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-300 text-lg font-bold text-white shadow-lg">{character.name.slice(0, 1)}</span>
         )}
-      </span>
-      <span className="absolute bottom-1 right-0 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-emerald-500 text-white shadow-md">
-        <Phone size={12} weight="fill" />
       </span>
       <span className="absolute bottom-0 left-3 h-2 w-12 rounded-[50%] bg-black/25 blur-[2px]" />
       <style>{'@keyframes suspendedChibiFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}'}</style>

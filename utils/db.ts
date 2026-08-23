@@ -3618,6 +3618,10 @@ export const DB = {
               spriteConfig: media.spriteConfig || c.spriteConfig,
               chatBackground: media.backgrounds?.chat || c.chatBackground,
               dateBackground: media.backgrounds?.date || c.dateBackground,
+              videoCallBackground: media.backgrounds?.videoCall || c.videoCallBackground,
+              videoCallBackgroundMode: media.backgrounds?.videoCallMode ?? c.videoCallBackgroundMode,
+              videoCallBackgroundSegmentCount: media.backgrounds?.videoCallSegmentCount ?? c.videoCallBackgroundSegmentCount,
+              videoCallBackgroundSchedule: media.backgrounds?.videoCallSchedule || c.videoCallBackgroundSchedule,
               roomConfig: c.roomConfig ? {
                   ...c.roomConfig,
                   wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,

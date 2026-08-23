@@ -2627,6 +2627,16 @@ export interface CharacterProfile {
    * 空 = 默认氛围渐变。
    */
   videoCallBackground?: string;
+  /** 视频舞台背景选择方式；未设置时保持旧版单张背景行为。 */
+  videoCallBackgroundMode?: 'single' | 'time';
+  /** 时间背景预设的分段数量；旧数据默认使用四段。 */
+  videoCallBackgroundSegmentCount?: 3 | 4 | 5 | 6;
+  /**
+   * 按角色时区自动切换的视频舞台背景。每项均支持 blobref 本地图片或 http(s) 直链。
+   * 根据 3/4/5/6 段预设使用 morning/noon/afternoon/dusk/evening/night。
+   * day 是旧四段版本的兼容字段，新界面不再写入。
+   */
+  videoCallBackgroundSchedule?: Partial<Record<'morning' | 'noon' | 'afternoon' | 'dusk' | 'evening' | 'night' | 'day', string>>;
   /**
    * 触感陪伴桌面（companion 皮肤）的背景：`preset:<id>`（内置华丽渐变场景）、
    * `blobref:<id>` 令牌（本地图片，备份由 resolveBlobRefsDeep 还原）或 http(s)
@@ -3754,7 +3764,16 @@ export interface FullBackupData {
         customDateSprites?: string[];
         spriteConfig?: SpriteConfig;
         roomItems?: Record<string, string>;
-        backgrounds?: { chat?: string; date?: string; roomWall?: string; roomFloor?: string };
+        backgrounds?: {
+            chat?: string;
+            date?: string;
+            roomWall?: string;
+            roomFloor?: string;
+            videoCall?: string;
+            videoCallMode?: 'single' | 'time';
+            videoCallSegmentCount?: 3 | 4 | 5 | 6;
+            videoCallSchedule?: CharacterProfile['videoCallBackgroundSchedule'];
+        };
     }[];
 
     xhsActivities?: XhsActivityRecord[];
