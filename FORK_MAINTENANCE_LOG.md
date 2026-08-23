@@ -1,5 +1,17 @@
 # SullyOS Fork Maintenance Log
 
+## 2026-08-23 Call UI, Live2D Setup, And iOS Launcher Reordering
+
+- Rebuilt the Call app around the supplied `3028` / `5226` / `0210` UI references instead of retaining the legacy SullyOS layout. The landing list, voice call, video call, call history, connection setup, model import, rehearsal, camera, and Live2D action-library pages now share the same soft system gray-blue visual language.
+- The Call landing page no longer shows the old decorative top-right avatar. Voice/video switching remains at the top; every character row exposes the appropriate call control, and video rows expose their own settings entry. Existing call records are loaded for every character and keep their detail and delete behavior.
+- Video setup is kept outside the clean call stage. Its settings sheet links to opponent appearance, model quality/import/rehearsal, and the user's camera. Model import and action rehearsal use the supplied nested-sheet hierarchy while preserving the existing Live2D import, preview, action permission, camera, translation, audio, and transcript behavior.
+- Added a persistent day/night toggle beside Call history using SullyOS's existing sun/moon SVG language. Night mode is a gray-blue counterpart of the new interface rather than the removed purple/black legacy skin, and applies across landing, history, setup, voice, and video pages.
+- Replaced fixed launcher swapping with iOS-style insertion reordering: long-press enters edit mode, dragged apps insert while neighbors shift, empty slots stay visually transparent, edge-hover changes pages, and apps can move across pages. The order persists through `launcherAppOrder`.
+- Added persistent user-created launcher page boundaries through `OSTheme.launcherAppPageStarts`. Dragging onto the transparent trailing edit page creates another page and page dot; empty extra pages collapse again. The first page adapts between 8 and 12 apps by available height, the widget page remains capped at 8, and later plain-app pages can use a 4 x 4 grid above the pager/dock.
+- Retired the Appearance page's unused `Desktop Decoration DIY / Fancy Mode` editor from the visible UI. Existing saved decorations and imported decoration data are deliberately not deleted, so hiding the editor does not destroy a user's previous layout.
+- Release commit: `e27a8a24` (`feat: redesign calls and add iOS launcher reordering`), pushed to `origin/codex/merge-upstream-plus-maintenance`. It was not pushed to `origin/master` in this maintenance step.
+- Verification: repeated `pnpm build` runs completed successfully after the Call, launcher pagination, and Appearance changes. The temporary development-HMR `APPS_PER_PAGE is not defined` regression was removed; the final source no longer references that deleted constant.
+
 ## 2026-08-22 Instant Manual Trigger And Optional Queue
 
 - Ordinary chat sends now only save the message; unified instant chat, legacy Instant Push, and local generation start only after the user taps the top-bar lightning button.
