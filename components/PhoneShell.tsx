@@ -452,7 +452,7 @@ const AppLoadingFallback: React.FC<{ onReturn?: () => void }> = ({ onReturn }) =
 };
 
 const AppViewport = React.memo(() => {
-  const { activeApp, closeApp } = useNavigation();
+  const { activeApp, closeApp, suspendedCall } = useNavigation();
   const { activeCharacterId } = useCharacterData();
   const apps: Partial<Record<AppID, React.ReactNode>> = {
     [AppID.Settings]: <Settings />, [AppID.Character]: <Character />, [AppID.Chat]: <Chat />,
@@ -463,7 +463,7 @@ const AppViewport = React.memo(() => {
     [AppID.FAQ]: <FAQApp />, [AppID.Game]: <GameApp />, [AppID.Worldbook]: <WorldbookApp />,
     [AppID.Novel]: <NovelApp />, [AppID.Bank]: <BankApp />, [AppID.XhsStock]: <XhsStockApp />,
     [AppID.XhsFreeRoam]: <XhsFreeRoamApp />, [AppID.Browser]: <BrowserApp />,
-    [AppID.Songwriting]: <SongwritingApp />, [AppID.Music]: <MusicApp />, [AppID.Call]: <CallApp />,
+    [AppID.Songwriting]: <SongwritingApp />, [AppID.Music]: <MusicApp />,
     [AppID.VoiceDesigner]: <VoiceDesignerApp />, [AppID.Guidebook]: <GuidebookApp />,
     [AppID.LifeSim]: <LifeSimApp />, [AppID.MemoryPalace]: <MemoryPalaceApp />,
     [AppID.Handbook]: <HandbookApp />, [AppID.QQBridge]: <QQBridge />, [AppID.HotNews]: <HotNewsApp />,
@@ -471,7 +471,8 @@ const AppViewport = React.memo(() => {
     [AppID.Workbench]: <WorkbenchApp />, [AppID.WorldHome]: <WorldHomeApp />,
     [AppID.CharCreatorDev]: <CharCreatorDevApp />, [AppID.Launcher]: <Launcher />,
   };
-  const app = apps[activeApp] || <Launcher />;
+  const app = activeApp === AppID.Call ? null : (apps[activeApp] || <Launcher />);
+  const keepCallMounted = activeApp === AppID.Call || !!suspendedCall;
 
   return (
     <AppErrorBoundary onCloseApp={closeApp} resetKey={`${activeApp}:${activeCharacterId || 'none'}`}>
@@ -480,6 +481,11 @@ const AppViewport = React.memo(() => {
           <style>{`@keyframes appEnterFade{from{opacity:0}to{opacity:1}}`}</style>
           {app}
         </div>
+        {keepCallMounted && (
+          <div className={`absolute inset-0 ${activeApp === AppID.Call ? 'z-10' : 'invisible pointer-events-none -z-10'}`} aria-hidden={activeApp !== AppID.Call}>
+            <CallApp />
+          </div>
+        )}
       </Suspense>
     </AppErrorBoundary>
   );
@@ -953,7 +959,7 @@ const PhoneShell: React.FC = () => {
           {/* 挂起通话使用彼方 Chibi 独立浮球；和音乐浮球各自保存位置、互不占用。 */}
           {suspendedCall && activeApp !== AppID.Call && (() => {
             const character = characters.find(item => item.id === suspendedCall.charId);
-            return character ? <SuspendedCallBubble character={character} onResume={resumeCall} /> : null;
+            return character ? <SuspendedCallBubble character={character} call={suspendedCall} onResume={resumeCall} /> : null;
           })()}
 
           {/* Overlays: Global Mini Player (when music is playing in background) */}

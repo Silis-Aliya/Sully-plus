@@ -2264,9 +2264,9 @@ ${sentencePlan}`;
     avatarTouchEffectTimersRef.current.forEach(timer => window.clearTimeout(timer));
     avatarTouchEffectTimersRef.current = [];
   }, []);
-  const handleTurn = async () => {
+  const handleTurn = async (overrideText?: string) => {
     if (isListening) { sttSessionRef.current?.stop(); setIsListening(false); }
-    const typedInput = draftInput.trim();
+    const typedInput = overrideText?.trim() || draftInput.trim();
     const retryInput = getPendingReplyText(bubbles);
     const input = typedInput || retryInput;
     if (!input) return addToast('说点什么吧', 'info');
@@ -2463,6 +2463,14 @@ ${sentencePlan}`;
       addToast(`TTS失败：${e?.message || '语音生成失败'}，已保留文本并启用无声表演`, 'info');
     }
   };
+  useEffect(() => {
+    const onMiniMessage = (event: Event) => {
+      const text = (event as CustomEvent<{ text?: string }>).detail?.text?.trim();
+      if (text) void handleTurn(text);
+    };
+    window.addEventListener('sully-suspended-call-message', onMiniMessage);
+    return () => window.removeEventListener('sully-suspended-call-message', onMiniMessage);
+  }, [handleTurn]);
   const sendingBusy = ['connecting', 'thinking'].includes(callState);
   const pendingCallRetryText = getPendingReplyText(bubbles);
   const displayCallState: CallState = isAudioPlaying ? 'speaking' : callState;
@@ -3562,7 +3570,7 @@ ${sentencePlan}`;
               className="flex-1 min-w-0 bg-transparent px-2 text-sm outline-none placeholder:text-white/35"
               placeholder={isListening ? '在听你说……' : sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
             />
-            <button onClick={handleTurn} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-[18px] text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: callMode === 'video' ? '#3b82f6' : '#2563eb', boxShadow: '0 2px 6px rgba(37,99,235,.2)' }}>{sendingBusy ? '…' : '发送'}</button>
+            <button onClick={() => void handleTurn()} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-[18px] text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: callMode === 'video' ? '#3b82f6' : '#2563eb', boxShadow: '0 2px 6px rgba(37,99,235,.2)' }}>{sendingBusy ? '…' : '发送'}</button>
           </div>
           {!sendingBusy && pendingCallRetryText && !draftInput.trim() && <div className="text-[10px] text-amber-200/70 mt-1 px-1">上一句话还没得到回复，点击重试即可继续</div>}
           {isListening && <div className="text-[10px] text-white/40 mt-1 px-1 animate-pulse">正在聆听，点麦克风结束</div>}
@@ -3790,6 +3798,7 @@ ${sentencePlan}`;
                     sessionId: currentSessionId,
                     elapsedSeconds,
                     voiceLang,
+                    callMode,
                     pendingAvatarTouches: pendingAvatarTouchesRef.current,
                   });
                   addToast('通话已挂起，点击顶部绿色条可随时回来', 'success');

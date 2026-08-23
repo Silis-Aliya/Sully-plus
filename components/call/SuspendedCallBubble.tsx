@@ -2,12 +2,16 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { CharacterProfile } from '../../types';
 import { getChibi } from '../../utils/vrWorld/chibi';
 import { clampBubblePos, resolveInsets } from '../../utils/floatingBallBounds';
+import { resolveVideoCallBackground, resolveVideoCallForeground } from '../../utils/videoCallBackground';
+import { useBlobRefUrl } from '../../utils/blobRef';
+import type { SuspendedCallInfo } from '../../context/OSContext';
 
 const STORAGE_KEY = 'sully-suspended-call-bubble-position';
 const BUBBLE_SIZE = 88;
 
 interface SuspendedCallBubbleProps {
   character: CharacterProfile;
+  call: SuspendedCallInfo;
   onResume: () => void;
 }
 
@@ -20,12 +24,22 @@ const readPosition = (): { x: number; y: number } | null => {
   }
 };
 
-const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, onResume }) => {
+const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, call, onResume }) => {
   const rootRef = useRef<HTMLButtonElement>(null);
   const dragRef = useRef<{ pointerId: number; dx: number; dy: number; moved: boolean } | null>(null);
   const [position, setPosition] = useState(() => readPosition() || { x: -1, y: 96 });
   const positionRef = useRef(position);
   const chibi = getChibi(character);
+  const [quickText, setQuickText] = useState('');
+  const videoBackgroundUrl = useBlobRefUrl(resolveVideoCallBackground(character));
+  const videoForegroundUrl = useBlobRefUrl(resolveVideoCallForeground(character));
+
+  const sendQuickText = () => {
+    const text = quickText.trim();
+    if (!text) return;
+    window.dispatchEvent(new CustomEvent('sully-suspended-call-message', { detail: { text } }));
+    setQuickText('');
+  };
 
   const clampToShell = (x: number, y: number) => {
     const parent = rootRef.current?.parentElement;
@@ -42,7 +56,7 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, on
       parentH: rect.height,
       insetTop: insets.insetTop,
       insetBottom: insets.insetBottom,
-      bubble: BUBBLE_SIZE,
+      bubble: call.callMode === 'video' ? 224 : BUBBLE_SIZE,
       pad: 8,
     });
   };
@@ -58,7 +72,7 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, on
     return () => window.removeEventListener('resize', fit);
   }, []);
 
-  const move = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const move = (event: React.PointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     const parent = rootRef.current?.parentElement;
     if (!drag || drag.pointerId !== event.pointerId || !parent) return;
@@ -69,14 +83,58 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, on
     setPosition(next);
   };
 
-  const finishDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const finishDrag = (event: React.PointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    rootRef.current?.releasePointerCapture(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     dragRef.current = null;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(positionRef.current));
-    if (!drag.moved) onResume();
+    if (!drag.moved && call.callMode !== 'video') onResume();
   };
+
+  if (call.callMode === 'video') {
+    return (
+      <section
+        ref={rootRef as React.RefObject<HTMLElement>}
+        aria-label={`与 ${character.name} 的视频通话小窗`}
+        className="absolute z-[56] w-[224px] touch-none select-none overflow-hidden rounded-[1.5rem] border border-white/35 bg-[#101521]/95 text-white shadow-[0_18px_55px_rgba(5,10,22,.42)] backdrop-blur-xl"
+        style={{ left: position.x, top: position.y }}
+      >
+        <header
+          className="flex h-10 cursor-move items-center justify-between px-3"
+          onPointerDown={event => {
+            const rect = rootRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            dragRef.current = { pointerId: event.pointerId, dx: event.clientX - rect.left, dy: event.clientY - rect.top, moved: false };
+          }}
+          onPointerMove={move}
+          onPointerUp={finishDrag}
+          onPointerCancel={() => { dragRef.current = null; }}
+        >
+          <span className="min-w-0 truncate text-xs font-semibold">视频中 · {character.name}</span>
+          <button type="button" onClick={onResume} className="rounded-full bg-white/10 px-2 py-1 text-[10px] active:scale-95">全屏</button>
+        </header>
+        <button type="button" onClick={onResume} className="relative block h-[150px] w-full overflow-hidden bg-black/50 text-left">
+          {videoBackgroundUrl && <img src={videoBackgroundUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/15" />
+          {character.avatar && <img src={character.avatar} alt="" className="absolute inset-x-[22%] bottom-0 h-[92%] w-[56%] object-contain object-bottom drop-shadow-xl" />}
+          {videoForegroundUrl && <img src={videoForegroundUrl} alt="" className="absolute inset-0 h-full w-full object-contain" />}
+          <span className="absolute bottom-2 left-2 rounded-full bg-black/45 px-2 py-1 text-[9px] backdrop-blur">点击恢复通话</span>
+        </button>
+        <div className="flex items-center gap-1.5 p-2">
+          <input
+            value={quickText}
+            onChange={event => setQuickText(event.target.value)}
+            onKeyDown={event => { if (event.key === 'Enter') sendQuickText(); }}
+            placeholder="边看边发消息…"
+            className="min-w-0 flex-1 rounded-full border border-white/10 bg-white/10 px-3 py-2 text-[11px] text-white outline-none placeholder:text-white/35"
+          />
+          <button type="button" onClick={sendQuickText} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-500 text-xs font-bold active:scale-90">↑</button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <button

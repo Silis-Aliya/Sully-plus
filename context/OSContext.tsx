@@ -492,15 +492,29 @@ interface OSContextType {
   handleBack: () => void;
 
   // Call Suspend
-  suspendedCall: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null;
-  suspendCall: (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string }) => void;
-  resumeCall: () => void;
+  suspendedCall: SuspendedCallInfo | null;
+  suspendCall: (info: SuspendedCallInfo) => void;
+  resumeCall: (pendingMessage?: string) => void;
   clearSuspendedCall: () => void;
 
   // 从聊天「见面」按钮跳进见面：携带目标角色，DateApp 挂载时自动进入该角色的见面流程
   dateAutoStartCharId: string | null;
   openDateWithChar: (charId: string) => void;
   consumeDateAutoStart: () => void;
+}
+
+export interface SuspendedCallInfo {
+  charId: string;
+  charName: string;
+  charAvatar?: string;
+  startedAt: number;
+  bubbles?: any[];
+  sessionId?: string;
+  elapsedSeconds?: number;
+  voiceLang?: string;
+  callMode?: 'voice' | 'video';
+  pendingMessage?: string;
+  pendingAvatarTouches?: any[];
 }
 
 type NavigationContextType = Pick<OSContextType,
@@ -1071,7 +1085,7 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const backHandlerRef = useRef<(() => boolean) | null>(null);
 
   // Call Suspend
-  const [suspendedCall, setSuspendedCall] = useState<{ charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string } | null>(null);
+  const [suspendedCall, setSuspendedCall] = useState<SuspendedCallInfo | null>(null);
   // 聊天「见面」按钮 → 见面：记录目标角色，DateApp 挂载后消费一次并自动进入见面
   const [dateAutoStartCharId, setDateAutoStartCharId] = useState<string | null>(null);
 
@@ -5201,11 +5215,14 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   const consumeDateAutoStart = () => setDateAutoStartCharId(null);
   const unlock = () => setIsLocked(false);
 
-  const suspendCall = (info: { charId: string; charName: string; charAvatar?: string; startedAt: number; bubbles?: any[]; sessionId?: string; elapsedSeconds?: number; voiceLang?: string }) => {
+  const suspendCall = (info: SuspendedCallInfo) => {
     setSuspendedCall(info);
     setActiveApp(AppID.Launcher);
   };
-  const resumeCall = () => {
+  const resumeCall = (pendingMessage?: string) => {
+    if (pendingMessage?.trim()) {
+      setSuspendedCall(current => current ? { ...current, pendingMessage: pendingMessage.trim() } : current);
+    }
     setActiveApp(AppID.Call);
   };
   const clearSuspendedCall = () => {
