@@ -5,6 +5,7 @@ import { clampBubblePos, resolveInsets } from '../../utils/floatingBallBounds';
 import { resolveVideoCallBackground, resolveVideoCallForeground } from '../../utils/videoCallBackground';
 import { useBlobRefUrl } from '../../utils/blobRef';
 import type { SuspendedCallInfo } from '../../context/OSContext';
+import VRMVideoCallStage from './VRMVideoCallStage';
 
 const STORAGE_KEY = 'sully-suspended-call-bubble-position';
 const BUBBLE_SIZE = 88;
@@ -116,10 +117,23 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, ca
           <button type="button" onClick={onResume} className="rounded-full bg-white/10 px-2 py-1 text-[10px] active:scale-95">全屏</button>
         </header>
         <button type="button" onClick={onResume} className="relative block h-[150px] w-full overflow-hidden bg-black/50 text-left">
-          {videoBackgroundUrl && <img src={videoBackgroundUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-black/15" />
-          {character.avatar && <img src={character.avatar} alt="" className="absolute inset-x-[22%] bottom-0 h-[92%] w-[56%] object-contain object-bottom drop-shadow-xl" />}
-          {videoForegroundUrl && <img src={videoForegroundUrl} alt="" className="absolute inset-0 h-full w-full object-contain" />}
+          <div className="pointer-events-none absolute inset-0">
+            <VRMVideoCallStage
+              characterName={character.name}
+              fallbackAvatar={character.avatar}
+              model={character.videoAvatar}
+              motionState="idle"
+              accentColor="#60a5fa"
+              backgroundUrl={videoBackgroundUrl}
+              foregroundUrl={videoForegroundUrl}
+              foregroundPlacement={character.videoCallForegroundPlacement}
+              onChooseModel={() => undefined}
+              companionMode
+              framingEditable={false}
+              maxFps={15}
+            />
+          </div>
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10" />
           <span className="absolute bottom-2 left-2 rounded-full bg-black/45 px-2 py-1 text-[9px] backdrop-blur">点击恢复通话</span>
         </button>
         <div className="flex items-center gap-1.5 p-2">
