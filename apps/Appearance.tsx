@@ -1265,8 +1265,9 @@ const Appearance: React.FC = () => {
                     </div>
                 </section>
 
-                {/* Desktop Decoration DIY Section */}
-                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
+                {/* Legacy desktop-decoration editor is intentionally retired. Existing saved
+                    decorations remain renderable/importable so old themes are not damaged. */}
+                {false && <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
                     <div className="flex items-center justify-between mb-2">
                         <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest">桌面装饰 DIY</h2>
                         <span className="text-[10px] bg-gradient-to-r from-pink-100 to-purple-100 text-pink-500 px-2 py-0.5 rounded-full font-bold">花里胡哨模式</span>
@@ -1472,7 +1473,7 @@ const Appearance: React.FC = () => {
                         </div>
                     )}
                     <div className="text-[10px] text-slate-400 mt-3 px-1">提示: 装饰会叠加显示在桌面第二页上，可自由调节每个装饰的位置、大小、旋转和透明度。支持上传自定义图片或使用预设贴纸。</div>
-                </section>
+                </section>}
             </>
         ) : activeTab === 'icons' ? (
             <div className="space-y-5">

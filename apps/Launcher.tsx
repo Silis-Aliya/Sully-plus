@@ -254,24 +254,31 @@ const CharacterWidget = React.memo(({
 // 3. Grid Page Component
 const AppGridPage = React.memo(({
     apps,
+    startIndex,
+    dropPageIndex,
+    appsPerPage = 8,
     openApp,
     acnh = false,
     editing = false,
     workbenchUnread = 0,
 }: {
     apps: typeof INSTALLED_APPS,
+    startIndex: number,
+    dropPageIndex: number,
+    appsPerPage?: number,
     openApp: (id: AppID) => void,
     acnh?: boolean,
     editing?: boolean,
     workbenchUnread?: number,
 }) => {
     return (
-        <div className={`grid place-items-center animate-fade-in relative ${acnh ? 'grid-cols-4 gap-y-6 gap-x-2' : 'grid-cols-4 gap-y-6 gap-x-2'}`}>
-             {apps.map(app => (
+        <div className={`grid grid-cols-4 place-items-center animate-fade-in relative gap-x-2 gap-y-[clamp(.75rem,2.5vh,1.5rem)]`}>
+             {apps.map((app, index) => (
                  <div
                     key={app.id}
                     data-launcher-item={app.id}
                     data-launcher-kind="app"
+                    data-launcher-index={startIndex + index}
                     className={`relative transition-transform duration-200 active:scale-95 ${editing ? 'launcher-edit-item' : ''}`}
                  >
                      <AppIcon
@@ -286,16 +293,26 @@ const AppGridPage = React.memo(({
                      )}
                  </div>
              ))}
+             {editing && Array.from({ length: Math.max(0, appsPerPage - apps.length) }, (_, index) => (
+                 <div
+                    key={`empty-${startIndex}-${index}`}
+                    data-launcher-drop-index={startIndex + apps.length + index}
+                    data-launcher-drop-page={dropPageIndex}
+                    data-launcher-drop-kind="app"
+                    aria-label="空白 App 位置"
+                    className="launcher-empty-drop-slot h-[4.8rem] w-[4.2rem] rounded-[1.25rem]"
+                 />
+             ))}
         </div>
     );
 });
 
 // 3b. Small 2x2 app grid for pinwheel cells
-const AppQuadGrid = React.memo(({ apps, openApp, editing = false, workbenchUnread = 0 }: { apps: typeof INSTALLED_APPS, openApp: (id: AppID) => void, editing?: boolean, workbenchUnread?: number }) => {
+const AppQuadGrid = React.memo(({ apps, startIndex, dropPageIndex, openApp, editing = false, workbenchUnread = 0 }: { apps: typeof INSTALLED_APPS, startIndex: number, dropPageIndex: number, openApp: (id: AppID) => void, editing?: boolean, workbenchUnread?: number }) => {
     return (
         <div className="w-full h-full grid grid-cols-2 grid-rows-2 place-items-center gap-x-2 gap-y-3">
-            {apps.map(app => (
-                <div key={app.id} data-launcher-item={app.id} data-launcher-kind="app" className={`relative transition-transform duration-200 active:scale-95 ${editing ? 'launcher-edit-item' : ''}`}>
+            {apps.map((app, index) => (
+                <div key={app.id} data-launcher-item={app.id} data-launcher-kind="app" data-launcher-index={startIndex + index} className={`relative transition-transform duration-200 active:scale-95 ${editing ? 'launcher-edit-item' : ''}`}>
                     <AppIcon app={app} onClick={() => { if (!editing) openApp(app.id); }} />
                     {app.id === AppID.Workbench && workbenchUnread > 0 && (
                         <div className="absolute -top-1 -right-1 h-5 min-w-5 rounded-full border-2 border-white/60 bg-red-500 px-1 text-[9px] font-bold text-white shadow-sm flex items-center justify-center pointer-events-none">
@@ -303,6 +320,9 @@ const AppQuadGrid = React.memo(({ apps, openApp, editing = false, workbenchUnrea
                         </div>
                     )}
                 </div>
+            ))}
+            {editing && Array.from({ length: Math.max(0, 4 - apps.length) }, (_, index) => (
+                <div key={`empty-${startIndex}-${index}`} data-launcher-drop-index={startIndex + apps.length + index} data-launcher-drop-page={dropPageIndex} data-launcher-drop-kind="app" aria-label="空白 App 位置" className="launcher-empty-drop-slot h-[3.8rem] w-[3.8rem] rounded-[1rem]" />
             ))}
         </div>
     );
@@ -519,6 +539,9 @@ const Launcher: React.FC = () => {
       grabOffsetX?: number;
       grabOffsetY?: number;
       lastTarget?: string;
+      lastDropIndex?: number;
+      lastDropPage?: number;
+      lastDropCreatesPage?: boolean;
       targetElement?: HTMLElement;
   } | null>(null);
   const suppressLayoutClickUntil = useRef(0);
@@ -527,7 +550,25 @@ const Launcher: React.FC = () => {
 
   const [activePageIndex, setActivePageIndex] = useState(_lastPageIndex);
   const activePageIndexRef = useRef(_lastPageIndex);
+  const launcherRootRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [launcherViewportHeight, setLauncherViewportHeight] = useState(() => window.visualViewport?.height || window.innerHeight);
+
+  useEffect(() => {
+      const root = launcherRootRef.current;
+      if (!root) return;
+      const update = () => setLauncherViewportHeight(root.getBoundingClientRect().height || window.visualViewport?.height || window.innerHeight);
+      update();
+      const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+      observer?.observe(root);
+      window.visualViewport?.addEventListener('resize', update);
+      window.addEventListener('resize', update);
+      return () => {
+          observer?.disconnect();
+          window.visualViewport?.removeEventListener('resize', update);
+          window.removeEventListener('resize', update);
+      };
+  }, []);
 
   // Mouse Drag Logic refs
   const isDragging = useRef(false);
@@ -556,6 +597,7 @@ const Launcher: React.FC = () => {
 
   const availableGridIds = useMemo(() => availableGridApps.map(app => app.id), [availableGridApps]);
   const [launcherAppOrder, setLauncherAppOrder] = useState<string[]>(() => normalizeOrder(theme.launcherAppOrder, INSTALLED_APPS.filter(app => !DOCK_APPS.includes(app.id)).map(app => app.id)));
+  const [launcherAppPageStarts, setLauncherAppPageStarts] = useState<string[]>(() => (theme.launcherAppPageStarts || []).filter((id, index, all) => all.indexOf(id) === index));
   const [launcherDockOrder, setLauncherDockOrder] = useState<string[]>(() => normalizeOrder(theme.launcherDockOrder, DOCK_APPS));
   const [pinwheelOrder, setPinwheelOrder] = useState<Array<'music' | 'appsA' | 'appsB' | 'image'>>(() => {
       const available = ['music', 'appsA', 'appsB', 'image'] as const;
@@ -563,6 +605,7 @@ const Launcher: React.FC = () => {
       return [...saved.filter((id, index) => available.includes(id) && saved.indexOf(id) === index), ...available.filter(id => !saved.includes(id))];
   });
   const launcherAppOrderRef = useRef(launcherAppOrder);
+  const launcherAppPageStartsRef = useRef(launcherAppPageStarts);
   const launcherDockOrderRef = useRef(launcherDockOrder);
   const pinwheelOrderRef = useRef(pinwheelOrder);
 
@@ -572,8 +615,15 @@ const Launcher: React.FC = () => {
           launcherAppOrderRef.current = next;
           return next;
       });
+      setLauncherAppPageStarts(prev => {
+          const valid = new Set(availableGridIds);
+          const next = prev.filter((id, index, all) => valid.has(id) && all.indexOf(id) === index);
+          launcherAppPageStartsRef.current = next;
+          return next;
+      });
   }, [availableGridIds, normalizeOrder, theme.launcherAppOrder]);
   useEffect(() => { launcherAppOrderRef.current = launcherAppOrder; }, [launcherAppOrder]);
+  useEffect(() => { launcherAppPageStartsRef.current = launcherAppPageStarts; }, [launcherAppPageStarts]);
   useEffect(() => { launcherDockOrderRef.current = launcherDockOrder; }, [launcherDockOrder]);
   useEffect(() => { pinwheelOrderRef.current = pinwheelOrder; }, [pinwheelOrder]);
   useEffect(() => {
@@ -601,18 +651,36 @@ const Launcher: React.FC = () => {
       return launcherDockOrder.map(id => byId.get(id as AppID)).filter(Boolean) as typeof INSTALLED_APPS;
   }, [launcherDockOrder]);
 
-  // Split apps into pages of 8 (4 cols x 2 rows fit comfortably below widget)
-  // Pages: 0 = clock+chat+music+grid (original), 1 = pinwheel, 2 = widget images + grid,
-  //        3+ = plain grid. Pad to at least 3 slots so the pinwheel/widget pages always exist.
-  const APPS_PER_PAGE = 8;
+  // The first two pages carry large widgets, so they keep two icon rows. Page 3 onward
+  // uses the full area above the pager/dock like iOS and can hold four rows.
+  const FIRST_PAGE_APP_CAPACITY = launcherViewportHeight >= 760 ? 12 : 8;
+  const WIDGET_PAGE_APP_CAPACITY = 8;
+  const PLAIN_PAGE_APP_CAPACITY = 16;
+  const launcherPageCapacity = (pageIndex: number) => pageIndex === 0 ? FIRST_PAGE_APP_CAPACITY : pageIndex === 1 ? WIDGET_PAGE_APP_CAPACITY : PLAIN_PAGE_APP_CAPACITY;
   const appPages = useMemo(() => {
       const pages: typeof INSTALLED_APPS[] = [];
-      for (let i = 0; i < gridApps.length; i += APPS_PER_PAGE) {
-          pages.push(gridApps.slice(i, i + APPS_PER_PAGE));
+      const forcedStarts = new Set(launcherAppPageStarts);
+      for (const app of gridApps) {
+          let pageIndex = Math.max(0, pages.length - 1);
+          if (!pages.length || (forcedStarts.has(app.id) && pages[pageIndex].length > 0) || pages[pageIndex].length >= launcherPageCapacity(pageIndex)) {
+              pages.push([]);
+              pageIndex = pages.length - 1;
+          }
+          pages[pageIndex].push(app);
       }
       while (pages.length < 3) pages.push([]);
+      if (layoutEditing && pages[pages.length - 1]?.length > 0) pages.push([]);
       return pages;
-  }, [gridApps]);
+  }, [gridApps, launcherAppPageStarts, layoutEditing]);
+
+  const appPageStartIndices = useMemo(() => {
+      let cursor = 0;
+      return appPages.map(page => {
+          const start = cursor;
+          cursor += page.length;
+          return start;
+      });
+  }, [appPages]);
 
   // Page 2 (pinwheel) uses appPages[1]: split into two 2x2 quads
   const page2Apps = appPages[1] || [];
@@ -773,6 +841,20 @@ const Launcher: React.FC = () => {
       }
   }, []);
 
+  const reorderAppToIndex = useCallback((source: string, requestedIndex: number) => {
+      const items = launcherAppOrderRef.current;
+      const from = items.indexOf(source);
+      if (from < 0) return;
+      const next = [...items];
+      const [moved] = next.splice(from, 1);
+      // Removing an item before the requested slot shifts that slot one place left.
+      const adjusted = requestedIndex > from ? requestedIndex - 1 : requestedIndex;
+      const to = Math.max(0, Math.min(next.length, adjusted));
+      next.splice(to, 0, moved);
+      launcherAppOrderRef.current = next;
+      setLauncherAppOrder(next);
+  }, []);
+
   const clearLayoutPressTimer = useCallback(() => {
       if (layoutPressTimer.current) clearTimeout(layoutPressTimer.current);
       layoutPressTimer.current = null;
@@ -833,6 +915,9 @@ const Launcher: React.FC = () => {
           pointer.targetElement?.classList.remove('launcher-drop-target');
           pointer.targetElement = undefined;
           pointer.lastTarget = undefined;
+          pointer.lastDropIndex = undefined;
+          pointer.lastDropPage = undefined;
+          pointer.lastDropCreatesPage = undefined;
           activePageIndexRef.current = nextPage;
           setActivePageIndex(nextPage);
           _lastPageIndex = nextPage;
@@ -895,21 +980,35 @@ const Launcher: React.FC = () => {
       if (pointer.kind === 'app' && e.clientX <= rootRect.left + 72) queueLayoutPageTurn(-1);
       else if (pointer.kind === 'app' && e.clientX >= rootRect.right - 72) queueLayoutPageTurn(1);
       else clearLayoutPageTurn();
-      const target = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('[data-launcher-item]');
+      const hit = document.elementFromPoint(e.clientX, e.clientY);
+      const target = hit?.closest<HTMLElement>('[data-launcher-item]');
+      const emptySlot = hit?.closest<HTMLElement>('[data-launcher-drop-index]');
       const targetKey = target?.dataset.launcherItem;
       const targetKind = target?.dataset.launcherKind;
-      const validTarget = !!targetKey && targetKind === pointer.kind && targetKey !== pointer.key;
+      const emptyKind = emptySlot?.dataset.launcherDropKind;
+      const emptyIndex = emptySlot?.dataset.launcherDropIndex !== undefined ? Number(emptySlot.dataset.launcherDropIndex) : NaN;
+      const emptyPage = emptySlot?.dataset.launcherDropPage !== undefined ? Number(emptySlot.dataset.launcherDropPage) : NaN;
+      const validItemTarget = !!targetKey && targetKind === pointer.kind && targetKey !== pointer.key;
+      const validEmptyTarget = pointer.kind === 'app' && emptyKind === 'app' && Number.isFinite(emptyIndex);
+      const validTarget = validItemTarget || validEmptyTarget;
       if (!validTarget) {
           pointer.targetElement?.classList.remove('launcher-drop-target');
           pointer.targetElement = undefined;
           pointer.lastTarget = undefined;
+          pointer.lastDropIndex = undefined;
+          pointer.lastDropPage = undefined;
+          pointer.lastDropCreatesPage = undefined;
           return;
       }
-      if (target === pointer.targetElement) return;
+      const nextTargetElement = validEmptyTarget ? emptySlot : target;
+      if (nextTargetElement === pointer.targetElement) return;
       pointer.targetElement?.classList.remove('launcher-drop-target');
-      target?.classList.add('launcher-drop-target');
-      pointer.targetElement = target;
-      pointer.lastTarget = targetKey;
+      nextTargetElement?.classList.add('launcher-drop-target');
+      pointer.targetElement = nextTargetElement;
+      pointer.lastTarget = validItemTarget ? targetKey : undefined;
+      pointer.lastDropIndex = validEmptyTarget ? emptyIndex : undefined;
+      pointer.lastDropPage = validEmptyTarget && Number.isFinite(emptyPage) ? emptyPage : undefined;
+      pointer.lastDropCreatesPage = validEmptyTarget && Number.isFinite(emptyPage) && emptyPage === appPages.length - 1 && appPages[emptyPage]?.length === 0;
   };
 
   const finishLayoutPointer = (e?: React.PointerEvent<HTMLDivElement>) => {
@@ -923,9 +1022,23 @@ const Launcher: React.FC = () => {
           pointer.element.classList.remove('launcher-dragging');
           pointer.ghost?.remove();
           pointer.targetElement?.classList.remove('launcher-drop-target');
-          if (pointer.lastTarget) reorderByTarget(pointer.kind, pointer.key, pointer.lastTarget);
+          if (pointer.kind === 'app' && pointer.lastDropIndex !== undefined) {
+              reorderAppToIndex(pointer.key, pointer.lastDropIndex);
+              const nextStarts = launcherAppPageStartsRef.current.filter(id => id !== pointer.key);
+              if (pointer.lastDropCreatesPage) nextStarts.push(pointer.key);
+              launcherAppPageStartsRef.current = nextStarts;
+              setLauncherAppPageStarts(nextStarts);
+          } else if (pointer.lastTarget) {
+              if (pointer.kind === 'app') {
+                  const nextStarts = launcherAppPageStartsRef.current.filter(id => id !== pointer.key);
+                  launcherAppPageStartsRef.current = nextStarts;
+                  setLauncherAppPageStarts(nextStarts);
+              }
+              reorderByTarget(pointer.kind, pointer.key, pointer.lastTarget);
+          }
           void updateTheme({
               launcherAppOrder: launcherAppOrderRef.current,
+              launcherAppPageStarts: launcherAppPageStartsRef.current,
               launcherDockOrder: launcherDockOrderRef.current,
               launcherPinwheelOrder: pinwheelOrderRef.current,
           });
@@ -968,6 +1081,7 @@ const Launcher: React.FC = () => {
 
   return (
     <div
+      ref={launcherRootRef}
       className="h-full w-full flex flex-col relative z-10 overflow-hidden font-sans select-none"
       onPointerDown={handleLayoutPointerDown}
       onPointerMove={handleLayoutPointerMove}
@@ -1000,12 +1114,24 @@ const Launcher: React.FC = () => {
           outline-offset: 5px;
           border-radius: 1.35rem;
         }
+        .launcher-empty-drop-slot {
+          border: 1px solid transparent;
+          background: transparent;
+          transition: transform .16s ease, background .16s ease, border-color .16s ease;
+        }
+        .launcher-empty-drop-slot.launcher-drop-target {
+          transform: scale(1.04)!important;
+          opacity: 1;
+          outline: none;
+          border-color: rgba(255,255,255,.72);
+          background: rgba(255,255,255,.16);
+        }
       `}</style>
 
       {layoutEditing && (
           <div className="absolute top-[calc(var(--safe-top)+0.65rem)] left-4 right-4 z-50 flex items-center justify-between rounded-full px-3 py-2"
               style={{ background: 'rgba(75,65,54,0.88)', color: '#fffdf8', boxShadow: '0 8px 24px rgba(75,65,54,0.20)' }}>
-              <span className="text-[10px] font-semibold tracking-wide">按住拖动，松手交换位置</span>
+              <span className="text-[10px] font-semibold tracking-wide">按住拖动，松手移动位置</span>
               <button onClick={finishLayoutEditing} className="ml-3 px-3 py-1 rounded-full text-[10px] font-bold bg-white/15 active:scale-95">完成</button>
           </div>
       )}
@@ -1061,7 +1187,7 @@ const Launcher: React.FC = () => {
                             paper={paper}
                         />
                         <div className="flex-1">
-                            <AppGridPage apps={pageApps} openApp={openApp} acnh={acnh} editing={layoutEditing} workbenchUnread={workbenchUnread} />
+                            <AppGridPage apps={pageApps} startIndex={appPageStartIndices[idx] || 0} dropPageIndex={idx} appsPerPage={launcherPageCapacity(idx)} openApp={openApp} acnh={acnh} editing={layoutEditing} workbenchUnread={workbenchUnread} />
                         </div>
                       </>
                   ) : idx === 1 ? (
@@ -1088,9 +1214,9 @@ const Launcher: React.FC = () => {
                                       {cell === 'music' ? (
                                           <NowPlayingSquareWidget contentColor={contentColor} />
                                       ) : cell === 'appsA' ? (
-                                          <AppQuadGrid apps={page2QuadA} openApp={openApp} editing={layoutEditing} workbenchUnread={workbenchUnread} />
+                                          <AppQuadGrid apps={page2QuadA} startIndex={appPageStartIndices[idx] || WIDGET_PAGE_APP_CAPACITY} dropPageIndex={idx} openApp={openApp} editing={layoutEditing} workbenchUnread={workbenchUnread} />
                                       ) : cell === 'appsB' ? (
-                                          <AppQuadGrid apps={page2QuadB} openApp={openApp} editing={layoutEditing} workbenchUnread={workbenchUnread} />
+                                          <AppQuadGrid apps={page2QuadB} startIndex={(appPageStartIndices[idx] || WIDGET_PAGE_APP_CAPACITY) + 4} dropPageIndex={idx} openApp={openApp} editing={layoutEditing} workbenchUnread={workbenchUnread} />
                                       ) : (
                                           <DesktopSquareImage
                                               image={theme.launcherWidgets?.['dsq']}
@@ -1159,6 +1285,9 @@ const Launcher: React.FC = () => {
 
                           <AppGridPage
                                 apps={pageApps}
+                                startIndex={appPageStartIndices[idx] || 0}
+                                dropPageIndex={idx}
+                                appsPerPage={launcherPageCapacity(idx)}
                                 openApp={openApp}
                                 acnh={acnh}
                                 editing={layoutEditing}

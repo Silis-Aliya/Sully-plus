@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, Check, Cube, FileZip, FolderOpen, Gear, ImageSqu
 import type { UserCameraMode } from './UserCameraModePicker';
 import type { CompanionAvatarSource } from '../../utils/companionAvatar';
 
-export type CallSetupGuideStep = 'model' | 'camera';
+export type CallSetupGuideStep = 'overview' | 'model' | 'performance' | 'camera';
 
 interface CallSetupGuideProps {
   step: CallSetupGuideStep;
@@ -18,6 +18,9 @@ interface CallSetupGuideProps {
   hasFakeImage: boolean;
   accentColor: string;
   lightTheme?: boolean;
+  settingsMode?: boolean;
+  builtinQuality?: 'balanced' | 'hd';
+  performanceQuality?: 'basic' | 'high';
   onStepChange: (step: CallSetupGuideStep) => void;
   onChooseModelFile: () => void;
   onChooseLive2DFolder: () => void;
@@ -29,6 +32,8 @@ interface CallSetupGuideProps {
   onChooseFakeImage: () => void;
   onStart: () => void;
   onClose: () => void;
+  onBuiltinQualityChange?: (quality: 'balanced' | 'hd') => void;
+  onPerformanceQualityChange?: (quality: 'basic' | 'high') => void;
 }
 
 const CAMERA_OPTIONS: Array<{
@@ -57,6 +62,9 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
   hasFakeImage,
   accentColor,
   lightTheme = false,
+  settingsMode = false,
+  builtinQuality = 'balanced',
+  performanceQuality = 'basic',
   onStepChange,
   onChooseModelFile,
   onChooseLive2DFolder,
@@ -68,12 +76,15 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
   onChooseFakeImage,
   onStart,
   onClose,
+  onBuiltinQualityChange,
+  onPerformanceQualityChange,
 }) => {
   const panelRef = useRef<HTMLDivElement | null>(null);
-  const ink = lightTheme ? '#292638' : '#f8f6ff';
-  const muted = lightTheme ? 'rgba(41,38,56,.5)' : 'rgba(248,246,255,.48)';
-  const line = lightTheme ? 'rgba(62,55,82,.13)' : 'rgba(255,255,255,.11)';
-  const panel = lightTheme ? '#f7f4fb' : '#100b19';
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const ink = lightTheme ? '#1e293b' : '#f8f6ff';
+  const muted = lightTheme ? 'rgba(100,116,139,.78)' : 'rgba(248,246,255,.48)';
+  const line = lightTheme ? '#dbe3ee' : 'rgba(255,255,255,.11)';
+  const panel = lightTheme ? '#f0f3f8' : '#100b19';
 
   useEffect(() => {
     panelRef.current?.focus();
@@ -117,22 +128,26 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
         <header className="px-5 pb-4 pt-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="text-[9px] font-semibold tracking-[0.28em]" style={{ color: muted }}>VIDEO LINK / PREPARATION</div>
+              <div className="text-[9px] font-semibold tracking-[0.28em]" style={{ color: muted }}>{step === 'performance' ? 'SETTINGS & REHEARSAL' : 'VIDEO LINK / PREPARATION'}</div>
               <h2 id="call-setup-guide-title" className="mt-1.5 text-[23px] font-semibold leading-none">
-                {step === 'model' ? '选择对方的视频形象。' : '你要怎样入镜？'}
+                {step === 'overview' ? `${characterName} · 连线设置` : step === 'model' ? '选择对方的视频形象。' : step === 'performance' ? '模型画质、导入与动作排练' : '你要怎样入镜？'}
               </h2>
-              <p className="mt-2 text-[11px] leading-5" style={{ color: muted }}>
-                {step === 'model'
+              {step !== 'performance' && <p className="mt-2 text-[11px] leading-5" style={{ color: muted }}>
+                {step === 'overview'
+                  ? '分别调整对方形象、模型表现和本次通话的镜头方式。'
+                  : step === 'model'
                   ? `动态模型、静态图片和见面立绘都在这里切换，桌面与视频通话共用同一选择。`
+                  : step === 'performance'
+                    ? '画质与动作排练按角色保存；模型导入沿用现有安全流程。'
                   : '选择只对本次通话生效；下次打开仍从关闭开始。'}
-              </p>
+              </p>}
             </div>
             <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border active:scale-90" style={{ borderColor: line }} aria-label="关闭">
               <X size={15} weight="bold" />
             </button>
           </div>
 
-          <div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-[9px] font-medium tracking-[0.12em]" style={{ color: muted }}>
+          {step !== 'overview' && step !== 'performance' && <div className="mt-5 grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-[9px] font-medium tracking-[0.12em]" style={{ color: muted }}>
             <button type="button" onClick={() => onStepChange('model')} className="flex items-center gap-2 text-left" style={{ color: step === 'model' ? accentColor : undefined }}>
               <span className="flex h-6 w-6 items-center justify-center rounded-full border" style={{ borderColor: step === 'model' ? accentColor : line }}>01</span> 对方形象
             </button>
@@ -140,11 +155,59 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
             <button type="button" onClick={() => onStepChange('camera')} className="flex items-center justify-end gap-2 text-right" style={{ color: step === 'camera' ? accentColor : undefined }}>
               <span className="flex h-6 w-6 items-center justify-center rounded-full border" style={{ borderColor: step === 'camera' ? accentColor : line }}>02</span> 我的镜头
             </button>
-          </div>
+          </div>}
         </header>
 
         <div className="max-h-[56vh] overflow-y-auto border-y no-scrollbar" style={{ borderColor: line }}>
-          {step === 'model' ? (
+          {step === 'overview' ? (
+            <section className="space-y-2.5 px-5 py-5">
+              {[
+                { id: 'model' as const, label: '对方形象', value: visualName },
+                { id: 'performance' as const, label: '模型画质、导入与动作排练', value: `${builtinQuality === 'hd' ? '高清 4K' : '轻量 2K'} · ${performanceQuality === 'high' ? '高质量版' : '基础版'}` },
+                { id: 'camera' as const, label: '我的镜头', value: CAMERA_OPTIONS.find(option => option.id === cameraMode)?.title || '不打开' },
+              ].map(item => (
+                <button key={item.id} type="button" onClick={() => onStepChange(item.id)} className="flex w-full items-center justify-between gap-4 rounded-[18px] border bg-white px-4 py-4 text-left outline-none active:scale-[.99]" style={{ borderColor: line }}>
+                  <span className="text-[13px] font-bold text-[#1e293b]">{item.label}</span>
+                  <span className="flex min-w-0 items-center gap-2 text-[12px] text-[#64748b]"><span className="truncate">{item.value}</span><ArrowRight size={14} /></span>
+                </button>
+              ))}
+            </section>
+          ) : step === 'performance' ? (
+            <section className="space-y-3 px-5 py-5">
+              <div className="rounded-[18px] border bg-[#f8fafc] p-4" style={{ borderColor: line }}>
+                <div className="mb-3 flex items-center justify-between gap-3"><span className="text-[13px] font-bold text-[#1e293b]">内置模型画质</span><span className="text-[10px] text-[#64748b]">默认 2K · 省约 48 MB 显存</span></div>
+                <div className="grid grid-cols-2 gap-2">
+                  {([['balanced', '轻量 2K', '推荐'], ['hd', '高清 4K', '高性能设备']] as const).map(([value, label, detail]) => (
+                    <button key={value} type="button" disabled={!onBuiltinQualityChange} onClick={() => onBuiltinQualityChange?.(value)} className="rounded-[14px] border bg-white p-3 text-left outline-none disabled:opacity-45" style={{ borderColor: builtinQuality === value ? accentColor : line, background: builtinQuality === value ? '#eff6ff' : '#fff', borderWidth: builtinQuality === value ? 2 : 1 }}>
+                      <span className="block text-[13px] font-bold">{label}</span><span className="mt-1 block text-[10px]" style={{ color: muted }}>{detail}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button type="button" onClick={onChooseModelFile} className="flex items-center justify-center gap-2 rounded-[12px] border bg-white px-3 py-3 text-[12px] font-semibold" style={{ borderColor: line }}><FileZip size={17} /> VRM / L2D ZIP</button>
+                  <button type="button" onClick={onChooseLive2DFolder} className="flex items-center justify-center gap-2 rounded-[12px] border bg-white px-3 py-3 text-[12px] font-semibold" style={{ borderColor: line }}><FolderOpen size={17} /> L2D 文件夹</button>
+                </div>
+                <p className="mt-3 text-[10px] leading-4 text-[#64748b]">L2D 文件夹：选择包含 *.model3.json 的整个文件夹；ZIP：把这个模型文件夹整体压缩后选择 ZIP。</p>
+              </div>
+              <div className="rounded-[16px] border bg-[#f8fafc]" style={{ borderColor: line }}>
+                <button type="button" onClick={() => setAdvancedOpen(value => !value)} className="flex w-full items-center justify-between px-4 py-3.5 text-left text-[13px] font-bold"><span>Live2D 高级工具</span><span className={`text-[#64748b] transition ${advancedOpen ? 'rotate-180' : ''}`}>⌄</span></button>
+                {advancedOpen && <div className="border-t p-3" style={{ borderColor: line }}>
+                  {modelFormat === 'live2d' && onConfigureLive2D ? <button type="button" onClick={onConfigureLive2D} className="flex w-full items-center justify-between rounded-[12px] border bg-white px-3 py-3 text-left text-[12px]" style={{ borderColor: line }}><span className="flex items-center gap-2"><Gear size={17} style={{ color: accentColor }} />动作权限与参数实验台</span><ArrowRight size={14} /></button> : <p className="text-[10px] text-[#64748b]">导入 Live2D 后可使用动作权限与参数实验台。</p>}
+                </div>}
+              </div>
+              <div className="rounded-[18px] border bg-[#f8fafc] p-4" style={{ borderColor: line }}>
+                <div className="mb-3 flex items-start justify-between"><div><div className="text-[13px] font-bold text-[#1e293b]">动作排练</div><div className="mt-0.5 text-[10px] text-[#64748b]">每个角色单独保存</div></div><span className="text-[10px] font-bold text-[#64748b]">{performanceQuality === 'high' ? 'DIRECTOR' : 'BASIC'}</span></div>
+                <div className="grid grid-cols-2 gap-2">
+                  {([['basic', '基础版', '零额外请求'], ['high', '高质量版', '副 API 排练']] as const).map(([value, label, detail]) => (
+                    <button key={value} type="button" onClick={() => onPerformanceQualityChange?.(value)} className="rounded-[14px] border bg-white p-3 text-left outline-none" style={{ borderColor: performanceQuality === value ? accentColor : line, background: performanceQuality === value ? '#eff6ff' : '#fff', borderWidth: performanceQuality === value ? 2 : 1 }}>
+                      <span className="block text-[13px] font-bold">{label}</span><span className="mt-1 block text-[10px]" style={{ color: muted }}>{detail}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-3 text-[10px] leading-4 text-[#64748b]">高质量版只把本轮定稿台词和角色性格交给情绪 Buff 的 API，不读取聊天上下文；未单独配置副 API 时回退主 API。</p>
+              </div>
+            </section>
+          ) : step === 'model' ? (
             <>
               <section className="px-5 py-4">
                 <div className="flex items-center gap-3">
@@ -258,8 +321,16 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
           )}
         </div>
 
-        <footer className="grid grid-cols-[auto_1fr] gap-2.5 px-5 pt-4">
-          {step === 'camera' ? (
+        {step === 'overview' ? (
+          <footer className="px-5 pt-4">
+            <button type="button" onClick={onClose} className="min-h-12 w-full rounded-2xl bg-[#3b82f6] px-4 text-[13px] font-semibold text-white active:scale-[.98]">完成</button>
+          </footer>
+        ) : <footer className="grid grid-cols-[auto_1fr] gap-2.5 px-5 pt-4">
+          {settingsMode ? (
+            <button type="button" onClick={() => onStepChange('overview')} className="flex min-h-12 items-center justify-center gap-1.5 rounded-2xl border px-4 text-[12px] font-medium active:scale-[.98]" style={{ borderColor: line, color: muted }}>
+              <ArrowLeft size={14} /> 设置
+            </button>
+          ) : step === 'camera' ? (
             <button type="button" onClick={() => onStepChange('model')} className="flex min-h-12 items-center justify-center gap-1.5 rounded-2xl border px-4 text-[12px] font-medium active:scale-[.98]" style={{ borderColor: line, color: muted }}>
               <ArrowLeft size={14} /> 模型
             </button>
@@ -269,13 +340,13 @@ const CallSetupGuide: React.FC<CallSetupGuideProps> = ({
           <button
             type="button"
             disabled={fakeImageMissing}
-            onClick={() => step === 'model' ? onStepChange('camera') : onStart()}
+            onClick={() => settingsMode ? onStepChange('overview') : step === 'model' ? onStepChange('camera') : onStart()}
             className="flex min-h-12 items-center justify-center gap-2 rounded-2xl px-4 text-[13px] font-semibold text-white transition active:scale-[.98] disabled:opacity-40"
             style={{ background: `linear-gradient(100deg, ${accentColor}c8, ${accentColor})`, boxShadow: `0 10px 28px ${accentColor}2f` }}
           >
-            {step === 'model' ? '下一步：设置我的镜头' : fakeImageMissing ? '先选择静态图片' : '按这个方案接通'} <ArrowRight size={15} weight="bold" />
+            {settingsMode ? '保存并返回' : step === 'model' ? '下一步：设置我的镜头' : fakeImageMissing ? '先选择静态图片' : '按这个方案接通'} <ArrowRight size={15} weight="bold" />
           </button>
-        </footer>
+        </footer>}
       </div>
     </div>
   );

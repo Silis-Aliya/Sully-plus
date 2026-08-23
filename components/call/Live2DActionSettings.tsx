@@ -7,11 +7,13 @@ import {
   live2DParameterPosition,
 } from '../../utils/live2dParameterSemantics';
 import Live2DAvatarCanvas, { type Live2DActionTrigger, type Live2DParameterInfo } from './Live2DAvatarCanvas';
+import { CALL_LIGHT_THEME_CSS } from './callLightTheme';
 
 interface Live2DActionSettingsProps {
   config: Live2DAvatarConfig;
   characterName: string;
   accentColor: string;
+  lightTheme?: boolean;
   onSave: (config: Live2DAvatarConfig) => void;
   onClose: () => void;
 }
@@ -30,6 +32,7 @@ const Live2DActionSettings: React.FC<Live2DActionSettingsProps> = ({
   config,
   characterName,
   accentColor,
+  lightTheme = false,
   onSave,
   onClose,
 }) => {
@@ -172,7 +175,16 @@ const Live2DActionSettings: React.FC<Live2DActionSettingsProps> = ({
   }), [actions]);
 
   return (
-    <div className="absolute inset-0 z-[90] flex flex-col bg-[#08070d]/95 text-white backdrop-blur-xl">
+    <div className={`absolute inset-0 z-[90] flex flex-col text-white backdrop-blur-xl ${lightTheme ? 'live2d-action-light sully-call-light bg-[#f0f3f8]' : 'bg-[#08070d]/95'}`}>
+      {lightTheme && <style>{`${CALL_LIGHT_THEME_CSS}
+        .live2d-action-light{background:#f0f3f8!important;color:#1e293b!important;color-scheme:light}
+        .live2d-action-light .bg-white\\/\\[0\\.04\\],.live2d-action-light .bg-white\\/\\[0\\.045\\],.live2d-action-light .bg-white\\/\\[0\\.05\\],.live2d-action-light .bg-white\\/\\[0\\.07\\]{background:#fff!important}
+        .live2d-action-light .bg-black\\/20{background:#f8fafc!important}
+        .live2d-action-light input[type=range]{accent-color:#3b82f6!important}
+        .live2d-action-light .bg-violet-400\\/15,.live2d-action-light .bg-violet-400\\/10{background:rgba(59,130,246,.12)!important}
+        .live2d-action-light .text-violet-200{color:#2563eb!important}
+        .live2d-action-light .sully-stage-dark{color-scheme:dark}
+      `}</style>}
       <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 pb-3" style={{ paddingTop: 'max(1.25rem, var(--safe-top))' }}>
         <div className="min-w-0">
           <div className="text-[10px] tracking-[0.2em] text-white/35">LIVE2D ACTION LIBRARY · ADVANCED</div>
@@ -184,7 +196,7 @@ const Live2DActionSettings: React.FC<Live2DActionSettingsProps> = ({
       </div>
 
       <div className="shrink-0 px-4 pt-3">
-        <div className="relative h-[min(31vh,250px)] min-h-[180px] overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-b from-[#171322] to-[#090810]">
+        <div className="sully-stage-dark relative h-[min(31vh,250px)] min-h-[180px] overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-b from-[#171322] to-[#090810]">
           <div className="absolute inset-0 opacity-60" style={{ background: `radial-gradient(circle at 50% 55%, ${accentColor}38, transparent 64%)` }} />
           <Live2DAvatarCanvas
             key={`${config.assetId}-${previewRetryKey}`}

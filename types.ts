@@ -218,6 +218,8 @@ export interface OSTheme {
   launcherWidgets?: Record<string, string>; // slots: 'tl' | 'tr' | 'wide' | 'dsq' (legacy 'bl' / 'br' are banned)
   /** 默认桌面长按编辑后的 App / Dock / 第二页风车组件顺序。 */
   launcherAppOrder?: string[];
+  /** 用户在 iOS 式桌面整理中主动分出的页面；值为每个自定义页面首个 App 的 id。 */
+  launcherAppPageStarts?: string[];
   launcherDockOrder?: string[];
   launcherPinwheelOrder?: Array<'music' | 'appsA' | 'appsB' | 'image'>;
   /** 自定义透明图标是否保留原始轮廓并移除系统圆角底框。默认 false。 */

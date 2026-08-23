@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Microphone, SpeakerHigh, SpeakerSlash, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Check } from '@phosphor-icons/react';
+import { Microphone, SpeakerHigh, SpeakerSlash, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Check, Moon, Sun } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
@@ -527,6 +527,7 @@ const CallApp: React.FC = () => {
     catch { return 'light'; }
   });
   const lightTheme = callTheme === 'light';
+  const toggleCallTheme = () => setCallTheme(theme => theme === 'light' ? 'dark' : 'light');
   useEffect(() => {
     try { localStorage.setItem('sully-call-theme-v1', callTheme); } catch { /* localStorage may be unavailable */ }
   }, [callTheme]);
@@ -562,6 +563,7 @@ const CallApp: React.FC = () => {
   const [live2DWardrobeOnboarding, setLive2DWardrobeOnboarding] = useState(false);
   const [showCallSetupGuide, setShowCallSetupGuide] = useState(false);
   const [callSetupGuideStep, setCallSetupGuideStep] = useState<CallSetupGuideStep>('model');
+  const [callSetupGuideSettingsMode, setCallSetupGuideSettingsMode] = useState(false);
   const [setupCameraMode, setSetupCameraMode] = useState<UserCameraMode>('off');
   const [avatarImportStatus, setAvatarImportStatus] = useState('');
   const [pendingVRoidImport, setPendingVRoidImport] = useState<PendingVRoidImport | null>(null);
@@ -1530,11 +1532,17 @@ const CallApp: React.FC = () => {
     setIsAudioPlaying(false);
   };
   const loadCallRecords = async (charId?: string) => {
-    if (!charId) return setCallRecords([]);
+    const targetIds = charId ? [charId] : characters.map(character => character.id);
+    if (!targetIds.length) return setCallRecords([]);
     // includeProcessed=true：通话消息与聊天消息同存一个 store，记忆宫殿处理后会推进
     // 高水位标记 mp_lastMsgId_<charId>，默认的 getMessagesByCharId 会过滤掉水位线之前的
     // 消息——这会导致继续聊天后通话记录被"清空"。这里必须读取全部消息。
-    const all = await DB.getMessagesByCharId(charId, true);
+    const allByCharacter = await Promise.all(targetIds.map(async targetId => ({
+      characterId: targetId,
+      characterName: characters.find(character => character.id === targetId)?.name || '未知角色',
+      messages: await DB.getMessagesByCharId(targetId, true),
+    })));
+    const records = allByCharacter.flatMap(({ characterId, characterName, messages: all }) => {
     const callMsgs = all
       .filter(m => m.metadata?.source === 'call' && m.metadata?.callSessionId)
       .sort((a, b) => a.timestamp - b.timestamp);
@@ -1550,7 +1558,7 @@ const CallApp: React.FC = () => {
       arr.push(m);
       grouped.set(sid, arr);
     });
-    const records: CallRecord[] = Array.from(grouped.entries()).map(([sessionId, msgs]) => {
+    return Array.from(grouped.entries()).map(([sessionId, msgs]): CallRecord => {
       const start = msgs[0]?.timestamp || Date.now();
       const end = msgs[msgs.length - 1]?.timestamp || start;
       const endMarker = callEnds.get(sessionId);
@@ -1560,8 +1568,8 @@ const CallApp: React.FC = () => {
       return {
         id: sessionId,
         sessionId,
-        characterId: charId,
-        characterName: selectedChar?.name || '未选择角色',
+        characterId,
+        characterName,
         createdAt: new Date(start).toLocaleString('zh-CN'),
         durationSec: Number.isFinite(savedDuration)
           ? Math.max(1, Math.floor(savedDuration))
@@ -1584,6 +1592,7 @@ const CallApp: React.FC = () => {
           timestamp: m.timestamp,
         })),
       };
+    });
     }).sort((a, b) => (b.transcript[b.transcript.length - 1]?.timestamp || 0) - (a.transcript[a.transcript.length - 1]?.timestamp || 0));
     setCallRecords(records);
   };
@@ -1633,9 +1642,10 @@ const CallApp: React.FC = () => {
     callSetupGuideOpenRef.current = false;
     setShowCallSetupGuide(false);
   };
-  const openCallSetupGuide = (step: CallSetupGuideStep = 'model') => {
+  const openCallSetupGuide = (step: CallSetupGuideStep = 'model', settingsMode = false) => {
     setSetupCameraMode('off');
     setCallSetupGuideStep(step);
+    setCallSetupGuideSettingsMode(settingsMode);
     callSetupGuideOpenRef.current = true;
     setShowCallSetupGuide(true);
   };
@@ -2441,8 +2451,8 @@ ${sentencePlan}`;
   const displayCallState: CallState = isAudioPlaying ? 'speaking' : callState;
   const latestAssistantAudio = [...bubbles].reverse().find(b => b.role === 'assistant' && b.audioUrl)?.audioUrl;
   useEffect(() => {
-    loadCallRecords(selectedCharId);
-  }, [selectedCharId]);
+    void loadCallRecords(viewMode === 'history' ? undefined : selectedCharId);
+  }, [selectedCharId, viewMode]);
   const handleDeleteRecord = async (record: CallRecord) => {
     setDeleteConfirmRecord(record);
   };
@@ -2469,7 +2479,7 @@ ${sentencePlan}`;
       setRecordDetailId('');
       setViewMode('history');
     }
-    await loadCallRecords(record.characterId);
+    await loadCallRecords(viewMode === 'history' ? undefined : record.characterId);
     addToast('通话记录已删除', 'success');
     trackEvent('删除一条通话记录');
   };
@@ -2644,8 +2654,17 @@ ${sentencePlan}`;
   if (viewMode === 'role-select') {
     const groupChars = filterCharactersByGroup(characters, characterGroups, roleGroupId);
     return (
-      <div className={`relative h-full w-full bg-gradient-to-b text-white flex flex-col overflow-hidden ${lightTheme ? 'sully-call-light from-[#f5f2fd] via-[#eef0f8] to-[#e9ecf5]' : 'from-[#140d28] via-[#0a0613] to-[#05030c]'}`}>
-        {lightTheme && <style>{CALL_LIGHT_THEME_CSS}</style>}
+      <div className={`relative flex h-full w-full flex-col overflow-hidden ${lightTheme ? 'bg-[#f0f3f8] text-[#1e293b]' : 'sully-call-role-night bg-[#0f172a] text-[#e2e8f0]'}`}>
+        {!lightTheme && <style>{`
+          .sully-call-role-night .call-home-icon{background:#172033!important;border-color:#334155!important;color:#dbeafe!important}
+          .sully-call-role-night .call-mode-switch{background:#1e293b!important}
+          .sully-call-role-night .call-mode-tab{color:#94a3b8!important}
+          .sully-call-role-night .call-mode-tab.is-active{background:#334155!important;color:#f8fafc!important}
+          .sully-call-role-night .call-home-title,.sully-call-role-night .call-contact-name{color:#f1f5f9!important}
+          .sully-call-role-night .call-home-subtitle,.sully-call-role-night .call-contact-desc{color:#94a3b8!important}
+          .sully-call-role-night .call-contact-card{background:#172033!important;border-color:#2b3a50!important;box-shadow:0 5px 16px rgba(2,6,23,.22)!important}
+          .sully-call-role-night .call-contact-settings{background:#223047!important;color:#a9bad0!important}
+        `}</style>}
         {avatarImportOverlay}
         {vroidBetaOverlay}
         {showCallSetupGuide && (
@@ -2660,8 +2679,11 @@ ${sentencePlan}`;
             dateOutfitName={selectedDateOutfit?.name}
             cameraMode={setupCameraMode}
             hasFakeImage={!!fakeUserCameraRef}
-            accentColor={accentColor}
+            accentColor="#3b82f6"
             lightTheme={lightTheme}
+            settingsMode={callSetupGuideSettingsMode}
+            builtinQuality={selectedBuiltinSullyAvatar?.builtinQuality || 'balanced'}
+            performanceQuality={selectedChar?.videoCallPerformanceQuality || 'basic'}
             onStepChange={setCallSetupGuideStep}
             onChooseModelFile={chooseAvatarModel}
             onChooseLive2DFolder={chooseLive2DDirectory}
@@ -2676,23 +2698,13 @@ ${sentencePlan}`;
             onChooseFakeImage={() => chooseFakeUserCameraImage(false)}
             onStart={finishCallSetupGuide}
             onClose={closeCallSetupGuide}
+            onBuiltinQualityChange={chooseBuiltinSullyQuality}
+            onPerformanceQualityChange={(quality) => {
+              if (!selectedChar) return;
+              updateCharacter(selectedChar.id, { videoCallPerformanceQuality: quality });
+            }}
           />
         )}
-        {/* 深色旧皮肤保留星点；Soft Modern 浅色皮肤保持干净。 */}
-        {!lightTheme && <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          {CALL_SPARKLES.map((p, i) => (
-            <span key={i} className="absolute rounded-full bg-white animate-pulse"
-              style={{ top: p.top, left: p.left, width: p.s, height: p.s, opacity: 0.5, animationDelay: `${i * 0.4}s`, boxShadow: `0 0 6px ${accentColor}` }} />
-          ))}
-        </div>}
-        {/* top-right character art bleed */}
-        {selectedChar?.avatar && (
-          <div className="absolute top-0 right-0 w-48 h-60 pointer-events-none"
-            style={{ WebkitMaskImage: 'radial-gradient(135% 105% at 100% 0%, #000 32%, transparent 72%)', maskImage: 'radial-gradient(135% 105% at 100% 0%, #000 32%, transparent 72%)' }}>
-            <img src={selectedChar.avatar} alt="" className="w-full h-full object-cover object-top opacity-60" />
-          </div>
-        )}
-
         <div
           className="relative z-10 flex h-full min-h-0 flex-col overflow-hidden px-5"
           style={{
@@ -2700,22 +2712,27 @@ ${sentencePlan}`;
             paddingBottom: 'max(1.25rem, var(--safe-bottom, 0px))',
           }}
         >
-          {/* Soft Modern 顶栏：返回 / 语音视频切换 / 通话记录 */}
+          {/* 3028 顶栏：返回 / 语音视频切换 / 通话记录 */}
           <div className="shrink-0">
             <div className="flex items-center justify-between">
-              <button onClick={closeApp} aria-label="返回" className="flex h-9 w-9 items-center justify-center rounded-full border border-[#e2e8f0] bg-white text-[#334155] active:scale-95">
+              <button onClick={closeApp} aria-label="返回" className="call-home-icon flex h-9 w-9 items-center justify-center rounded-full border border-[#e2e8f0] bg-white text-[#334155] active:scale-95">
                 <CaretLeft size={18} weight="bold" />
               </button>
-              <div className="flex w-[140px] gap-0.5 rounded-[14px] bg-[#e2e8f0] p-[3px]">
-                <button onClick={() => setCallMode('voice')} className={`flex-1 rounded-[11px] py-2 text-xs font-semibold transition ${callMode === 'voice' ? 'bg-white text-[#1e293b] shadow-sm' : 'text-[#64748b]'}`}>语音</button>
-                <button onClick={() => setCallMode('video')} className={`flex-1 rounded-[11px] py-2 text-xs font-semibold transition ${callMode === 'video' ? 'bg-white text-[#1e293b] shadow-sm' : 'text-[#64748b]'}`}>视频</button>
+              <div className="call-mode-switch flex w-[140px] gap-0.5 rounded-[14px] bg-[#e2e8f0] p-[3px]">
+                <button onClick={() => setCallMode('voice')} className={`call-mode-tab flex-1 rounded-[11px] py-2 text-xs font-semibold transition ${callMode === 'voice' ? 'is-active bg-white text-[#1e293b] shadow-sm' : 'text-[#64748b]'}`}>语音</button>
+                <button onClick={() => setCallMode('video')} className={`call-mode-tab flex-1 rounded-[11px] py-2 text-xs font-semibold transition ${callMode === 'video' ? 'is-active bg-white text-[#1e293b] shadow-sm' : 'text-[#64748b]'}`}>视频</button>
               </div>
-              <button onClick={() => { setViewMode('history'); trackEvent('打开通话记录'); }} aria-label="通话记录" className="flex h-9 w-9 items-center justify-center rounded-full border border-[#e2e8f0] bg-white text-[#334155] active:scale-95">
-                <Clock size={17} weight="bold" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={toggleCallTheme} aria-label={lightTheme ? '切换夜间皮肤' : '切换日间皮肤'} title={lightTheme ? '夜间模式' : '日间模式'} className="call-home-icon flex h-9 w-9 items-center justify-center rounded-full border border-[#e2e8f0] bg-white text-[#334155] active:scale-95">
+                  {lightTheme ? <Moon size={17} weight="fill" /> : <Sun size={17} weight="fill" />}
+                </button>
+                <button onClick={() => { setViewMode('history'); trackEvent('打开通话记录'); }} aria-label="通话记录" className="call-home-icon flex h-9 w-9 items-center justify-center rounded-full border border-[#e2e8f0] bg-white text-[#334155] active:scale-95">
+                  <Clock size={17} weight="bold" />
+                </button>
+              </div>
             </div>
-            <h1 className="mt-5 text-[26px] font-bold leading-tight tracking-[-0.5px] text-[#1e293b]">拨号连线</h1>
-            <p className="mt-1 text-xs text-[#64748b]">选择角色，建立{callMode === 'video' ? '视频' : '语音'}通讯</p>
+            <h1 className="call-home-title mt-5 text-[26px] font-bold leading-tight tracking-[-0.5px] text-[#1e293b]">拨号连线</h1>
+            <p className="call-home-subtitle mt-1 text-xs text-[#64748b]">选择角色，建立{callMode === 'video' ? '视频' : '语音'}通讯</p>
           </div>
 
           {/* 分组筛选（没建分组时不渲染） */}
@@ -2725,21 +2742,20 @@ ${sentencePlan}`;
           {/* 3028：联系人本身就是拨号入口，不再先选中、再到底部发起。 */}
           <div className="mt-4 min-h-[5rem] flex-1 overflow-y-auto overscroll-contain no-scrollbar space-y-2.5 pr-0.5" data-testid="call-character-picker">
             {groupChars.map(char => {
-              const selected = selectedCharId === char.id;
               return (
                 <div key={char.id}
-                  className="relative w-full rounded-[20px] border border-[#e2e8f0] bg-white px-4 py-3.5 text-left shadow-[0_2px_8px_rgba(30,41,59,0.03)] transition active:scale-[0.98]">
+                  className="call-contact-card relative w-full rounded-[20px] border border-[#e2e8f0] bg-white px-4 py-3.5 text-left shadow-[0_2px_8px_rgba(30,41,59,0.03)] transition active:scale-[0.98]">
                   <div className="flex items-center gap-3.5">
-                    <button type="button" onClick={() => setSelectedCharId(char.id)} className="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center font-semibold shrink-0 bg-[#475569] text-white">
+                    <button type="button" onClick={() => setSelectedCharId(char.id)} className="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center font-semibold shrink-0 bg-[#475569] text-white outline-none">
                       {char.avatar ? <img src={char.avatar} alt={char.name} className="w-full h-full object-cover" /> : (char.name?.[0] || '角')}
                     </button>
-                    <button type="button" onClick={() => setSelectedCharId(char.id)} className="min-w-0 flex-1 text-left">
-                      <div className="truncate text-[15px] font-bold text-[#1e293b]">{char.name}</div>
-                      <div className="mt-0.5 truncate text-xs text-[#64748b]">{char.description || '等待建立通讯连接'}</div>
+                    <button type="button" onClick={() => setSelectedCharId(char.id)} className="min-w-0 flex-1 text-left outline-none">
+                      <div className="call-contact-name truncate text-[15px] font-bold text-[#1e293b]">{char.name}</div>
+                      <div className="call-contact-desc mt-0.5 truncate text-xs text-[#64748b]">{char.description || '等待建立通讯连接'}</div>
                     </button>
                     <div className="flex shrink-0 items-center gap-2">
-                      {callMode === 'video' && selected && (
-                        <button type="button" onClick={() => openCallSetupGuide('model')} aria-label={`设置${char.name}的视频形象`} className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f1f5f9] text-[#64748b] active:scale-90">
+                      {callMode === 'video' && (
+                        <button type="button" onClick={() => { setSelectedCharId(char.id); openCallSetupGuide('overview', true); }} aria-label={`设置${char.name}的视频形象`} className="call-contact-settings flex h-8 w-8 items-center justify-center rounded-full bg-[#f1f5f9] text-[#64748b] outline-none active:scale-90">
                           <Gear size={15} weight="fill" />
                         </button>
                       )}
@@ -2756,9 +2772,9 @@ ${sentencePlan}`;
             )}
           </div>
 
-          {/* 3028 的视频设置抽屉仍承接现有模型/摄像头能力。 */}
+          {/* 视频设置只由每张联系人卡片的齿轮进入；首页保持 3028 的纯联系人列表。 */}
           {callMode === 'video' && selectedChar && (
-          <div className="shrink-0 pt-3 space-y-2" data-testid="call-role-actions">
+          <div className="hidden" aria-hidden="true" data-testid="call-role-actions">
             {callMode === 'video' && (
               <div className="space-y-2">
                 <button
@@ -2891,6 +2907,7 @@ ${sentencePlan}`;
               config={selectedChar.videoAvatar}
               characterName={selectedChar.name}
               accentColor={accentColor}
+              lightTheme={lightTheme}
               setupMode={live2DWardrobeOnboarding ? 'import' : 'advanced'}
               onClose={() => { setShowLive2DSettings(false); setLive2DWardrobeOnboarding(false); }}
               onSave={(config: Live2DAvatarConfig) => {
@@ -2907,48 +2924,55 @@ ${sentencePlan}`;
   }
   if (viewMode === 'history') {
     return (
-      <div className={`h-full w-full bg-gradient-to-b text-white px-5 pb-6 flex flex-col ${lightTheme ? 'sully-call-light from-[#f5f2fd] via-[#eef0f8] to-[#eef0f8]' : 'from-[#140d28] via-[#0a0613] to-[#0a0613]'}`} style={{ paddingTop: 'max(2.5rem, var(--safe-top))' }}>
-        {lightTheme && <style>{CALL_LIGHT_THEME_CSS}</style>}
-        <div className="flex items-center justify-between">
-          <button onClick={() => setViewMode('role-select')} className="text-sm text-white/45">← 返回</button>
-          <h1 className="text-lg font-medium">通话记录</h1>
-          <button onClick={() => setViewMode('role-select')} className="text-sm font-medium" style={{ color: accentColor }}>新通话</button>
+      <div className={`relative flex h-full w-full flex-col px-5 pb-6 ${lightTheme ? 'bg-[#f0f3f8] text-[#1e293b]' : 'sully-call-history-night bg-[#0f172a] text-[#e2e8f0]'}`} style={{ paddingTop: 'max(2.5rem, var(--safe-top))' }}>
+        {!lightTheme && <style>{`
+          .sully-call-history-night .history-nav{color:#cbd5e1!important}
+          .sully-call-history-night .history-card{background:#172033!important;border-color:#2b3a50!important;box-shadow:0 5px 16px rgba(2,6,23,.22)!important}
+          .sully-call-history-night .history-name{color:#f1f5f9!important}
+          .sully-call-history-night .history-meta,.sully-call-history-night .history-date,.sully-call-history-night .history-delete{color:#94a3b8!important}
+          .sully-call-history-night .history-quote{background:#1e293b!important;color:#dbe4ef!important}
+        `}</style>}
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center">
+          <button onClick={() => setViewMode('role-select')} className="history-nav justify-self-start text-sm font-semibold text-[#334155] outline-none">‹ 返回</button>
+          <h1 className="text-[18px] font-bold">通话记录</h1>
+          <button onClick={() => setViewMode('role-select')} className="justify-self-end text-sm font-semibold text-[#3b82f6] outline-none">新通话</button>
         </div>
-        <div className="mt-4 flex-1 overflow-y-auto space-y-3">
+        <div className="mt-5 flex-1 space-y-3 overflow-y-auto no-scrollbar">
           {!callRecords.length && (
             <div className="flex flex-col items-center justify-center py-10 text-center">
-              <p className="text-base text-white/45">还没有通话记录</p>
-              <p className="text-sm text-white/35 mt-1">每一通电话都会留在这里</p>
+              <p className="text-base text-[#64748b]">还没有通话记录</p>
+              <p className="mt-1 text-sm text-[#94a3b8]">每一通电话都会留在这里</p>
             </div>
           )}
           {callRecords.map(record => {
             const turnCount = record.transcript.filter(t => t.role === 'user').length;
             const keepsake = summarizeKeepsakeLine(record.transcript, record.characterName);
+            const recordCharacter = characters.find(character => character.id === record.characterId);
             return (
-            <button key={record.id} onClick={() => { setRecordDetailId(record.id); setViewMode('record-detail'); }} className="w-full rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md p-4 text-left transition hover:bg-white/[0.08]">
+            <div key={record.id} role="button" tabIndex={0} onClick={() => { setRecordDetailId(record.id); setViewMode('record-detail'); }} onKeyDown={event => { if (event.key === 'Enter') { setRecordDetailId(record.id); setViewMode('record-detail'); } }} className="history-card w-full rounded-[20px] border border-[#e2e8f0] bg-white p-4 text-left shadow-[0_2px_8px_rgba(30,41,59,.03)] outline-none transition active:scale-[.99]">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center text-sm" style={{ backgroundColor: `${accentColor}35` }}>{record.characterName[0] || '角'}</div>
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#475569] text-sm font-semibold text-white">{recordCharacter?.avatar ? <img src={recordCharacter.avatar} alt="" className="h-full w-full object-cover" /> : record.characterName[0] || '角'}</div>
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium text-sm">{record.characterName}</div>
-                  <div className="text-xs text-white/45 mt-0.5">{record.mode === 'video' ? '视频' : record.mode === 'voice' ? '语音' : '通话'} · {formatDuration(record.durationSec)} · {turnCount}轮对话</div>
+                  <div className="history-name text-[15px] font-bold text-[#1e293b]">{record.characterName}</div>
+                  <div className="history-meta mt-0.5 text-xs text-[#64748b]">{record.mode === 'video' ? '视频' : '通话'} · {formatDuration(record.durationSec)} · {turnCount}轮对话</div>
                 </div>
-                <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record); }} className="text-xs px-2 py-1 rounded-lg text-white/35 transition hover:text-rose-300">删除</button>
+                <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record); }} className="history-delete px-2 py-1 text-xs font-semibold text-[#94a3b8] outline-none transition active:text-[#ef4444]">删除</button>
               </div>
-              <div className="text-xs text-white/60 mt-2.5 italic leading-relaxed line-clamp-2">{keepsake}</div>
-              <div className="text-[10px] text-white/30 mt-1.5">{record.createdAt}</div>
-            </button>
+              <div className="history-quote mt-3 line-clamp-3 rounded-[14px] border-l-[3px] border-[#3b82f6] bg-[#f8fafc] px-3 py-2.5 text-[13px] italic leading-relaxed text-[#334155]">“{keepsake}” —— {record.characterName}</div>
+              <div className="history-date mt-3 text-[11px] text-[#94a3b8]">{record.createdAt}</div>
+            </div>
           );})}
         </div>
 
         {/* Delete confirm overlay */}
         {deleteConfirmRecord && (
-          <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center px-6">
-            <div className={`w-full max-w-sm rounded-3xl border border-white/15 bg-gradient-to-b p-5 shadow-2xl ${lightTheme ? 'from-white to-[#f0edf9]' : 'from-[#1a1130] to-[#0a0613]'}`}>
-              <div className="text-base font-semibold text-white">删除通话记录？</div>
-              <p className="mt-2 text-sm text-white/55 leading-relaxed">和 {deleteConfirmRecord.characterName} 的这通通话将被永久删除。</p>
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#0f172a]/35 px-6 backdrop-blur-sm">
+            <div className="w-full max-w-sm rounded-3xl border border-[#e2e8f0] bg-white p-5 text-[#1e293b] shadow-2xl">
+              <div className="text-base font-semibold">删除通话记录？</div>
+              <p className="mt-2 text-sm leading-relaxed text-[#64748b]">和 {deleteConfirmRecord.characterName} 的这通通话将被永久删除。</p>
               <div className="mt-5 grid grid-cols-2 gap-2">
-                <button onClick={() => setDeleteConfirmRecord(null)} className="py-2.5 rounded-2xl border border-white/20 text-white/80 transition active:scale-[0.97]">取消</button>
-                <button onClick={confirmDeleteRecord} className="keep-white py-2.5 rounded-2xl bg-rose-500/80 text-white font-semibold transition active:scale-[0.97]">删除</button>
+                <button onClick={() => setDeleteConfirmRecord(null)} className="rounded-2xl border border-[#e2e8f0] py-2.5 text-[#64748b] transition active:scale-[0.97]">取消</button>
+                <button onClick={confirmDeleteRecord} className="rounded-2xl bg-[#ef4444] py-2.5 font-semibold text-white transition active:scale-[0.97]">删除</button>
               </div>
             </div>
           </div>
@@ -3015,7 +3039,7 @@ ${sentencePlan}`;
   const callControlSize = callMode === 'video' ? 'h-10 w-10' : 'h-14 w-14';
   return (
     <div
-      className={`h-full w-full relative text-white flex flex-col overflow-hidden ${lightTheme ? 'sully-call-light bg-[#eef0f7]' : 'bg-[#0a0613]'}`}
+      className={`h-full w-full relative text-white flex flex-col overflow-hidden ${callMode === 'voice' ? (lightTheme ? 'sully-call-light sully-call-voice-5226 bg-[#f0f3f8]' : 'bg-[#0f172a]') : callMode === 'video' ? (lightTheme ? 'sully-call-light sully-call-video-0210 bg-[#f0f3f8]' : 'sully-call-video-0210-night bg-[#0f172a]') : lightTheme ? 'sully-call-light bg-[#eef0f7]' : 'bg-[#0a0613]'}`}
       data-avatar-touch-pending={pendingAvatarTouchCount}
       data-call-video-layout={callMode === 'video' ? videoCallLayout : undefined}
     >
@@ -3025,6 +3049,65 @@ ${sentencePlan}`;
         @keyframes sully-call-subtitle-in { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:translateY(0) } }
         @keyframes sully-camera-emotion-readout { 0% { opacity:0; transform:translate(-50%,6px) } 18%,72% { opacity:.78; transform:translate(-50%,0) } 100% { opacity:0; transform:translate(-50%,-3px) } }
         .sully-video-stage-shell { animation: sully-call-stage-in 420ms cubic-bezier(.2,.8,.2,1) both; transition: height 320ms cubic-bezier(.2,.8,.2,1), min-height 320ms cubic-bezier(.2,.8,.2,1); }
+        .sully-call-voice-5226{background:#f0f3f8!important;color:#1e293b!important}
+        .sully-call-voice-5226 .call-channel-meta,.sully-call-voice-5226 .call-signal-meta{display:none!important}
+        .sully-call-voice-5226 .voice-call-name{color:#1e293b!important;text-shadow:none!important;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif!important;font-size:1.5rem!important;font-weight:700!important}
+        .sully-call-voice-5226 .voice-call-status{color:#64748b!important;letter-spacing:0!important}
+        .sully-call-voice-5226 .voice-call-timer{color:#475569!important;letter-spacing:.08em!important;font-size:13px!important}
+        .sully-call-voice-5226 .voice-call-avatar{height:82px!important;width:82px!important}
+        .sully-call-voice-5226 .voice-call-avatar>div>div:not(:last-child){display:none!important}
+        .sully-call-voice-5226 .voice-call-avatar img{box-shadow:0 6px 20px rgba(30,41,59,.1)!important;border:3px solid #fff}
+        .sully-call-voice-5226 .voice-dialogue-card{background:#fff!important;border-color:#e2e8f0!important;box-shadow:0 4px 12px rgba(30,41,59,.03)!important;color:#1e293b!important}
+        .sully-call-voice-5226 .voice-input-shell{background:#fff!important;border-color:#e2e8f0!important;box-shadow:0 2px 8px rgba(30,41,59,.03)!important}
+        .sully-call-voice-5226 .voice-input-shell input{color:#1e293b!important}
+        .sully-call-voice-5226 .voice-control-circle{background:#fff!important;border-color:#e2e8f0!important;box-shadow:0 2px 6px rgba(30,41,59,.04)!important}
+        .sully-call-voice-5226 .voice-control-label{color:#475569!important}
+        .sully-call-video-0210{background:#f0f3f8!important;color:#1e293b!important}
+        .sully-call-video-0210 .call-channel-meta,.sully-call-video-0210 .call-signal-meta{display:none!important}
+        .sully-call-video-0210 .video-call-name{color:#1e293b!important;text-shadow:none!important;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif!important;font-size:1.25rem!important;font-weight:700!important}
+        .sully-call-video-0210 .video-call-status{color:#64748b!important;letter-spacing:0!important;font-size:11px!important}
+        .sully-call-video-0210 .video-call-status-dot{color:#3b82f6!important}
+        .sully-call-video-0210 .video-call-timer{color:#475569!important;font-size:12px!important;font-weight:500!important}
+        .sully-call-video-0210 .sully-video-stage-shell{margin:4px 12px 6px;padding:0!important;border:1px solid #cbd5e1;border-radius:22px;overflow:hidden;background:#172033;box-shadow:0 6px 20px rgba(30,41,59,.12)}
+        .sully-call-video-0210 .video-stage-decoration{display:none!important}
+        .sully-call-video-0210 .sully-call-video-subtitle{background:#fff!important;border-color:#e2e8f0!important;box-shadow:0 3px 12px rgba(30,41,59,.05)!important;color:#1e293b!important}
+        .sully-call-video-0210 .video-subtitle-avatar{background:#e8eef7!important;border-color:#d7e0ec!important;color:#334155!important}
+        .sully-call-video-0210 .video-subtitle-title{color:#64748b!important}
+        .sully-call-video-0210 .video-subtitle-content{color:#1e293b!important}
+        .sully-call-video-0210 .video-record-button{border-color:#dbe3ee!important;background:#f8fafc!important;color:#475569!important}
+        .sully-call-video-0210 .video-dialogue-card{background:#fff!important;border-color:#e2e8f0!important;box-shadow:0 3px 12px rgba(30,41,59,.05)!important;color:#1e293b!important}
+        .sully-call-video-0210 .video-dialogue-card .text-white\/95,.sully-call-video-0210 .video-dialogue-card .text-white\/90,.sully-call-video-0210 .video-dialogue-card .text-white\/85{color:#1e293b!important}
+        .sully-call-video-0210 .video-dialogue-card .text-white\/55,.sully-call-video-0210 .video-dialogue-card .text-white\/45,.sully-call-video-0210 .video-dialogue-card .text-white\/35{color:#64748b!important}
+        .sully-call-video-0210 .video-input-shell{background:#fff!important;border-color:#dbe3ee!important;box-shadow:0 2px 8px rgba(30,41,59,.04)!important}
+        .sully-call-video-0210 .video-input-shell input{color:#1e293b!important}
+        .sully-call-video-0210 .video-input-shell input::placeholder{color:#94a3b8!important}
+        .sully-call-video-0210 .video-controls-grid{background:transparent!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important;padding:2px 0!important}
+        .sully-call-video-0210 .video-control-circle{background:#fff!important;border-color:#dbe3ee!important;box-shadow:0 2px 7px rgba(30,41,59,.06)!important;color:#334155!important}
+        .sully-call-video-0210 .video-control-circle svg{color:#334155!important}
+        .sully-call-video-0210 .video-control-circle.is-active{background:#e8f0ff!important;border-color:#a9c5fb!important;box-shadow:0 2px 9px rgba(59,130,246,.14)!important}
+        .sully-call-video-0210 .video-control-circle.is-danger{background:#ef4444!important;border-color:#ef4444!important;box-shadow:0 4px 12px rgba(239,68,68,.28)!important}
+        .sully-call-video-0210 .video-control-circle.is-danger svg{color:#fff!important}
+        .sully-call-video-0210 .video-control-label{color:#64748b!important}
+        .sully-call-video-0210-night .call-channel-meta,.sully-call-video-0210-night .call-signal-meta{display:none!important}
+        .sully-call-video-0210-night .video-call-name{color:#f1f5f9!important;text-shadow:none!important;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif!important;font-size:1.25rem!important;font-weight:700!important}
+        .sully-call-video-0210-night .video-call-status{color:#94a3b8!important;letter-spacing:0!important;font-size:11px!important}
+        .sully-call-video-0210-night .video-call-status-dot{color:#60a5fa!important}
+        .sully-call-video-0210-night .video-call-timer{color:#bfdbfe!important;font-size:12px!important;font-weight:500!important}
+        .sully-call-video-0210-night [data-testid="video-call-layout-picker"]{background:#1e293b!important;border:1px solid #334155}
+        .sully-call-video-0210-night [data-testid="video-call-layout-picker"] button[aria-selected="true"]{background:#334155!important;color:#dbeafe!important;box-shadow:0 2px 6px rgba(2,6,23,.24)!important}
+        .sully-call-video-0210-night [data-testid="video-call-layout-picker"] button[aria-selected="false"]{color:#94a3b8!important}
+        .sully-call-video-0210-night .sully-video-stage-shell{margin:4px 12px 6px;padding:0!important;border:1px solid #334155;border-radius:22px;overflow:hidden;background:#0b1220;box-shadow:0 8px 24px rgba(2,6,23,.4)}
+        .sully-call-video-0210-night .video-stage-decoration{display:none!important}
+        .sully-call-video-0210-night .sully-call-video-subtitle,.sully-call-video-0210-night .video-input-shell,.sully-call-video-0210-night .video-dialogue-card{background:#172033!important;border-color:#334155!important;box-shadow:0 4px 14px rgba(2,6,23,.25)!important;color:#e2e8f0!important}
+        .sully-call-video-0210-night .video-subtitle-avatar{background:#223047!important;border-color:#3b4b63!important;color:#dbeafe!important}
+        .sully-call-video-0210-night .video-subtitle-title{color:#93c5fd!important}
+        .sully-call-video-0210-night .video-subtitle-content,.sully-call-video-0210-night .video-input-shell input{color:#f1f5f9!important}
+        .sully-call-video-0210-night .video-record-button{border-color:#3b4b63!important;background:#223047!important;color:#cbd5e1!important}
+        .sully-call-video-0210-night .video-controls-grid{background:transparent!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important;padding:2px 0!important}
+        .sully-call-video-0210-night .video-control-circle{background:#1e293b!important;border-color:#3b4b63!important;box-shadow:0 3px 9px rgba(2,6,23,.25)!important}
+        .sully-call-video-0210-night .video-control-circle.is-active{background:#1e3a5f!important;border-color:#4f83bd!important}
+        .sully-call-video-0210-night .video-control-circle.is-danger{background:#ef4444!important;border-color:#ef4444!important}
+        .sully-call-video-0210-night .video-control-label{color:#94a3b8!important}
         @media (prefers-reduced-motion: reduce) { .sully-video-stage-shell, .sully-call-video-subtitle, .sully-camera-emotion-readout { animation-duration:.01ms!important; transition-duration:.01ms!important; } }
       `}</style>
       {avatarImportOverlay}
@@ -3041,7 +3124,7 @@ ${sentencePlan}`;
         style={{ background: `radial-gradient(closest-side, ${accentColor}, transparent)` }} />
       </>}
       {/* vignette —— 浅色主题换成柔白薄纱，压住模糊头像但不发灰 */}
-      <div className={`absolute inset-0 pointer-events-none ${lightTheme ? 'bg-[#f0f3f8]' : 'bg-gradient-to-b from-black/55 via-[#0a0613]/75 to-black/90'}`} />
+      <div className={`absolute inset-0 pointer-events-none ${lightTheme ? 'bg-[#f0f3f8]' : callMode === 'video' ? 'bg-[#0f172a]/94' : 'bg-gradient-to-b from-black/55 via-[#0a0613]/75 to-black/90'}`} />
       {/* floating sparkles */}
       {!lightTheme && <div className="absolute inset-0 overflow-hidden pointer-events-none">
         {CALL_SPARKLES.map((p, i) => (
@@ -3077,27 +3160,32 @@ ${sentencePlan}`;
         {/* name block */}
         <div className={`${callMode === 'video' ? 'pt-3' : 'pt-7'} text-center`}>
           {callMode !== 'video' && <div className="text-sm" style={{ color: `${accentColor}cc`, textShadow: `0 0 12px ${accentColor}` }}>❀</div>}
-          <h1 className={`font-serif leading-none tracking-wide text-white ${callMode === 'video' ? 'text-[1.55rem]' : 'mt-0.5 text-[2.6rem]'}`} style={{ textShadow: `0 0 26px ${accentColor}aa, 0 0 6px ${accentColor}66` }}>{selectedChar?.name || '未选择'}</h1>
+          <h1 className={`font-serif leading-none tracking-wide text-white ${callMode === 'video' ? 'video-call-name text-[1.55rem]' : 'voice-call-name mt-0.5 text-[2.6rem]'}`} style={{ textShadow: `0 0 26px ${accentColor}aa, 0 0 6px ${accentColor}66` }}>{selectedChar?.name || '未选择'}</h1>
           {callMode === 'video' ? (
-            <div className="mt-1 flex items-center justify-center gap-2 text-[8px] tracking-[0.18em] text-white/48">
-              <span>{connSub}</span><span style={{ color: accentColor }}>◆</span><span className="tabular-nums text-[13px] font-light" style={{ color: accentColor }}>{formatDuration(elapsedSeconds)}</span>
+            <div className="video-call-status mt-1 flex items-center justify-center gap-2 text-[8px] tracking-[0.18em] text-white/48">
+              <span>{connSub}</span><span className="video-call-status-dot" style={{ color: accentColor }}>◆</span><span className="video-call-timer tabular-nums text-[13px] font-light" style={{ color: accentColor }}>{formatDuration(elapsedSeconds)}</span>
             </div>
           ) : (
             <>
-              <div className="mt-2.5 text-[11px] tracking-[0.25em] text-white/55">{connSub}</div>
-              <div className="mt-1.5 text-lg tabular-nums font-extralight tracking-[0.2em]" style={{ color: accentColor }}>{formatDuration(elapsedSeconds)}</div>
+              <div className="voice-call-status mt-2.5 text-[11px] tracking-[0.25em] text-white/55">{connSub}</div>
+              <div className="voice-call-timer mt-1.5 text-lg tabular-nums font-extralight tracking-[0.2em]" style={{ color: accentColor }}>{formatDuration(elapsedSeconds)}</div>
             </>
           )}
           {callMode === 'video' && (
-            <div className="mx-auto mt-1 grid w-[15rem] grid-cols-3 rounded-full border border-white/10 bg-black/25 p-0.5 backdrop-blur-md" data-testid="video-call-layout-picker">
+            <div className="mx-auto mt-2 grid w-[13.75rem] grid-cols-3 rounded-[14px] bg-[#e2e8f0] p-[3px]" data-testid="video-call-layout-picker" role="tablist" aria-label="视频布局">
               {VIDEO_CALL_LAYOUTS.map(option => (
                 <button
                   key={option.id}
                   onClick={() => chooseVideoCallLayout(option.id)}
-                  className={`flex items-center justify-center gap-1 rounded-full py-1 text-[9px] font-medium transition active:scale-95 ${videoCallLayout === option.id ? 'bg-white/14 text-white' : 'text-white/38'}`}
+                  role="tab"
+                  aria-selected={videoCallLayout === option.id}
+                  className="flex items-center justify-center rounded-[11px] py-1.5 text-[11px] font-semibold outline-none transition active:scale-[.97]"
+                  style={videoCallLayout === option.id
+                    ? { background: '#ffffff', color: '#2563eb', boxShadow: '0 2px 6px rgba(30,41,59,.08)' }
+                    : { background: 'transparent', color: '#64748b' }}
                   title={option.hint}
                 >
-                  {videoCallLayout === option.id && <Check size={9} weight="bold" style={{ color: accentColor }} />}{option.name}
+                  {option.name}
                 </button>
               ))}
             </div>
@@ -3113,10 +3201,10 @@ ${sentencePlan}`;
           避免大头像把输入框顶出键盘上方的可视区（见 index.html 的 .sully-call-hero 规则）。 */}
       {callMode === 'video' ? (
         <div className={`sully-call-hero sully-stage-dark sully-video-stage-shell relative px-2 pb-2 pt-2 ${videoCallLayout === 'stage' ? 'flex-1 min-h-0' : 'shrink-0'} ${videoStageSize}`}>
-          <span className="pointer-events-none absolute left-3 top-3 z-20 h-8 w-8 rounded-tl-[1.8rem] border-l border-t" style={{ borderColor: `${accentColor}aa` }} aria-hidden />
-          {userCameraMode === 'off' && <span className="pointer-events-none absolute right-3 top-3 z-20 h-8 w-8 rounded-tr-[1.8rem] border-r border-t" style={{ borderColor: `${accentColor}aa` }} aria-hidden />}
-          <span className="pointer-events-none absolute bottom-3 left-3 z-20 text-[8px]" style={{ color: accentColor }} aria-hidden>✦</span>
-          <span className="pointer-events-none absolute bottom-3 right-3 z-20 text-[7px] text-white/55" aria-hidden>✦</span>
+          <span className="video-stage-decoration pointer-events-none absolute left-3 top-3 z-20 h-8 w-8 rounded-tl-[1.8rem] border-l border-t" style={{ borderColor: `${accentColor}aa` }} aria-hidden />
+          {userCameraMode === 'off' && <span className="video-stage-decoration pointer-events-none absolute right-3 top-3 z-20 h-8 w-8 rounded-tr-[1.8rem] border-r border-t" style={{ borderColor: `${accentColor}aa` }} aria-hidden />}
+          <span className="video-stage-decoration pointer-events-none absolute bottom-3 left-3 z-20 text-[8px]" style={{ color: accentColor }} aria-hidden>✦</span>
+          <span className="video-stage-decoration pointer-events-none absolute bottom-3 right-3 z-20 text-[7px] text-white/55" aria-hidden>✦</span>
           {/* The action editor owns its own WebGL preview; suspend this one. */}
           <VRMVideoCallStage
             characterName={selectedChar?.name || '未选择'}
@@ -3203,7 +3291,7 @@ ${sentencePlan}`;
       <div className="sully-call-hero pt-3 pb-1 flex flex-col items-center justify-center">
         <button
           type="button"
-          className="relative h-40 w-40 touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          className="voice-call-avatar relative h-40 w-40 touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/70"
           aria-label={`戳戳${selectedChar?.name || '对方'}`}
           onPointerDown={handleVoiceAvatarPointerDown}
           onPointerMove={handleVoiceAvatarPointerMove}
@@ -3254,15 +3342,15 @@ ${sentencePlan}`;
           style={{ animation: 'sully-call-subtitle-in 240ms ease-out both', boxShadow: `inset 0 1px 0 ${accentColor}35, 0 12px 32px rgba(0,0,0,.22)` }}
           data-testid="video-call-subtitle"
         >
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[.06] text-[11px]" style={{ color: accentColor }}>
+          <span className="video-subtitle-avatar flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[.06] text-[11px]" style={{ color: accentColor }}>
             {latestCallBubble?.role === 'user' ? '你' : selectedChar?.name?.[0] || '角'}
           </span>
           <div className="min-w-0 flex-1">
-            <div className="mb-1 flex items-center gap-1.5 text-[8px] font-semibold tracking-[0.15em]" style={{ color: `${accentColor}dd` }}>
+            <div className="video-subtitle-title mb-1 flex items-center gap-1.5 text-[8px] font-semibold tracking-[0.15em]" style={{ color: `${accentColor}dd` }}>
               {latestCallBubble?.role === 'user' ? '你刚刚说' : displayCallState === 'thinking' ? '正在想怎么回答' : `${selectedChar?.name || '对方'} · LIVE`}
               {waveActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full" style={{ background: accentColor }} />}
             </div>
-            <div className="line-clamp-2 text-[13px] leading-relaxed text-white/90">
+            <div className="video-subtitle-content line-clamp-2 text-[13px] leading-relaxed text-white/90">
               {latestCallBubble
                 ? latestCallBubble.role === 'assistant'
                   ? renderAssistantLine(extractVoiceTag(latestCallBubble.text).display, accentColor)
@@ -3272,10 +3360,10 @@ ${sentencePlan}`;
                   : `${selectedChar?.name || '对方'}在等你开口。`}
             </div>
           </div>
-          <button onClick={() => setVideoTranscriptExpanded(true)} className="shrink-0 rounded-full border border-white/12 px-2.5 py-1.5 text-[9px] text-white/52 active:scale-95">记录</button>
+          <button onClick={() => setVideoTranscriptExpanded(true)} className="video-record-button shrink-0 rounded-full border border-white/12 px-2.5 py-1.5 text-[9px] text-white/52 active:scale-95">记录</button>
         </div>
       ) : (
-      <div ref={callScrollableRef} className="flex-1 min-h-0 overflow-y-auto no-scrollbar mx-4 mb-2 px-4 py-3 space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md" style={{ boxShadow: `inset 0 1px 0 ${accentColor}33` }}>
+      <div ref={callScrollableRef} className={`flex-1 min-h-0 overflow-y-auto no-scrollbar mx-4 mb-2 px-4 py-3 space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md ${callMode === 'voice' ? 'voice-dialogue-card' : 'video-dialogue-card'}`} style={{ boxShadow: `inset 0 1px 0 ${accentColor}33` }}>
         {callMode === 'video' && videoCallLayout === 'stage' && videoTranscriptExpanded && (
           <div className="sticky top-0 z-10 -mx-1 flex justify-end pb-1">
             <button onClick={() => setVideoTranscriptExpanded(false)} className="rounded-full border border-white/10 bg-black/35 px-2.5 py-1 text-[9px] text-white/48 backdrop-blur">收成字幕</button>
@@ -3364,7 +3452,7 @@ ${sentencePlan}`;
       )}
       {showInputPanel && (
         <div className={`shrink-0 ${callMode === 'video' ? 'px-3 pb-1.5' : 'px-4 pb-2'}`}>
-          <div className={`${callMode === 'video' ? 'rounded-[1.15rem] p-1.5' : 'rounded-2xl p-2'} border border-white/12 bg-black/30 backdrop-blur-md flex gap-2 items-center`} style={{ boxShadow: `inset 0 0 20px ${accentColor}1f` }}>
+          <div className={`${callMode === 'video' ? 'video-input-shell rounded-[1.15rem] p-1.5' : 'voice-input-shell rounded-[24px] p-2'} border border-white/12 bg-black/30 backdrop-blur-md flex gap-2 items-center`} style={{ boxShadow: `inset 0 0 20px ${accentColor}1f` }}>
             {sttSupported && (
               <button
                 onClick={toggleStt}
@@ -3383,7 +3471,7 @@ ${sentencePlan}`;
               className="flex-1 min-w-0 bg-transparent px-2 text-sm outline-none placeholder:text-white/35"
               placeholder={isListening ? '在听你说……' : sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
             />
-            <button onClick={handleTurn} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor, boxShadow: `0 0 16px ${accentColor}66` }}>{sendingBusy ? '…' : '发送'}</button>
+            <button onClick={handleTurn} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-[18px] text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: callMode === 'video' ? '#3b82f6' : '#2563eb', boxShadow: '0 2px 6px rgba(37,99,235,.2)' }}>{sendingBusy ? '…' : '发送'}</button>
           </div>
           {!sendingBusy && pendingCallRetryText && !draftInput.trim() && <div className="text-[10px] text-amber-200/70 mt-1 px-1">上一句话还没得到回复，点击重试即可继续</div>}
           {isListening && <div className="text-[10px] text-white/40 mt-1 px-1 animate-pulse">正在聆听，点麦克风结束</div>}
@@ -3391,45 +3479,45 @@ ${sentencePlan}`;
       )}
       <div className={`shrink-0 ${callMode === 'video' ? 'px-3 pb-2 pt-0.5' : 'px-7 pb-2 pt-1.5'}`} data-testid={callMode === 'video' ? 'video-call-compact-controls' : undefined}>
         <div
-          className={`${callMode === 'video' ? 'grid grid-cols-5 items-center gap-1 rounded-[1.35rem] border border-white/12 bg-black/30 px-1.5 py-1.5 backdrop-blur-xl' : 'flex items-start justify-between'}`}
+          className={`${callMode === 'video' ? 'video-controls-grid grid grid-cols-5 items-center gap-1 rounded-[1.35rem] border border-white/12 bg-black/30 px-1.5 py-1.5 backdrop-blur-xl' : 'flex items-start justify-between'}`}
           style={callMode === 'video' ? { boxShadow: `inset 0 1px 0 ${accentColor}32, 0 14px 32px rgba(0,0,0,.2)` } : undefined}
         >
           {/* mic */}
           <button onClick={() => setShowInputPanel(prev => !prev)} className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}>
-            <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
+            <span className={`${callControlSize} ${callMode === 'voice' ? 'voice-control-circle' : 'video-control-circle'} ${callMode === 'video' && showInputPanel ? 'is-active' : ''} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
               style={showInputPanel ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
               <Microphone size={22} weight="fill" className="text-white/90" />
             </span>
-            <span className="text-[10px] text-white/70">麦克风</span>
+            <span className={`${callMode === 'video' ? 'video-control-label' : 'voice-control-label'} text-[10px] text-white/70`}>麦克风</span>
             {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: showInputPanel ? accentColor : 'rgba(255,255,255,0.3)' }}>{showInputPanel ? 'ON' : 'OFF'}</span>}
           </button>
           {callMode === 'video' && (
             <button onClick={() => setShowUserCameraModePicker(true)} title="选择用户摄像头方式" className="flex flex-col items-center gap-0.5 transition active:scale-95">
-              <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
+              <span className={`${callControlSize} video-control-circle ${userCameraMode !== 'off' ? 'is-active' : ''} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
                 style={userCameraMode !== 'off' ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
                 {userCameraMode !== 'off'
                   ? <VideoCamera size={21} weight="fill" className="text-white/90" />
                   : <VideoCameraSlash size={21} weight="fill" className={userCameraLoading ? 'animate-pulse text-white/70' : 'text-white/48'} />}
               </span>
-              <span className="text-[10px] text-white/70">{userCameraLoading ? '准备中' : userCameraMode === 'fake' ? '假机位' : userCameraMode === 'emotion' ? '情绪' : userCameraMode === 'snapshot' ? '快照' : '用户画面'}</span>
+              <span className="video-control-label text-[10px] text-white/70">{userCameraLoading ? '准备中' : userCameraMode === 'fake' ? '假机位' : userCameraMode === 'emotion' ? '情绪' : userCameraMode === 'snapshot' ? '快照' : '用户画面'}</span>
             </button>
           )}
           {/* translate */}
           <button onClick={() => setShowLangPicker(prev => !prev)} title="语音语种" className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}>
-            <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
+            <span className={`${callControlSize} ${callMode === 'voice' ? 'voice-control-circle' : 'video-control-circle'} ${callMode === 'video' && voiceLang ? 'is-active' : ''} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
               style={voiceLang ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
               <Translate size={22} weight="fill" className="text-white/90" />
             </span>
-            <span className="text-[10px] text-white/70">翻译</span>
+            <span className={`${callMode === 'video' ? 'video-control-label' : 'voice-control-label'} text-[10px] text-white/70`}>翻译</span>
             {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: voiceLang ? accentColor : 'rgba(255,255,255,0.3)' }}>{voiceLang ? 'ON' : 'OFF'}</span>}
           </button>
           {/* end call */}
           <button onClick={handleHangup} className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}>
-            <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition hover:bg-rose-500/20 mx-auto`}
-              style={{ background: 'rgba(244,63,94,0.12)', borderColor: 'rgba(251,113,133,0.4)' }}>
-              <PhoneDisconnect size={22} weight="fill" className="text-rose-300/90" />
+            <span className={`${callControlSize} ${callMode === 'video' ? 'video-control-circle is-danger' : ''} rounded-full border flex items-center justify-center backdrop-blur-md transition hover:bg-rose-500/20 mx-auto`}
+              style={callMode === 'voice' ? { background: '#ef4444', borderColor: '#ef4444', boxShadow: '0 4px 12px rgba(239,68,68,.3)' } : { background: 'rgba(244,63,94,0.12)', borderColor: 'rgba(251,113,133,0.4)' }}>
+              <PhoneDisconnect size={22} weight="fill" className={callMode === 'voice' ? 'text-white' : 'text-rose-300/90'} />
             </span>
-            <span className="text-[10px] text-white/70">结束通话</span>
+            <span className={`${callMode === 'video' ? 'video-control-label' : 'voice-control-label'} text-[10px] text-white/70`}>结束通话</span>
           </button>
           {/* speaker */}
           <button
@@ -3441,13 +3529,13 @@ ${sentencePlan}`;
             title={isSpeakerOn ? '外放开启' : '外放关闭'}
             className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}
           >
-            <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
+            <span className={`${callControlSize} ${callMode === 'voice' ? 'voice-control-circle' : 'video-control-circle'} ${callMode === 'video' && isSpeakerOn ? 'is-active' : ''} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
               style={isSpeakerOn ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
               {isSpeakerOn
                 ? <SpeakerHigh size={22} weight="fill" className="text-white/90" />
                 : <SpeakerSlash size={22} weight="fill" className="text-white/50" />}
             </span>
-            <span className="text-[10px] text-white/70">外放</span>
+            <span className={`${callMode === 'video' ? 'video-control-label' : 'voice-control-label'} text-[10px] text-white/70`}>外放</span>
             {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: isSpeakerOn ? accentColor : 'rgba(255,255,255,0.3)' }}>{isSpeakerOn ? 'ON' : 'OFF'}</span>}
           </button>
         </div>
@@ -3582,6 +3670,7 @@ ${sentencePlan}`;
             config={selectedChar.videoAvatar}
             characterName={selectedChar.name}
             accentColor={accentColor}
+            lightTheme
             setupMode={live2DWardrobeOnboarding ? 'import' : 'advanced'}
             onClose={() => { setShowLive2DSettings(false); setLive2DWardrobeOnboarding(false); }}
             onSave={(config: Live2DAvatarConfig) => {
