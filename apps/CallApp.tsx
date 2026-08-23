@@ -3328,7 +3328,7 @@ ${sentencePlan}`;
             onFaceAnchorChange={handleFaceAnchorChange}
             onExpressionsDiscovered={names => { vrmExpressionsRef.current = names; }}
             onAvatarTouch={handleAvatarTouch}
-            maxFps={30}
+            maxFps={suspendedCall ? 1 : 30}
           />
           <AvatarTouchFeedback
             characterName={selectedChar?.name || '对方'}

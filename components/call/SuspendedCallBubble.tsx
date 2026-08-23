@@ -57,7 +57,7 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, ca
       parentH: rect.height,
       insetTop: insets.insetTop,
       insetBottom: insets.insetBottom,
-      bubble: call.callMode === 'video' ? 224 : BUBBLE_SIZE,
+      bubble: call.callMode === 'video' ? 184 : BUBBLE_SIZE,
       pad: 8,
     });
   };
@@ -98,11 +98,11 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, ca
       <section
         ref={rootRef as React.RefObject<HTMLElement>}
         aria-label={`与 ${character.name} 的视频通话小窗`}
-        className="absolute z-[56] w-[224px] touch-none select-none overflow-hidden rounded-[1.5rem] border border-white/35 bg-[#101521]/95 text-white shadow-[0_18px_55px_rgba(5,10,22,.42)] backdrop-blur-xl"
+        className="absolute z-[56] w-[184px] touch-none select-none overflow-hidden rounded-[1.25rem] border border-white/35 bg-[#101521]/95 text-white shadow-[0_14px_42px_rgba(5,10,22,.38)] backdrop-blur-xl"
         style={{ left: position.x, top: position.y }}
       >
         <header
-          className="flex h-10 cursor-move items-center justify-between px-3"
+          className="flex h-9 cursor-move items-center justify-between px-2.5"
           onPointerDown={event => {
             const rect = rootRef.current?.getBoundingClientRect();
             if (!rect) return;
@@ -116,7 +116,7 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, ca
           <span className="min-w-0 truncate text-xs font-semibold">视频中 · {character.name}</span>
           <button type="button" onClick={onResume} className="rounded-full bg-white/10 px-2 py-1 text-[10px] active:scale-95">全屏</button>
         </header>
-        <button type="button" onClick={onResume} className="relative block h-[150px] w-full overflow-hidden bg-black/50 text-left">
+        <button type="button" onClick={onResume} className="relative block h-[112px] w-full overflow-hidden bg-black/50 text-left">
           <div className="pointer-events-none absolute inset-0">
             <VRMVideoCallStage
               characterName={character.name}
@@ -136,7 +136,7 @@ const SuspendedCallBubble: React.FC<SuspendedCallBubbleProps> = ({ character, ca
           <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/10" />
           <span className="absolute bottom-2 left-2 rounded-full bg-black/45 px-2 py-1 text-[9px] backdrop-blur">点击恢复通话</span>
         </button>
-        <div className="flex items-center gap-1.5 p-2">
+        <div className="flex items-center gap-1 p-1.5">
           <input
             value={quickText}
             onChange={event => setQuickText(event.target.value)}
