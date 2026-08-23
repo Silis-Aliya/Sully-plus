@@ -139,7 +139,18 @@ const Chat: React.FC = () => {
     useEffect(() => {
         let cancelled = false;
         void (async () => {
-            const instant = loadInstantConfig();
+            let instant = loadInstantConfig();
+            // 旧版曾把「开启 Instant」和「发送后自动回复」绑定在一起，升级后这枚 true 会继续
+            // 留在本机：用户刚发完消息，自动路径便先占住 isTyping，紧接着点 ⚡只会被早退。
+            // 一次性恢复为当前上游的手动默认；设置项仍保留，迁移后用户再次主动开启不会被覆盖。
+            const manualTriggerMigrationKey = 'sully-instant-manual-trigger-v1';
+            if (localStorage.getItem(manualTriggerMigrationKey) !== 'done') {
+                if (instant.autoTriggerOnSend) {
+                    instant = { ...instant, autoTriggerOnSend: false };
+                    saveInstantConfig(instant);
+                }
+                localStorage.setItem(manualTriggerMigrationKey, 'done');
+            }
             if (!instant.enabled) return;
             try {
                 const amsg = await ActiveMsgStore.getGlobalConfig();
