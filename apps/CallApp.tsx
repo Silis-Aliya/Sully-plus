@@ -75,7 +75,7 @@ import {
 import { dataUrlToBlob, deleteBlobRef, isBlobRef, putImageBlob, useBlobRefUrl } from '../utils/blobRef';
 import { CALL_LIGHT_THEME_CSS } from '../components/call/callLightTheme';
 import AvatarTouchFeedback, { type AvatarTouchEffect } from '../components/call/AvatarTouchFeedback';
-import { isBuiltinSullyLive2D, setBuiltinSullyLive2DQuality, type BuiltinSullyLive2DQuality } from '../utils/builtinSullyLive2D';
+import { createBuiltinSullyLive2DConfig, isBuiltinSullyLive2D, setBuiltinSullyLive2DQuality, type BuiltinSullyLive2DQuality } from '../utils/builtinSullyLive2D';
 import {
   buildUserCameraEmotionPrompt,
   detectUserCameraEmotion,
@@ -1483,6 +1483,17 @@ const CallApp: React.FC = () => {
       addToast('语音文件已失效或无法读取，请重新生成后再下载', 'error');
     }
   };
+
+  const chooseBuiltinSullyAvatar = () => {
+    if (!selectedChar) return;
+    const quality = selectedBuiltinSullyAvatar?.builtinQuality || 'balanced';
+    updateCharacter(selectedChar.id, {
+      videoAvatar: createBuiltinSullyLive2DConfig(quality),
+      companionAvatar: { version: 1, ...selectedChar.companionAvatar, source: 'model' },
+    });
+    setCallMode('video');
+    addToast('已切换到 Sully 默认内置模型', 'success');
+  };
   const callFavoriteKey = (bubble: CallBubble) => `${currentSessionId}:${bubble.id}`;
   const openCallVoiceFavorite = async (bubble: CallBubble) => {
     setVoiceFavoriteTarget(bubble);
@@ -2673,6 +2684,7 @@ ${sentencePlan}`;
             characterName={selectedChar?.name || '当前角色'}
             modelName={selectedChar?.videoAvatar?.fileName}
             modelFormat={selectedChar?.videoAvatar?.format}
+            builtinModel={!!selectedBuiltinSullyAvatar}
             avatarSource={selectedVisualSource}
             staticImageName={selectedChar?.companionAvatar?.fileName}
             hasDatePortraits={hasDatePortraits(selectedChar)}
@@ -2687,6 +2699,7 @@ ${sentencePlan}`;
             onStepChange={setCallSetupGuideStep}
             onChooseModelFile={chooseAvatarModel}
             onChooseLive2DFolder={chooseLive2DDirectory}
+            onChooseBuiltinModel={chooseBuiltinSullyAvatar}
             onChooseAvatarSource={chooseVideoAvatarSource}
             onChooseStaticImage={chooseStaticAvatarImage}
             onManageDatePortraits={() => openApp(AppID.Date)}
