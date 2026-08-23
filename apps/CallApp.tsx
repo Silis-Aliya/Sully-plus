@@ -306,6 +306,13 @@ const ttsCacheKeyFromPayload = (payload: any): string => hashTtsParams({
   language_boost: payload.language_boost,
   audio_setting: payload.audio_setting,
 });
+
+// A tiny valid PCM WAV. Playing it from a real user gesture primes the same
+// media element that later receives the asynchronously generated TTS URL.
+// This is especially important in iOS standalone PWAs, where the eventual
+// play() call happens long after the original tap and is otherwise treated as
+// unsolicited autoplay.
+const CALL_AUDIO_UNLOCK_SRC = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA';
 const splitTextForTts = (rawText: string, maxChunkLen = 120): string[] => {
   const normalized = rawText.replace(/\s+/g, ' ').trim();
   if (!normalized) return [];
@@ -592,6 +599,7 @@ const CallApp: React.FC = () => {
   const [userCameraPreviewSize, setUserCameraPreviewSize] = useState<UserCameraPreviewSize>(loadUserCameraPreviewSize);
   const [videoTranscriptExpanded, setVideoTranscriptExpanded] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const callAudioUnlockedRef = useRef(false);
   const userCameraVideoRef = useRef<HTMLVideoElement | null>(null);
   const userCameraStreamRef = useRef<MediaStream | null>(null);
   const userCameraRequestRef = useRef(0);
@@ -2144,14 +2152,66 @@ ${sentencePlan}`;
     pendingCueScheduleRef.current = cues?.length ? { cues, fallbackMs: estimatedDurationMs } : null;
     audioRef.current.src = targetUrl;
     audioRef.current.currentTime = 0;
-    audioRef.current.play().catch(() => {
+    audioRef.current.play().then(() => {
+      callAudioUnlockedRef.current = true;
+    }).catch((error: any) => {
       pendingCueScheduleRef.current = null;
+      callAudioUnlockedRef.current = false;
       if (callMode === 'video') playSilentAvatarSpeech('', cues, estimatedDurationMs);
       else setCallState('listening');
-      addToast('音频已生成，自动播放被浏览器拦截；本轮已改用无声口型与动作', 'info');
+      const autoplayBlocked = error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError';
+      console.warn('[call] audio playback failed', {
+        name: error?.name,
+        message: error?.message,
+        autoplayBlocked,
+        visibility: document.visibilityState,
+      });
+      addToast(
+        autoplayBlocked
+          ? '音频已生成，但 iOS 阻止了自动播放；点本轮“重播语音”即可继续'
+          : `语音加载或解码失败：${error?.message || '未知播放错误'}`,
+        'info',
+      );
     });
     setCallState('speaking');
   };
+  const unlockCallAudio = () => {
+    const audio = audioRef.current;
+    if (!audio || callAudioUnlockedRef.current || !audio.paused) return;
+    const previousSrc = audio.getAttribute('src') || '';
+    const previousMuted = audio.muted;
+    audio.src = CALL_AUDIO_UNLOCK_SRC;
+    audio.muted = false;
+    audio.currentTime = 0;
+    const attempt = audio.play();
+    if (!attempt) return;
+    void attempt.then(() => {
+      audio.pause();
+      audio.currentTime = 0;
+      if (previousSrc) audio.src = previousSrc;
+      else audio.removeAttribute('src');
+      audio.muted = previousMuted;
+      audio.load();
+      callAudioUnlockedRef.current = true;
+    }).catch((error: any) => {
+      callAudioUnlockedRef.current = false;
+      audio.muted = previousMuted;
+      if (previousSrc) audio.src = previousSrc;
+      else audio.removeAttribute('src');
+      console.warn('[call] audio unlock failed', error?.name, error?.message);
+    });
+  };
+  useEffect(() => {
+    const resetUnlockAfterBackground = () => {
+      if (document.visibilityState === 'hidden') callAudioUnlockedRef.current = false;
+    };
+    document.addEventListener('visibilitychange', resetUnlockAfterBackground);
+    window.addEventListener('pagehide', resetUnlockAfterBackground);
+    return () => {
+      document.removeEventListener('visibilitychange', resetUnlockAfterBackground);
+      window.removeEventListener('pagehide', resetUnlockAfterBackground);
+    };
+  }, []);
   const resumeAudio = () => {
     if (!audioRef.current || !audioUrl) return;
     audioRef.current.play().catch(() => addToast('继续播放失败，请点击重播', 'error'));
@@ -2265,6 +2325,9 @@ ${sentencePlan}`;
     avatarTouchEffectTimersRef.current = [];
   }, []);
   const handleTurn = async (overrideText?: string) => {
+    // Must run synchronously inside the send tap / Enter key / mini-window event.
+    // The AI + TTS awaits below would otherwise lose iOS user activation.
+    unlockCallAudio();
     if (isListening) { sttSessionRef.current?.stop(); setIsListening(false); }
     const typedInput = overrideText?.trim() || draftInput.trim();
     const retryInput = getPendingReplyText(bubbles);
@@ -2525,6 +2588,7 @@ ${sentencePlan}`;
     trackEvent('修改自己的通话发言');
   };
   const handleRerollAssistant = async (bubble: CallBubble) => {
+    unlockCallAudio();
     if (!selectedChar || bubble.role !== 'assistant') return;
     const idx = bubbles.findIndex(b => b.id === bubble.id);
     if (idx <= 0) return;
