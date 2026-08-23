@@ -1191,7 +1191,10 @@ const Launcher: React.FC = () => {
             scrollBehavior: 'smooth',
             overscrollBehaviorX: 'contain',
             overscrollBehaviorY: 'none',
-            touchAction: layoutEditing ? 'none' : 'pan-x pan-y',
+            // Editing only locks the gesture on `.launcher-edit-item`. Starting from
+            // wallpaper/empty slots must still page horizontally like iOS, so users can
+            // return to an earlier page before choosing the next app to drag.
+            touchAction: 'pan-x pan-y',
             willChange: 'scroll-position',
             contain: 'layout paint',
             transform: 'translateZ(0)',
