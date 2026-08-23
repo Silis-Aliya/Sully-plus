@@ -3796,8 +3796,7 @@ ${sentencePlan}`;
                   setForegroundEditingPeriod(stageLayerMode === 'time' ? activeStageBackgroundPeriod : null);
                   setForegroundEditing(true);
                 }}
-                className="keep-white sticky top-0 z-10 w-full rounded-2xl py-3 text-sm font-semibold text-white shadow-lg"
-                style={{ backgroundColor: accentColor }}
+                className="keep-white sticky top-0 z-10 w-full rounded-2xl bg-[#ef4444] py-3 text-sm font-bold text-white shadow-[0_7px_20px_rgba(239,68,68,.28)] ring-1 ring-[#dc2626] transition active:scale-[0.98]"
               >
                 {stageLayerMode === 'time'
                   ? `调整当前「${stageBackgroundPeriods.find(item => item.id === activeStageBackgroundPeriod)?.label || '时段'}」前景位置与缩放`
@@ -3859,8 +3858,7 @@ ${sentencePlan}`;
                                 setForegroundEditingPeriod(period.id);
                                 setForegroundEditing(true);
                               }}
-                              className="keep-white mt-2 w-full rounded-xl py-2.5 text-xs font-semibold text-white active:scale-[0.98]"
-                              style={{ backgroundColor: accentColor }}
+                              className="keep-white mt-2 w-full rounded-xl bg-[#ef4444] py-2.5 text-xs font-bold text-white shadow-[0_5px_14px_rgba(239,68,68,.24)] ring-1 ring-[#dc2626] transition active:scale-[0.98]"
                             >
                               调整「{period.label}」的位置与缩放
                             </button>
