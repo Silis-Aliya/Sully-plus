@@ -67,3 +67,16 @@ export function resolveVideoCallBackground(
   const legacy = period === 'afternoon' ? schedule?.day : period === 'dusk' ? schedule?.evening : undefined;
   return schedule?.[period] || legacy || character.videoCallBackground;
 }
+
+export function resolveVideoCallForeground(
+  character: Pick<CharacterProfile,
+    'videoCallForeground' | 'videoCallForegroundMode' | 'videoCallForegroundSchedule' |
+    'videoCallBackgroundSegmentCount' | 'customTimezone' | 'customTimezoneEnabled'>,
+  now = new Date(),
+): string | undefined {
+  if (character.videoCallForegroundMode !== 'time') return character.videoCallForeground;
+  const period = resolveVideoCallBackgroundPeriod(character, now);
+  const schedule = character.videoCallForegroundSchedule;
+  const legacy = period === 'afternoon' ? schedule?.day : period === 'dusk' ? schedule?.evening : undefined;
+  return schedule?.[period] || legacy || character.videoCallForeground;
+}

@@ -2639,6 +2639,12 @@ export interface CharacterProfile {
    * day 是旧四段版本的兼容字段，新界面不再写入。
    */
   videoCallBackgroundSchedule?: Partial<Record<'morning' | 'noon' | 'afternoon' | 'dusk' | 'evening' | 'night' | 'day', string>>;
+  /** 位于角色之前的透明舞台前景（桌沿、椅背等遮挡物）。 */
+  videoCallForeground?: string;
+  videoCallForegroundMode?: 'single' | 'time';
+  videoCallForegroundSchedule?: Partial<Record<'morning' | 'noon' | 'afternoon' | 'dusk' | 'evening' | 'night' | 'day', string>>;
+  /** 前景共享构图；保存后默认锁定，避免通话时误拖。 */
+  videoCallForegroundPlacement?: { x: number; y: number; scale: number; locked?: boolean };
   /**
    * 触感陪伴桌面（companion 皮肤）的背景：`preset:<id>`（内置华丽渐变场景）、
    * `blobref:<id>` 令牌（本地图片，备份由 resolveBlobRefsDeep 还原）或 http(s)
@@ -3775,6 +3781,10 @@ export interface FullBackupData {
             videoCallMode?: 'single' | 'time';
             videoCallSegmentCount?: 3 | 4 | 5 | 6;
             videoCallSchedule?: CharacterProfile['videoCallBackgroundSchedule'];
+            videoCallForeground?: string;
+            videoCallForegroundMode?: 'single' | 'time';
+            videoCallForegroundSchedule?: CharacterProfile['videoCallForegroundSchedule'];
+            videoCallForegroundPlacement?: CharacterProfile['videoCallForegroundPlacement'];
         };
     }[];
 

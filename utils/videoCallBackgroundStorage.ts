@@ -24,6 +24,7 @@ export async function migrateVideoCallBackgroundBlobRefs(
   };
 
   const videoCallBackground = await migrate(character.videoCallBackground);
+  const videoCallForeground = await migrate(character.videoCallForeground);
   const sourceSchedule = character.videoCallBackgroundSchedule;
   let videoCallBackgroundSchedule = sourceSchedule;
   if (sourceSchedule) {
@@ -32,10 +33,18 @@ export async function migrateVideoCallBackgroundBlobRefs(
       videoCallBackgroundSchedule[key] = await migrate(videoCallBackgroundSchedule[key]);
     }
   }
+  const sourceForegroundSchedule = character.videoCallForegroundSchedule;
+  let videoCallForegroundSchedule = sourceForegroundSchedule;
+  if (sourceForegroundSchedule) {
+    videoCallForegroundSchedule = { ...sourceForegroundSchedule };
+    for (const key of Object.keys(videoCallForegroundSchedule) as Array<keyof typeof videoCallForegroundSchedule>) {
+      videoCallForegroundSchedule[key] = await migrate(videoCallForegroundSchedule[key]);
+    }
+  }
 
   if (!migrated) return { character, migrated: false };
   return {
     migrated: true,
-    character: { ...character, videoCallBackground, videoCallBackgroundSchedule },
+    character: { ...character, videoCallBackground, videoCallBackgroundSchedule, videoCallForeground, videoCallForegroundSchedule },
   };
 }

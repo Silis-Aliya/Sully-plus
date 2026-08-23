@@ -3622,6 +3622,10 @@ export const DB = {
               videoCallBackgroundMode: media.backgrounds?.videoCallMode ?? c.videoCallBackgroundMode,
               videoCallBackgroundSegmentCount: media.backgrounds?.videoCallSegmentCount ?? c.videoCallBackgroundSegmentCount,
               videoCallBackgroundSchedule: media.backgrounds?.videoCallSchedule || c.videoCallBackgroundSchedule,
+              videoCallForeground: media.backgrounds?.videoCallForeground || c.videoCallForeground,
+              videoCallForegroundMode: media.backgrounds?.videoCallForegroundMode ?? c.videoCallForegroundMode,
+              videoCallForegroundSchedule: media.backgrounds?.videoCallForegroundSchedule || c.videoCallForegroundSchedule,
+              videoCallForegroundPlacement: media.backgrounds?.videoCallForegroundPlacement || c.videoCallForegroundPlacement,
               roomConfig: c.roomConfig ? {
                   ...c.roomConfig,
                   wallImage: media.backgrounds?.roomWall || c.roomConfig.wallImage,

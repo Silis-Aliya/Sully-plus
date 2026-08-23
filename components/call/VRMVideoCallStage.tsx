@@ -40,10 +40,17 @@ interface VRMVideoCallStageProps {
   accentColor: string;
   /** 已解析成可渲染 URL 的自定义背景（blobref → objectURL 在 CallApp 完成）。 */
   backgroundUrl?: string;
+  /** 角色前方的透明遮挡层（桌沿、椅背等）。 */
+  foregroundUrl?: string;
+  foregroundPlacement?: CharacterProfile['videoCallForegroundPlacement'];
+  foregroundEditing?: boolean;
+  onForegroundPlacementChange?: (placement: NonNullable<CharacterProfile['videoCallForegroundPlacement']>) => void;
+  onForegroundEditingDone?: () => void;
   onChooseModel: () => void;
   onChooseLive2DFolder?: () => void;
   onConfigureActions?: () => void;
   onConfigureBackground?: () => void;
+  onConfigureForeground?: () => void;
   /** 用户在舞台上拖拽/缩放后的构图提交（手势结束时触发，用于持久化）。 */
   onFramingChange?: (framing: AvatarStageFraming) => void;
   /** 脸部锚点保存/清除（null = 清除），持久化到 videoAvatar.faceFraming。 */
@@ -106,10 +113,16 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
   performanceQuality = 'basic',
   accentColor,
   backgroundUrl,
+  foregroundUrl,
+  foregroundPlacement,
+  foregroundEditing = false,
+  onForegroundPlacementChange,
+  onForegroundEditingDone,
   onChooseModel,
   onChooseLive2DFolder,
   onConfigureActions,
   onConfigureBackground,
+  onConfigureForeground,
   onFramingChange,
   onFaceAnchorChange,
   onExpressionsDiscovered,
@@ -147,6 +160,13 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
   const [stageToolsOpen, setStageToolsOpen] = useState(false);
   const [manualAction, setManualAction] = useState<Live2DActionTrigger | null>(null);
   const [touchRequest, setTouchRequest] = useState<AvatarTouchRequest | null>(null);
+  const foregroundDragRef = useRef<{ pointerId: number; startX: number; startY: number; x: number; y: number } | null>(null);
+  const safeForegroundPlacement = {
+    x: foregroundPlacement?.x ?? 0,
+    y: foregroundPlacement?.y ?? 0,
+    scale: foregroundPlacement?.scale ?? 1,
+    locked: foregroundPlacement?.locked ?? true,
+  };
 
   // ── 舞台构图：拖拽移动、双指捏合/滚轮缩放，手势结束时统一提交持久化 ──
   const [framing, setFraming] = useState<AvatarStageFraming>(baseFraming || model?.framing || DEFAULT_STAGE_FRAMING);
@@ -553,6 +573,52 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
         </div>
       )}
 
+      {foregroundUrl && (
+        <div
+          className={`absolute inset-0 z-[27] ${foregroundEditing ? 'touch-none cursor-move' : 'pointer-events-none'}`}
+          onPointerDown={foregroundEditing ? event => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            foregroundDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: safeForegroundPlacement.x, y: safeForegroundPlacement.y };
+          } : undefined}
+          onPointerMove={foregroundEditing ? event => {
+            const drag = foregroundDragRef.current;
+            const rect = event.currentTarget.getBoundingClientRect();
+            if (!drag || drag.pointerId !== event.pointerId || !rect.width || !rect.height) return;
+            onForegroundPlacementChange?.({
+              ...safeForegroundPlacement,
+              x: Math.max(-100, Math.min(100, drag.x + (event.clientX - drag.startX) / rect.width * 100)),
+              y: Math.max(-100, Math.min(100, drag.y + (event.clientY - drag.startY) / rect.height * 100)),
+              locked: false,
+            });
+          } : undefined}
+          onPointerUp={foregroundEditing ? event => {
+            if (foregroundDragRef.current?.pointerId === event.pointerId) foregroundDragRef.current = null;
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          } : undefined}
+          onPointerCancel={foregroundEditing ? () => { foregroundDragRef.current = null; } : undefined}
+        >
+          <img
+            src={foregroundUrl}
+            alt=""
+            draggable={false}
+            className="absolute inset-0 h-full w-full select-none object-contain"
+            style={{ transform: `translate(${safeForegroundPlacement.x}%, ${safeForegroundPlacement.y}%) scale(${safeForegroundPlacement.scale})`, transformOrigin: 'center' }}
+          />
+        </div>
+      )}
+
+      {foregroundEditing && foregroundUrl && (
+        <div className="absolute inset-x-3 bottom-3 z-[45] rounded-2xl border border-white/15 bg-black/70 p-3 text-white shadow-xl backdrop-blur-xl">
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-white/65">拖动前景 · 缩放</span>
+            <input type="range" min="0.35" max="3" step="0.05" value={safeForegroundPlacement.scale}
+              onChange={event => onForegroundPlacementChange?.({ ...safeForegroundPlacement, scale: Number(event.target.value), locked: false })}
+              className="min-w-0 flex-1 accent-white" />
+            <button onClick={onForegroundEditingDone} className="rounded-xl bg-white px-3 py-2 text-[10px] font-bold text-slate-900">确定位置</button>
+          </div>
+        </div>
+      )}
+
       {showCropGuide && hasRenderableModel && (
         <div
           className="pointer-events-none absolute z-[26] border border-dashed border-white/70"
@@ -637,6 +703,16 @@ const VRMVideoCallStage: React.FC<VRMVideoCallStageProps> = ({
                   >
                     <ImageSquare size={14} weight="fill" className="text-white/35" />
                     <span className="flex-1">更换舞台背景</span>
+                  </button>
+                )}
+                {onConfigureForeground && (
+                  <button
+                    onClick={() => { setStageToolsOpen(false); onConfigureForeground(); }}
+                    className="flex w-full items-center gap-2.5 py-2.5 text-left text-[10px] text-white/62 active:text-white"
+                  >
+                    <ImageSquare size={14} weight="bold" className="text-white/35" />
+                    <span className="flex-1">设置舞台前景</span>
+                    {foregroundUrl && <span className="text-[8px] text-white/30">已设置</span>}
                   </button>
                 )}
                 {!staticAvatarActive && (

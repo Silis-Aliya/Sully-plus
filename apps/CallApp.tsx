@@ -13,7 +13,7 @@ import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
 import { startStt, isSttSupported, type SttSession } from '../utils/speechToText';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
-import { getVideoCallBackgroundPreset, resolveVideoCallBackground, resolveVideoCallBackgroundPeriod, type VideoCallBackgroundPeriod, type VideoCallBackgroundSegmentCount } from '../utils/videoCallBackground';
+import { getVideoCallBackgroundPreset, resolveVideoCallBackground, resolveVideoCallBackgroundPeriod, resolveVideoCallForeground, type VideoCallBackgroundPeriod, type VideoCallBackgroundSegmentCount } from '../utils/videoCallBackground';
 import {
   injectMemoryPalace,
 } from '../utils/memoryPalace/pipeline';
@@ -585,6 +585,8 @@ const CallApp: React.FC = () => {
   const [bgUrlInput, setBgUrlInput] = useState('');
   const [bgScheduleUrlInputs, setBgScheduleUrlInputs] = useState<Partial<Record<VideoCallBackgroundPeriod, string>>>({});
   const [expandedBackgroundPeriod, setExpandedBackgroundPeriod] = useState<VideoCallBackgroundPeriod | null>(null);
+  const [stageLayerPicker, setStageLayerPicker] = useState<'background' | 'foreground'>('background');
+  const [foregroundEditing, setForegroundEditing] = useState(false);
   const [stageClock, setStageClock] = useState(() => Date.now());
   const [videoCallLayout, setVideoCallLayout] = useState<VideoCallLayout>(loadVideoCallLayout);
   const [userCameraPreviewSize, setUserCameraPreviewSize] = useState<UserCameraPreviewSize>(loadUserCameraPreviewSize);
@@ -2598,10 +2600,10 @@ ${sentencePlan}`;
   };
   // ── 视频舞台自定义背景：blobref 令牌（本地图片）或 http(s) 图床直链 ──
   useEffect(() => {
-    if (callMode !== 'video' || selectedChar?.videoCallBackgroundMode !== 'time') return;
+    if (callMode !== 'video' || (selectedChar?.videoCallBackgroundMode !== 'time' && selectedChar?.videoCallForegroundMode !== 'time')) return;
     const timer = window.setInterval(() => setStageClock(Date.now()), 60_000);
     return () => window.clearInterval(timer);
-  }, [callMode, selectedChar?.id, selectedChar?.videoCallBackgroundMode]);
+  }, [callMode, selectedChar?.id, selectedChar?.videoCallBackgroundMode, selectedChar?.videoCallForegroundMode]);
   const activeStageBackground = selectedChar
     ? resolveVideoCallBackground(selectedChar, new Date(stageClock))
     : undefined;
@@ -2610,27 +2612,34 @@ ${sentencePlan}`;
     : 'afternoon';
   const stageBackgroundPeriods = getVideoCallBackgroundPreset(selectedChar);
   const stageBackgroundUrl = useBlobRefUrl(activeStageBackground);
+  const activeStageForeground = selectedChar ? resolveVideoCallForeground(selectedChar, new Date(stageClock)) : undefined;
+  const stageForegroundUrl = useBlobRefUrl(activeStageForeground);
+  const stageLayerMode = stageLayerPicker === 'foreground' ? selectedChar?.videoCallForegroundMode : selectedChar?.videoCallBackgroundMode;
+  const stageLayerSingle = stageLayerPicker === 'foreground' ? selectedChar?.videoCallForeground : selectedChar?.videoCallBackground;
+  const stageLayerSchedule = stageLayerPicker === 'foreground' ? selectedChar?.videoCallForegroundSchedule : selectedChar?.videoCallBackgroundSchedule;
   const applyStageBackground = async (value?: string) => {
     if (!selectedChar) return;
-    const previous = selectedChar.videoCallBackground;
-    updateCharacter(selectedChar.id, { videoCallBackground: value });
+    const foreground = stageLayerPicker === 'foreground';
+    const previous = foreground ? selectedChar.videoCallForeground : selectedChar.videoCallBackground;
+    updateCharacter(selectedChar.id, foreground ? { videoCallForeground: value } : { videoCallBackground: value });
     // 同一张本地图可能也被某个时间槽复用；仍有引用时不能删除 Blob。
     const stillUsed = previous === value
-      || Object.values(selectedChar.videoCallBackgroundSchedule || {}).includes(previous || '');
+      || Object.values(foreground ? selectedChar.videoCallForegroundSchedule || {} : selectedChar.videoCallBackgroundSchedule || {}).includes(previous || '');
     if (previous && !stillUsed) await deleteBlobRefIfUnreferenced(previous);
   };
   const applyScheduledStageBackground = async (period: VideoCallBackgroundPeriod, value?: string) => {
     if (!selectedChar) return;
-    const previous = selectedChar.videoCallBackgroundSchedule?.[period];
-    const nextSchedule = { ...(selectedChar.videoCallBackgroundSchedule || {}) };
+    const foreground = stageLayerPicker === 'foreground';
+    const sourceSchedule = foreground ? selectedChar.videoCallForegroundSchedule : selectedChar.videoCallBackgroundSchedule;
+    const previous = sourceSchedule?.[period];
+    const nextSchedule = { ...(sourceSchedule || {}) };
     if (value) nextSchedule[period] = value;
     else delete nextSchedule[period];
-    updateCharacter(selectedChar.id, {
-      videoCallBackgroundMode: 'time',
-      videoCallBackgroundSchedule: nextSchedule,
-    });
+    updateCharacter(selectedChar.id, foreground
+      ? { videoCallForegroundMode: 'time', videoCallForegroundSchedule: nextSchedule }
+      : { videoCallBackgroundMode: 'time', videoCallBackgroundSchedule: nextSchedule });
     const stillUsed = value === previous
-      || selectedChar.videoCallBackground === previous
+      || (foreground ? selectedChar.videoCallForeground : selectedChar.videoCallBackground) === previous
       || Object.entries(nextSchedule).some(([key, ref]) => key !== period && ref === previous);
     if (previous && !stillUsed) await deleteBlobRefIfUnreferenced(previous);
   };
@@ -2647,13 +2656,13 @@ ${sentencePlan}`;
       if (!file) return removeInput();
       try {
         if (file.size > 20 * 1024 * 1024) {
-          addToast('图片超过 20 MB，请压缩后再用作背景', 'error');
+          addToast('图片超过 20 MB，请压缩后再使用', 'error');
           return;
         }
         const ref = await putImageBlob(file);
         if (period) await applyScheduledStageBackground(period, ref);
         else await applyStageBackground(ref);
-        addToast(period ? '时段背景已保存' : '视频背景已更新', 'success');
+        addToast(period ? '时段图片已保存' : `${stageLayerPicker === 'foreground' ? '舞台前景' : '视频背景'}已更新`, 'success');
       } catch (error: any) {
         addToast(error?.message || '背景导入失败', 'error');
       } finally {
@@ -2662,10 +2671,11 @@ ${sentencePlan}`;
     };
     input.click();
   };
-  const openBgPicker = () => {
-    const current = selectedChar?.videoCallBackground;
+  const openBgPicker = (layer: 'background' | 'foreground' = 'background') => {
+    setStageLayerPicker(layer);
+    const current = layer === 'foreground' ? selectedChar?.videoCallForeground : selectedChar?.videoCallBackground;
     setBgUrlInput(current && !isBlobRef(current) ? current : '');
-    const schedule = selectedChar?.videoCallBackgroundSchedule || {};
+    const schedule = (layer === 'foreground' ? selectedChar?.videoCallForegroundSchedule : selectedChar?.videoCallBackgroundSchedule) || {};
     setBgScheduleUrlInputs(Object.fromEntries(
       (['morning', 'noon', 'afternoon', 'dusk', 'evening', 'night'] as VideoCallBackgroundPeriod[])
         .map(id => [id, schedule[id] && !isBlobRef(schedule[id]!) ? schedule[id] : '']),
@@ -2681,7 +2691,7 @@ ${sentencePlan}`;
     }
     await applyStageBackground(url);
     setShowBgPicker(false);
-    addToast('视频背景已更新', 'success');
+    addToast(`${stageLayerPicker === 'foreground' ? '舞台前景' : '视频背景'}已更新`, 'success');
   };
   const applyScheduledBgUrlInput = async (period: VideoCallBackgroundPeriod) => {
     const url = (bgScheduleUrlInputs[period] || '').trim();
@@ -2690,7 +2700,7 @@ ${sentencePlan}`;
       return;
     }
     await applyScheduledStageBackground(period, url);
-    addToast('时段背景已保存', 'success');
+    addToast('时段图片已保存', 'success');
   };
 
   const avatarImportOverlay = avatarImportStatus ? (
@@ -3283,10 +3293,20 @@ ${sentencePlan}`;
             performanceQuality={selectedChar?.videoCallPerformanceQuality || 'basic'}
             accentColor={accentColor}
             backgroundUrl={stageBackgroundUrl}
+            foregroundUrl={stageForegroundUrl}
+            foregroundPlacement={selectedChar?.videoCallForegroundPlacement}
+            foregroundEditing={foregroundEditing}
+            onForegroundPlacementChange={placement => selectedChar && updateCharacter(selectedChar.id, { videoCallForegroundPlacement: placement })}
+            onForegroundEditingDone={() => {
+              if (selectedChar) updateCharacter(selectedChar.id, { videoCallForegroundPlacement: { ...(selectedChar.videoCallForegroundPlacement || { x: 0, y: 0, scale: 1 }), locked: true } });
+              setForegroundEditing(false);
+              addToast('舞台前景位置已锁定', 'success');
+            }}
             onChooseModel={() => openCallSetupGuide('model')}
             onChooseLive2DFolder={chooseLive2DDirectory}
             onConfigureActions={() => setShowLive2DSettings(true)}
-            onConfigureBackground={openBgPicker}
+            onConfigureBackground={() => openBgPicker('background')}
+            onConfigureForeground={() => openBgPicker('foreground')}
             onFramingChange={handleStageFramingChange}
             onFaceAnchorChange={handleFaceAnchorChange}
             onExpressionsDiscovered={names => { vrmExpressionsRef.current = names; }}
@@ -3642,18 +3662,18 @@ ${sentencePlan}`;
         <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end" onClick={() => setShowBgPicker(false)}>
           <div className={`w-full max-h-[84%] overflow-y-auto border-t rounded-t-3xl p-5 space-y-4 ${lightTheme ? 'border-[#d9e1ec] bg-[#f6f8fb] text-[#20304a]' : 'border-white/10 bg-[#120c22] text-white'}`} onClick={e => e.stopPropagation()}>
             <div>
-              <div className="text-base font-semibold">视频背景</div>
+              <div className="text-base font-semibold">{stageLayerPicker === 'foreground' ? '舞台前景层' : '视频背景'}</div>
               <p className={`mt-1 text-xs ${lightTheme ? 'text-[#66758e]' : 'text-white/45'}`}>本地图片保存在你的设备里（IndexedDB，随完整备份导出）；图床直链每次在线加载。</p>
             </div>
             <div className={`grid grid-cols-2 rounded-2xl p-1 ${lightTheme ? 'bg-[#e7edf5]' : 'bg-white/[0.08]'}`}>
               {(['single', 'time'] as const).map(mode => (
-                <button key={mode} onClick={() => selectedChar && updateCharacter(selectedChar.id, { videoCallBackgroundMode: mode })}
-                  className={`rounded-xl py-2 text-sm font-medium transition ${selectedChar?.videoCallBackgroundMode === mode || (mode === 'single' && selectedChar?.videoCallBackgroundMode !== 'time') ? (lightTheme ? 'bg-[#ffffff] shadow-sm' : 'bg-white/15') : 'opacity-55'}`}>
-                  {mode === 'single' ? '单张背景' : '时间模式'}
+                <button key={mode} onClick={() => selectedChar && updateCharacter(selectedChar.id, stageLayerPicker === 'foreground' ? { videoCallForegroundMode: mode } : { videoCallBackgroundMode: mode })}
+                  className={`rounded-xl py-2 text-sm font-medium transition ${stageLayerMode === mode || (mode === 'single' && stageLayerMode !== 'time') ? (lightTheme ? 'bg-[#ffffff] shadow-sm' : 'bg-white/15') : 'opacity-55'}`}>
+                  {mode === 'single' ? '固定图片' : '时间模式'}
                 </button>
               ))}
             </div>
-            {selectedChar?.videoCallBackgroundMode !== 'time' ? (
+            {stageLayerMode !== 'time' ? (
               <>
                 <button onClick={() => chooseStageBackgroundFile()} className={`w-full py-2.5 rounded-2xl border text-sm transition active:scale-[0.98] ${lightTheme ? 'border-[#d9e1ec] bg-[#ffffff]' : 'border-white/15 bg-white/[0.06]'}`}>
                   选择本地图片
@@ -3663,9 +3683,10 @@ ${sentencePlan}`;
                     className={`flex-1 min-w-0 rounded-xl px-3 py-2.5 text-sm outline-none border ${lightTheme ? 'border-[#d9e1ec] bg-[#ffffff] placeholder:text-[#9aa6b8]' : 'border-white/10 bg-black/30 placeholder:text-white/30'}`} />
                   <button onClick={() => void applyBgUrlInput()} className="keep-white shrink-0 px-4 rounded-xl text-sm font-medium text-white transition active:scale-95" style={{ backgroundColor: accentColor }}>使用</button>
                 </div>
-                {selectedChar?.videoCallBackground && (
-                  <button onClick={() => { void applyStageBackground(undefined); addToast('已恢复默认背景', 'success'); }} className="w-full py-2 text-xs opacity-55 transition active:opacity-30">恢复默认背景</button>
+                {stageLayerSingle && (
+                  <button onClick={() => { void applyStageBackground(undefined); addToast('图片已清除', 'success'); }} className="w-full py-2 text-xs opacity-55 transition active:opacity-30">清除图片</button>
                 )}
+                {stageLayerPicker === 'foreground' && stageLayerSingle && <button onClick={() => { setShowBgPicker(false); setForegroundEditing(true); }} className="keep-white w-full rounded-2xl py-2.5 text-sm font-semibold text-white" style={{ backgroundColor: accentColor }}>调整并锁定位置</button>}
               </>
             ) : (
               <>
@@ -3685,7 +3706,7 @@ ${sentencePlan}`;
                 </div>
                 <div className="space-y-3">
                   {stageBackgroundPeriods.map(period => {
-                    const saved = selectedChar?.videoCallBackgroundSchedule?.[period.id];
+                    const saved = stageLayerSchedule?.[period.id];
                     const expanded = expandedBackgroundPeriod === period.id;
                     return (
                       <div key={period.id} className={`overflow-hidden rounded-2xl border ${lightTheme ? 'border-[#d9e1ec] bg-[#ffffff] text-[#20304a] shadow-[0_2px_10px_rgba(42,57,78,0.04)]' : 'border-white/10 bg-white/[0.04]'}`}>
@@ -3713,6 +3734,7 @@ ${sentencePlan}`;
                 </div>
               </>
             )}
+            {stageLayerPicker === 'foreground' && stageLayerMode === 'time' && activeStageForeground && <button onClick={() => { setShowBgPicker(false); setForegroundEditing(true); }} className="keep-white w-full rounded-2xl py-2.5 text-sm font-semibold text-white" style={{ backgroundColor: accentColor }}>调整当前前景位置</button>}
             <button onClick={() => setShowBgPicker(false)} className="w-full py-2 text-sm opacity-65">完成</button>
           </div>
         </div>
