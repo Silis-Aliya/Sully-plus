@@ -8619,7 +8619,11 @@ function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration) 
     build.xhsXsecTokens
   );
   const finishMeta = directives.length > 0 ? { directives, ...xhsSession ? { xhsSession } : {} } : void 0;
-  const segments = sanitizeIntoSegments(cleanedText);
+  const segments = sanitizeIntoSegments(cleanedText).filter((segment, index, all) => {
+    if (index === 0) return true;
+    const previous = all[index - 1];
+    return segment.sanitized.trim() !== previous.sanitized.trim();
+  });
   if (segments.length === 0) {
     return { decision: "skip-push", reason: finishMeta ? "side-effects-only" : "empty-generation" };
   }

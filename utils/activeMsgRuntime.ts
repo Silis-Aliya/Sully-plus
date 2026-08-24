@@ -669,7 +669,9 @@ async function scheduleSwitchWakeFromPush(
     ...char,
     activeMsg2Config: {
       ...config,
-      tasks: applyScheduledTask(config.tasks, record, {
+      tasks: applyScheduledTask(
+        config.tasks.filter((task) => !result.cancelledTaskUuids.includes(task.taskUuid)),
+        record, {
         replaceTaskUuid,
         replacedCancelFailed: result.replacedCancelFailed,
       }, Date.now()),

@@ -343,7 +343,14 @@ export function processLLMRound(
   const finishMeta = directives.length > 0
     ? { directives, ...(xhsSession ? { xhsSession } : {}) }
     : undefined;
-  const segments = sanitizeIntoSegments(cleanedText);
+  const segments = sanitizeIntoSegments(cleanedText).filter((segment, index, all) => {
+    if (index === 0) return true;
+    const previous = all[index - 1];
+    // 模型偶尔会把同一句按换行连续复读多次；每段随后都会成为独立 Push 和独立气泡，
+    // 因而一次复读会被放大成六条通知/六条落库。只折叠相邻且终态文本完全相同的段，
+    // 不跨过其它内容，也不影响用户有意隔段重复或不同表情/卡片。
+    return segment.sanitized.trim() !== previous.sanitized.trim();
+  });
 
   if (segments.length === 0) {
     // 没有正文就整条不发，这轮有没有副作用都一样。

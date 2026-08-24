@@ -1,5 +1,14 @@
 # SullyOS Fork Maintenance Log
 
+## 2026-08-24 Switch Wake Singleton And Fresh Context
+
+- Tightened Active Message 2.0 Switch mode to one remote wake per character. After a replacement is created successfully, the client reconciles the authoritative remote task list and cancels every older task for that character; Classic mode keeps its multi-task behavior.
+- Successful remote cancellations are removed from the local task list as one operation, including stale self-scheduled tasks that were missing when a manual test was created. Cancellation or reconciliation failures remain visible instead of hiding a task that may still fire.
+- A completed chat round now flushes the newest `fire_pack` immediately instead of waiting for the normal 10-second debounce, preventing a near-due wake from answering the previous turn. Existing retry/backoff behavior remains responsible for genuine network failures.
+- The AMSG Worker now collapses only consecutive, exactly identical output segments before creating Push payloads. This prevents a model repetition from becoming six identical notifications and six permanent chat bubbles while preserving non-adjacent repetition and different content.
+- Music Together scheduling and behavior were not changed.
+- Verification: `pnpm build` completed successfully. Focused Vitest execution was unavailable in the current dependency installation because the `vitest` executable is missing; a regression case was added for the next complete test environment.
+
 ## 2026-08-23 Character-Time Video Stage Presets
 
 - Marked the black in-stage tools popover as an explicit dark-stage subtree, so the Call app's light-theme compatibility CSS no longer converts its white labels and icons to dark ink. The entire popover now keeps high-contrast white text in either app theme.

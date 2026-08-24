@@ -1679,12 +1679,42 @@ export const ActiveMsgClient = {
     // 旧任务已删、新任务没建，两头空。取消失败时新旧短暂并存于远端，把状态交还
     // 调用方（保留旧记录 + 标错 + 可重试），绝不静默。
     let replacedCancelFailed = false;
+    const cancelledTaskUuids: string[] = [];
+    const failedCancelTaskUuids: string[] = [];
     if (replaceTaskUuid) {
       try {
         await this.cancelTask(replaceTaskUuid);
+        cancelledTaskUuids.push(replaceTaskUuid);
       } catch (error) {
         replacedCancelFailed = true;
+        failedCancelTaskUuids.push(replaceTaskUuid);
         console.warn(`${ACTIVE_MSG_RUNTIME_HEADER} 替换后取消旧任务失败（远端新旧并存，待重试）`, error);
+      }
+    }
+
+    // Switch 的产品语义是「每个角色永远只有下一次唤醒」；本地清单可能因另一台设备、
+    // iOS 断网重试或角色自排稍晚回写而漏掉旧 uuid，不能只取消调用方传来的第一条。
+    // 新任务建成后以远端清单再收一次口：保留本次 uuid，其余同角色任务全部取消。
+    // 这也让手动测试与角色自排发生竞态时最终仍收敛成一条，而不碰 Classic 多任务模式。
+    if (config.experienceMode === 'switch') {
+      try {
+        const remoteUuids = await this.listRemoteTaskUuidsForChar(char.id);
+        for (const uuid of remoteUuids) {
+          if (uuid === response.data.uuid || cancelledTaskUuids.includes(uuid)) continue;
+          try {
+            await this.cancelTask(uuid);
+            cancelledTaskUuids.push(uuid);
+          } catch (error) {
+            replacedCancelFailed = true;
+            failedCancelTaskUuids.push(uuid);
+            console.warn(`${ACTIVE_MSG_RUNTIME_HEADER} Switch 单例收口取消旧任务失败`, { uuid, error });
+          }
+        }
+      } catch (error) {
+        // 远端清单读不到时，前面的显式 replace 仍然有效；把状态报给调用方，不能假装
+        // 已完成单例收口，否则 UI 会把可能还会触发的旧任务藏掉。
+        replacedCancelFailed = true;
+        console.warn(`${ACTIVE_MSG_RUNTIME_HEADER} Switch 单例收口读取远端任务失败`, error);
       }
     }
 
@@ -1693,6 +1723,8 @@ export const ActiveMsgClient = {
       anchorMs,
       clientTaskId,
       replacedCancelFailed,
+      cancelledTaskUuids: [...new Set(cancelledTaskUuids)],
+      failedCancelTaskUuids: [...new Set(failedCancelTaskUuids)],
       // 解析好的绝对时刻（UTC ISO）。任务记录存这一份，字段口径才只有一种。
       firstSendAt: firstSendTime,
     };

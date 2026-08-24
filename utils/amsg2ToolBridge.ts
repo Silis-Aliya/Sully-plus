@@ -319,7 +319,7 @@ async function handleSchedule(args: Record<string, any>, deps: Amsg2ToolDeps): P
   // 并清单的规则（替换成功才移除旧记录；远端取消失败则保留旧记录并标错，短 id 还在、
   // 角色和用户都还能再取消一次）与设置面板共用 applyScheduledTask。
   persistTasks(deps, config, applyScheduledTask(
-    config.tasks,
+    config.tasks.filter((task) => !result.cancelledTaskUuids.includes(task.taskUuid)),
     record,
     { replaceTaskUuid, replacedCancelFailed: result.replacedCancelFailed },
     Date.now(),
