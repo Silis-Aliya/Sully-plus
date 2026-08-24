@@ -5066,6 +5066,21 @@ var parseToolConfig = (value) => {
   }
 };
 
+// utils/amsgWakeClaim.ts
+var AMSG_WAKE_CLAIM_KEY = "switch_wake_claim_v1";
+var AMSG_WAKE_CLAIM_WINDOW_MS = 3 * 6e4;
+var parseAmsgWakeClaim = (raw) => {
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const value = JSON.parse(raw);
+    if (value.v !== 1 || typeof value.taskUuid !== "string" || typeof value.occurrenceMs !== "number" || typeof value.claimedAt !== "number") return null;
+    return value;
+  } catch {
+    return null;
+  }
+};
+var isDuplicateSwitchWake = (previous, next) => Boolean(previous && previous.taskUuid !== next.taskUuid && next.claimedAt >= previous.claimedAt && next.claimedAt - previous.claimedAt < AMSG_WAKE_CLAIM_WINDOW_MS);
+
 // utils/realtimeWorldCore.ts
 var readJson = async (res) => {
   const text = await res.text();
@@ -14108,6 +14123,29 @@ var amsgHooks = {
     const occurrenceMs = Date.parse(String(ctx.task.nextSendAt));
     if (!Number.isFinite(occurrenceMs)) {
       throw fail("\u4EFB\u52A1\u884C next_send_at \u89E3\u6790\u4E0D\u51FA\u89E6\u53D1\u65F6\u523B", { nextSendAt: ctx.task.nextSendAt });
+    }
+    if (switchMode && !instant && typeof ctx.writeState === "function") {
+      const claim = {
+        v: 1,
+        taskUuid: typeof ctx.task.uuid === "string" ? ctx.task.uuid : String(ctx.task.id ?? ""),
+        occurrenceMs,
+        claimedAt: ctx.now.getTime()
+      };
+      const previousClaim = parseAmsgWakeClaim(
+        charRows.find((row) => row.key === AMSG_WAKE_CLAIM_KEY)?.value
+      );
+      if (isDuplicateSwitchWake(previousClaim, claim)) {
+        console.warn("[amsg:switch-duplicate-wake-skip]", {
+          taskId: ctx.task.id,
+          previousTaskUuid: previousClaim?.taskUuid,
+          occurrenceMs
+        });
+        await recordSkip(ctx, charId, "duplicate-switch-wake", occurrenceMs);
+        return { skip: true };
+      }
+      await ctx.writeState(amsgStateNamespace(charId), [
+        { key: AMSG_WAKE_CLAIM_KEY, value: JSON.stringify(claim) }
+      ]);
     }
     if (isAmsgQuietHours(
       ctx.now.getTime(),
