@@ -77,6 +77,7 @@ import type { CharacterProfile, UserProfile, VRWorldNovel, VRNovelAnnotation, VR
 import { getChibi } from '../utils/vrWorld/chibi';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent } from '../utils/analytics';
+import { formatHours } from '../utils/format';
 
 type Tab = 'world' | 'library' | 'settings' | 'api';
 
@@ -3388,7 +3389,7 @@ const SettingsView: React.FC<{
                             </button>
                             <div className="flex-1 min-w-0">
                                 <div className="text-[13px] font-bold truncate">{char.name}</div>
-                                {enabled ? <div className="text-[10px] text-indigo-300/60">每 {interval >= 60 ? `${interval / 60} 小时` : `${interval} 分`}登入一次{failStreak > 0 && <span className="text-amber-300/80"> · 连续失败 {failStreak} 次</span>}</div>
+                                {enabled ? <div className="text-[10px] text-indigo-300/60">每 {interval >= 60 ? `${formatHours(interval)} 小时` : `${interval} 分`}登入一次{failStreak > 0 && <span className="text-amber-300/80"> · 连续失败 {failStreak} 次</span>}</div>
                                     : <div className="text-[10px] text-indigo-300/40">{chibi.isFallback ? '未设形象 · 未接入' : '未接入'}</div>}
                             </div>
                             <button onClick={() => enabled ? disable(char) : onRequestEnable(char)}
@@ -3402,7 +3403,7 @@ const SettingsView: React.FC<{
                                     {INTERVAL_OPTIONS.map(opt => (
                                         <button key={opt} onClick={() => setInterval(char, opt)}
                                             className={`text-[10.5px] rounded-full px-2.5 py-1 font-semibold ${interval === opt ? 'bg-indigo-400 text-white' : 'bg-white/10 text-indigo-200/70'}`}>
-                                            {opt >= 60 ? `${opt / 60}h` : `${opt}min`}
+                                            {opt >= 60 ? `${formatHours(opt)}h` : `${opt}min`}
                                         </button>
                                     ))}
                                 </div>
