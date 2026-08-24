@@ -1,12 +1,5 @@
 # SullyOS Fork Maintenance Log
 
-## 2026-08-24 Switch Autonomous-Wake Deduplication
-
-- Added a Worker-side idempotency claim before the LLM starts for Switch / autonomous-wake tasks. If task replacement leaves both the old and new remote rows alive, only the first task within the three-minute collision window may generate and push; the second is recorded as `duplicate-switch-wake` and skipped before chat content or an iOS notification is created.
-- Classic AMSG schedules remain unchanged because they intentionally allow several independent tasks. A retry of the same task/occurrence also remains allowed and continues to use the existing deterministic `messageId` delivery deduplication.
-- Rebuilt `worker/amsg/worker.bundle.js`. This fix requires deploying the updated AMSG Worker; a Vercel frontend deployment alone does not change cloud wake execution.
-- Verification: 138 focused tests passed (`utils/amsgWakeClaim.test.ts` plus the complete Worker hook regression suite), `pnpm build:workers` passed, and the Vite production build passed.
-
 ## 2026-08-23 Character-Time Video Stage Presets
 
 - Marked the black in-stage tools popover as an explicit dark-stage subtree, so the Call app's light-theme compatibility CSS no longer converts its white labels and icons to dark ink. The entire popover now keeps high-contrast white text in either app theme.

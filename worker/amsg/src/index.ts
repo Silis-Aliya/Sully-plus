@@ -99,12 +99,6 @@ import {
   type AmsgToolConfig,
   type AmsgToolPack,
 } from '../../../utils/amsgToolPack';
-import {
-  AMSG_WAKE_CLAIM_KEY,
-  isDuplicateSwitchWake,
-  parseAmsgWakeClaim,
-  type AmsgWakeClaim,
-} from '../../../utils/amsgWakeClaim';
 import { buildRealtimeWorldBlock } from './realtimeWorld';
 import {
   buildMcpDirectHeaders,
@@ -1044,33 +1038,6 @@ export const amsgHooks = {
     const occurrenceMs = Date.parse(String(ctx.task.nextSendAt));
     if (!Number.isFinite(occurrenceMs)) {
       throw fail('任务行 next_send_at 解析不出触发时刻', { nextSendAt: ctx.task.nextSendAt });
-    }
-
-    // Switch 语义上同一角色只应有一条下次唤醒。替换时若“新建成功、旧任务取消失败”，
-    // D1 会留下两条任务，过去会各生成一次并各发一次通知。在启动 LLM 前按角色抢唤醒权，
-    // 让几分钟内紧随而来的另一个 task 直接 skip。Classic 允许多定时任务，不走这道闸。
-    if (switchMode && !instant && typeof ctx.writeState === 'function') {
-      const claim: AmsgWakeClaim = {
-        v: 1,
-        taskUuid: typeof ctx.task.uuid === 'string' ? ctx.task.uuid : String(ctx.task.id ?? ''),
-        occurrenceMs,
-        claimedAt: ctx.now.getTime(),
-      };
-      const previousClaim = parseAmsgWakeClaim(
-        charRows.find((row) => row.key === AMSG_WAKE_CLAIM_KEY)?.value,
-      );
-      if (isDuplicateSwitchWake(previousClaim, claim)) {
-        console.warn('[amsg:switch-duplicate-wake-skip]', {
-          taskId: ctx.task.id,
-          previousTaskUuid: previousClaim?.taskUuid,
-          occurrenceMs,
-        });
-        await recordSkip(ctx, charId, 'duplicate-switch-wake', occurrenceMs);
-        return { skip: true } as const;
-      }
-      await ctx.writeState(amsgStateNamespace(charId), [
-        { key: AMSG_WAKE_CLAIM_KEY, value: JSON.stringify(claim) },
-      ]);
     }
 
     if (isAmsgQuietHours(
