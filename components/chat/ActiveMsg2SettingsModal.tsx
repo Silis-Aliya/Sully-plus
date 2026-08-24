@@ -427,9 +427,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       onSave((prev) => buildConfig(
         prev,
         // 并清单的规则（含替换失败时保留旧记录）与角色工具路径共用 applyScheduledTask。
-        (list) => applyScheduledTask(
-          list.filter((task) => !result.cancelledTaskUuids.includes(task.taskUuid)),
-          record, {
+        (list) => applyScheduledTask(list, record, {
           replaceTaskUuid,
           replacedCancelFailed: result.replacedCancelFailed,
         }, Date.now()),
@@ -439,7 +437,7 @@ const ActiveMsg2SettingsModal: React.FC<ActiveMsg2SettingsModalProps> = ({
       // 编辑时旧任务已被取消才出账；取消失败的话远端新旧并存，旧 uuid 要留着。
       setKnownRemoteUuids((prev) => applyRemoteTaskDelta(prev, {
         present: [result.uuid],
-        gone: result.cancelledTaskUuids,
+        gone: replaceTaskUuid && !result.replacedCancelFailed ? [replaceTaskUuid] : [],
       }));
       // 只报枚举构成，内容、时间、编号一概不带。mode/recurrence 虽有 TS 类型，但编辑路径
       // 是从持久化任务记录读回来的（导入的备份可携带任意字符串），上报前运行时收敛一遍。

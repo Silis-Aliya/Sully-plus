@@ -378,6 +378,31 @@ describe('flushInboxToChat 落库时间戳（走真库）', () => {
     for (const m of msgs) expect(m.timestamp).toBe(sentAt);
   }, 20000);
 
+  it('同一任务触发分段重复投递时只写入一次聊天', async () => {
+    const charId = 'char-delivery-idempotent';
+    const messageId = 'amsg_mail_task-duplicate_1787530000000_0';
+    const body = '这条主动消息只能出现一次';
+    await DB.saveCharacter({ id: charId, name: '去重角色' } as any);
+
+    const delivery = inboxMsg({
+      messageId,
+      charId,
+      charName: '去重角色',
+      messageType: 'forum',
+      body,
+      sentAt: Date.now(),
+    });
+
+    await ActiveMsgStore.saveInboxMessage(delivery);
+    await flushInboxToChat();
+    // 模拟同一个 D1 mailbox payload 又被 Web Push / 补收路径投递一次。
+    await ActiveMsgStore.saveInboxMessage(delivery);
+    await flushInboxToChat();
+
+    const matches = (await assistantMsgs(charId)).filter((m) => m.content === body);
+    expect(matches).toHaveLength(1);
+  }, 20000);
+
   // 循环判定读的是 push 顶层的 recurrenceType（库盖上去的，用户排的和角色自排的走同
   // 一份）。任务 metadata 里那份是排程方自己抄的，角色在 fire 里自排那条路径压根不会
   // 抄——照着 metadata 判的话，每日提醒只要用户开过一次口就会被永远吞掉，而 worker 那边

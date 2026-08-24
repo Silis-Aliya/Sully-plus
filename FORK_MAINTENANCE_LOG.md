@@ -1,13 +1,13 @@
 # SullyOS Fork Maintenance Log
 
-## 2026-08-24 Switch Wake Singleton And Fresh Context
+## 2026-08-24 Active Message 2.0 Delivery Idempotency
 
-- Tightened Active Message 2.0 Switch mode to one remote wake per character. After a replacement is created successfully, the client reconciles the authoritative remote task list and cancels every older task for that character; Classic mode keeps its multi-task behavior.
-- Successful remote cancellations are removed from the local task list as one operation, including stale self-scheduled tasks that were missing when a manual test was created. Cancellation or reconciliation failures remain visible instead of hiding a task that may still fire.
-- A completed chat round now flushes the newest `fire_pack` immediately instead of waiting for the normal 10-second debounce, preventing a near-due wake from answering the previous turn. Existing retry/backoff behavior remains responsible for genuine network failures.
-- The AMSG Worker now collapses only consecutive, exactly identical output segments before creating Push payloads. This prevents a model repetition from becoming six identical notifications and six permanent chat bubbles while preserving non-adjacent repetition and different content.
-- Music Together scheduling and behavior were not changed.
-- Verification: `pnpm build` completed successfully. Focused Vitest execution was unavailable in the current dependency installation because the `vitest` executable is missing; a regression case was added for the next complete test environment.
+- Restored the previously shipped Active Message 2.0 task creation, replacement, recurrence, self-scheduling and state-sync behavior. The short-lived extra remote-list sweep, forced Switch task cancellation, immediate chat-state flush and text-based output collapsing were removed.
+- Kept task scheduling separate from delivery deduplication. The Worker already assigns each task occurrence and output segment a stable `messageId` derived from task UUID, occurrence and segment index; the App now records that identity only after the message has successfully entered chat storage.
+- A later copy of the same envelope arriving through Web Push or D1 mailbox recovery is discarded before post-processing, chat insertion and the foreground received event. Different segments from one legitimate multi-bubble reply keep distinct identities and are not collapsed by text.
+- Completed-message receipts expire after seven days and are pruned daily. A receipt read failure preserves the original 2.0 delivery behavior rather than risking message loss.
+- Music Together, proactive prompt/generation, Switch continuation decisions and Classic multi-task behavior were not changed.
+- Verification: `pnpm build` completed successfully.
 
 ## 2026-08-23 Character-Time Video Stage Presets
 

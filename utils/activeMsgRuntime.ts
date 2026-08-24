@@ -669,9 +669,7 @@ async function scheduleSwitchWakeFromPush(
     ...char,
     activeMsg2Config: {
       ...config,
-      tasks: applyScheduledTask(
-        config.tasks.filter((task) => !result.cancelledTaskUuids.includes(task.taskUuid)),
-        record, {
+      tasks: applyScheduledTask(config.tasks, record, {
         replaceTaskUuid,
         replacedCancelFailed: result.replacedCancelFailed,
       }, Date.now()),
@@ -1160,6 +1158,21 @@ const flushInboxToChatImpl = async () => {
   // 降级回原来的 "原文一次性 saveMessage" 防止消息丢失。dispatchEvent 始终 fire 一次,
   // 保证 toast / 未读 / 通知 / sendInstantPush resolver 语义不变。
   for (const message of pendingMessages) {
+    // 2.0 worker 已把 taskUuid + occurrence + 分段序号压成稳定 messageId。
+    // Web Push 与 D1 补拉可能先后送达同一封；不改任务调度，只在最终落库入口挡重。
+    try {
+      if (await ActiveMsgStore.hasProcessedInboxMessage(message.messageId)) {
+        activeMsgTrace('runtime-duplicate-message-skipped', {
+          messageId: message.messageId,
+          charId: message.charId,
+          taskId: message.taskId,
+        });
+        continue;
+      }
+    } catch (error) {
+      // 去重凭据不可读时沿用原 2.0 行为，不能因此吞掉一封新消息。
+      log.warn('读取主动消息完成凭据失败，按原流程继续', { messageId: message.messageId, error });
+    }
     // 'active-msg-received' 事件里的 sentAt 维持原口径（发送时刻优先）：
     // 它只喂 toast / 未读预览，不进聊天记录，别跟落库口径搅在一起。
     const eventSentAt = message.sentAt || message.receivedAt || Date.now();
@@ -1392,6 +1405,13 @@ const flushInboxToChatImpl = async () => {
         // requeue 后跳过这条消息的 dispatchEvent —— UI 不该误以为收到了
         continue;
       }
+    }
+
+    try {
+      await ActiveMsgStore.markInboxMessageProcessed(message.messageId);
+    } catch (error) {
+      // 消息已经落库；此时重入队只会制造重复，因此仅记录凭据写失败。
+      log.warn('主动消息已落库，但完成凭据写入失败', { messageId: message.messageId, error });
     }
 
     if (message.messageType === 'instant') clearInstantChatPending(message.charId);

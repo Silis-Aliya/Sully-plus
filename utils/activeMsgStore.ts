@@ -24,6 +24,9 @@ export const ACTIVE_MSG_GLOBAL_CONFIG_BACKUP_KEY = 'amsg2_global_config_v1';
 const EXPIRED_NOTICES_PREFIX = 'amsg2_expired_notices_';
 const EXPIRED_NOTICES_MAX = 10;
 const EXPIRED_NOTICES_TTL_MS = 48 * 3600_000;
+const PROCESSED_INBOX_PREFIX = 'processed_inbox:';
+const PROCESSED_INBOX_TTL_MS = 7 * 24 * 3600_000;
+let lastProcessedInboxPruneAt = 0;
 
 type KvRecord<T = unknown> = {
   id: string;
@@ -212,6 +215,39 @@ const generateUuidV4 = () => {
 };
 
 export const ActiveMsgStore = {
+  /** Web Push 与云端补拉可能先后送达同一个稳定 messageId。 */
+  async hasProcessedInboxMessage(messageId: string): Promise<boolean> {
+    if (!messageId) return false;
+    const record = await getKv<{ processedAt: number }>(`${PROCESSED_INBOX_PREFIX}${messageId}`);
+    return !!record && Date.now() - Number(record.processedAt || 0) <= PROCESSED_INBOX_TTL_MS;
+  },
+
+  async markInboxMessageProcessed(messageId: string): Promise<void> {
+    if (!messageId) return;
+    await setKv(`${PROCESSED_INBOX_PREFIX}${messageId}`, { processedAt: Date.now() });
+    const now = Date.now();
+    if (now - lastProcessedInboxPruneAt < 24 * 3600_000) return;
+    lastProcessedInboxPruneAt = now;
+    const db = await openDB();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE_KV, 'readwrite');
+      const store = tx.objectStore(STORE_KV);
+      const cutoff = now - PROCESSED_INBOX_TTL_MS;
+      const request = store.openCursor();
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        const record = cursor.value as KvRecord<{ processedAt?: number }>;
+        if (record.id.startsWith(PROCESSED_INBOX_PREFIX)
+          && Number(record.value?.processedAt || 0) < cutoff) cursor.delete();
+        cursor.continue();
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    });
+  },
+
   async getGlobalConfig(): Promise<ActiveMsg2GlobalConfig> {
     // The localStorage mirror is portable: full backup and QuickSync already
     // transport allowed local settings. Existing installs without the mirror

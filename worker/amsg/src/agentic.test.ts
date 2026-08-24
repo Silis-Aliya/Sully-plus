@@ -95,22 +95,6 @@ describe('processLLMRound — 纯文本 finish', () => {
   });
 });
 
-describe('processLLMRound — 相邻重复气泡折叠', () => {
-  it('同一句连续重复只生成一条 push，后续不同内容保留', () => {
-    const decision = processLLMRound(
-      createFireSessionState(),
-      '收完了没 别收到天亮\n收完了没 别收到天亮\n收完了没 别收到天亮\n12135',
-      build,
-    );
-    expect(decision.decision).toBe('finish');
-    if (decision.decision !== 'finish') return;
-    expect(decision.pushPayloads.map((payload) => payload.message)).toEqual([
-      '收完了没 别收到天亮',
-      '12135',
-    ]);
-  });
-});
-
 describe('processLLMRound — 数据标签 tool-request 与跨轮累积', () => {
   it('RECALL 标签 → tool-request，旁白暂存；下一轮 finish 时旁白排在正文前', () => {
     const state = createFireSessionState();

@@ -41,7 +41,7 @@ import {
 } from '../utils/streamPreview';
 import { ActiveMsgStore } from '../utils/activeMsgStore';
 import { ActiveMsgClient } from '../utils/activeMsgClient';
-import { flushAmsgState, markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
+import { markAmsgStateDirty, startAmsgChatPresence, stopAmsgChatPresence } from '../utils/amsgStateSync';
 import { getLastRealUserMessageAt } from '../utils/amsg2ExpireGuard';
 import { getPendingTasks, hasActiveAiTask, isAmsg2EnabledForChar } from '../utils/amsg2Tasks';
 import { buildAmsg2TaskContextText, collectAmsg2TaskContext } from '../utils/amsg2TaskContext';
@@ -1835,11 +1835,6 @@ export const useChatAI = ({
                 char: { ...char, activeMsg2Config: amsg2Session.getConfig() },
                 userProfile, groups, realtimeConfig,
             });
-            // Switch 可能在几秒后就到点。继续等 10 秒防抖会让 Worker 读到上一轮 fire_pack，
-            // 表现成「主动唤醒回复我的上一条」。聊天轮结束时立即冲刷；失败仍由同步器原有
-            // 的重排/退避接管，不改变一起听或主动唤醒的排程逻辑。
-            await flushAmsgState('chat-round-finished');
-
             // Memory Palace — 后台缓冲区处理（不阻塞 UI，内部有并发锁）
             // 使用全局配置（memoryPalaceConfig）。lightLLM 未配置时回退主 apiConfig；
             // embedding 因端点类型特殊（/embeddings），不做回退，必须显式配置。
