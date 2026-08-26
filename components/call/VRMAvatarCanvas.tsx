@@ -18,7 +18,7 @@ import {
 } from '../../utils/avatarPerformance';
 import type { CallAudioFeed } from '../../utils/callAudioFeed';
 import {
-  normalizeAvatarTouchZone,
+  resolveAvatarTouchTarget,
   type AvatarTouchHit,
   type AvatarTouchRequest,
 } from '../../utils/avatarTouch';
@@ -30,15 +30,21 @@ interface VRMAvatarCanvasProps {
   motionState: AvatarMotionState;
   emotion?: string;
   audioFeed?: CallAudioFeed;
+  /** Absolute runtime lock; used for the whole companion startup utterance. */
+  headMotionLocked?: boolean;
+  /** Companion desktop must not inherit the video-call random pose generator. */
+  ambientAutonomyDisabled?: boolean;
   framing?: AvatarStageFraming;
   /** 用户锚定的脸部特写构图；close/push-in 时镜头直接落到这里。 */
   faceFraming?: AvatarStageFraming;
   performance?: AvatarPerformanceDirection;
   onLoadingChange?: (loading: boolean) => void;
+  onReady?: () => void;
   onError?: (message: string) => void;
   /** 模型加载后回传自定义表情名（预设之外的），供 LLM 以 model_action 调用。 */
   onExpressionsDiscovered?: (names: string[]) => void;
   touchRequest?: AvatarTouchRequest | null;
+  touchImpulseNonce?: number;
   onAvatarTouch?: (hit: AvatarTouchHit) => void;
   maxFps?: number;
 }
@@ -81,26 +87,38 @@ const VRMAvatarCanvas: React.FC<VRMAvatarCanvasProps> = ({
   motionState,
   emotion = 'calm',
   audioFeed,
+  headMotionLocked = false,
+  ambientAutonomyDisabled = false,
   framing = DEFAULT_STAGE_FRAMING,
   faceFraming,
   performance: performanceDirection = DEFAULT_AVATAR_PERFORMANCE,
   onLoadingChange,
+  onReady,
   onError,
   onExpressionsDiscovered,
   touchRequest,
+  touchImpulseNonce,
   onAvatarTouch,
   maxFps,
 }) => {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const audioFeedRef = useRef<CallAudioFeed | undefined>(audioFeed);
+  const headMotionLockedRef = useRef(headMotionLocked);
+  const ambientAutonomyDisabledRef = useRef(ambientAutonomyDisabled);
+  const onReadyRef = useRef(onReady);
   const onExpressionsDiscoveredRef = useRef(onExpressionsDiscovered);
   const onAvatarTouchRef = useRef(onAvatarTouch);
   const touchResolverRef = useRef<((request: AvatarTouchRequest) => void) | null>(null);
+  const touchImpulseNonceRef = useRef(touchImpulseNonce);
   const motionRef = useRef<MotionSnapshot>({ state: motionState, emotion, performance: performanceDirection, framing, faceFraming });
 
   useEffect(() => { audioFeedRef.current = audioFeed; }, [audioFeed]);
+  useEffect(() => { headMotionLockedRef.current = headMotionLocked; }, [headMotionLocked]);
+  useEffect(() => { ambientAutonomyDisabledRef.current = ambientAutonomyDisabled; }, [ambientAutonomyDisabled]);
+  useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
   useEffect(() => { onExpressionsDiscoveredRef.current = onExpressionsDiscovered; }, [onExpressionsDiscovered]);
   useEffect(() => { onAvatarTouchRef.current = onAvatarTouch; }, [onAvatarTouch]);
+  useEffect(() => { touchImpulseNonceRef.current = touchImpulseNonce; }, [touchImpulseNonce]);
   useEffect(() => {
     if (touchRequest) touchResolverRef.current?.(touchRequest);
   }, [touchRequest]);
@@ -123,6 +141,7 @@ const VRMAvatarCanvas: React.FC<VRMAvatarCanvasProps> = ({
     let cameraLookY = 0.82;
     const pointer = { x: 0, y: 0, active: false, lastMoved: 0 };
     const autonomy = new AvatarAutonomy(window.performance.now());
+    let handledTouchImpulseNonce = touchImpulseNonceRef.current;
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(28, 1, 0.01, 20);
     const touchRaycaster = new THREE.Raycaster();
@@ -163,24 +182,44 @@ const VRMAvatarCanvas: React.FC<VRMAvatarCanvasProps> = ({
       const xRatio = (intersection.point.x - bounds.min.x) / Math.max(0.001, size.x);
       const yFromTop = 1 - ((intersection.point.y - bounds.min.y) / size.y);
       const rawAreas: string[] = [];
-      const handDistanceLimit = size.y * 0.16;
-      const leftHand = vrm.humanoid.getNormalizedBoneNode(VRMHumanBoneName.LeftHand);
-      const rightHand = vrm.humanoid.getNormalizedBoneNode(VRMHumanBoneName.RightHand);
-      if (leftHand) {
-        const position = leftHand.getWorldPosition(new THREE.Vector3());
-        if (position.distanceTo(intersection.point) <= handDistanceLimit) rawAreas.push('LeftHand');
+      let object: THREE.Object3D | null = intersection.object;
+      for (let depth = 0; object && depth < 6; depth += 1, object = object.parent) {
+        const name = String(object.name || '').trim();
+        if (name && !rawAreas.includes(name)) rawAreas.push(name);
       }
-      if (rightHand) {
-        const position = rightHand.getWorldPosition(new THREE.Vector3());
-        if (position.distanceTo(intersection.point) <= handDistanceLimit) rawAreas.push('RightHand');
-      }
-      if (!rawAreas.length) {
-        if (yFromTop < 0.28) rawAreas.push(xRatio > 0.24 && xRatio < 0.76 ? 'Face' : 'Head');
-        else rawAreas.push('Body');
-      }
+      const boneAnchors: Array<{ bone: VRMHumanBoneName; label: string; radius: number }> = [
+        { bone: VRMHumanBoneName.LeftHand, label: 'LeftHand', radius: 0.095 },
+        { bone: VRMHumanBoneName.RightHand, label: 'RightHand', radius: 0.095 },
+        { bone: VRMHumanBoneName.LeftLowerArm, label: 'LeftArm', radius: 0.1 },
+        { bone: VRMHumanBoneName.RightLowerArm, label: 'RightArm', radius: 0.1 },
+        { bone: VRMHumanBoneName.LeftUpperArm, label: 'LeftArm', radius: 0.1 },
+        { bone: VRMHumanBoneName.RightUpperArm, label: 'RightArm', radius: 0.1 },
+        { bone: VRMHumanBoneName.LeftShoulder, label: 'LeftShoulder', radius: 0.085 },
+        { bone: VRMHumanBoneName.RightShoulder, label: 'RightShoulder', radius: 0.085 },
+        { bone: VRMHumanBoneName.Head, label: 'Head', radius: 0.16 },
+        { bone: VRMHumanBoneName.UpperChest, label: 'Chest', radius: 0.12 },
+        { bone: VRMHumanBoneName.Chest, label: 'Chest', radius: 0.12 },
+        { bone: VRMHumanBoneName.Spine, label: 'Waist', radius: 0.11 },
+      ];
+      const nearestAnchor = boneAnchors
+        .map(anchor => {
+          const node = vrm.humanoid.getNormalizedBoneNode(anchor.bone);
+          if (!node) return null;
+          const distance = node.getWorldPosition(new THREE.Vector3()).distanceTo(intersection.point) / size.y;
+          return { ...anchor, distance };
+        })
+        .filter((anchor): anchor is NonNullable<typeof anchor> => Boolean(anchor))
+        .filter(anchor => anchor.distance <= anchor.radius)
+        .sort((a, b) => (a.distance / a.radius) - (b.distance / b.radius))[0];
+      if (nearestAnchor && !rawAreas.includes(nearestAnchor.label)) rawAreas.unshift(nearestAnchor.label);
+      const target = resolveAvatarTouchTarget(
+        nearestAnchor ? [nearestAnchor.label] : rawAreas,
+        yFromTop,
+        xRatio,
+      );
       onAvatarTouchRef.current?.({
         ...request,
-        zone: normalizeAvatarTouchZone(rawAreas, yFromTop, xRatio),
+        ...target,
         source: 'vrm-raycast',
         rawAreas,
       });
@@ -251,21 +290,54 @@ const VRMAvatarCanvas: React.FC<VRMAvatarCanvasProps> = ({
 
       if (vrm) {
         const { state, emotion: fallbackEmotion, performance: currentPerformance, framing: userFraming, faceFraming: anchorFraming } = motionRef.current;
+        const headLocked = headMotionLockedRef.current;
+        const suppressesAmbientAutonomy = ambientAutonomyDisabledRef.current;
+        const effectivePerformance = headLocked || suppressesAmbientAutonomy ? {
+          ...currentPerformance,
+          precision: {
+            ...(currentPerformance.precision || {}),
+            lockAutonomy: true,
+            lockHead: headLocked || currentPerformance.precision?.lockHead,
+            headX: 0,
+            headY: 0,
+            headZ: 0,
+            eyeX: currentPerformance.precision?.eyeX ?? 0,
+            eyeY: currentPerformance.precision?.eyeY ?? 0,
+            bodyX: currentPerformance.precision?.bodyX ?? 0,
+            bodyY: currentPerformance.precision?.bodyY ?? 0,
+            bodyZ: currentPerformance.precision?.bodyZ ?? 0,
+            overshoot: 0,
+          },
+        } : currentPerformance;
         const speaking = state === 'speaking';
-        const currentEmotion = currentPerformance.emotion || fallbackEmotion;
-        const gesture = currentPerformance.gesture;
-        const intensity = Math.max(0.2, Math.min(1, currentPerformance.intensity));
+        const currentEmotion = effectivePerformance.emotion || fallbackEmotion;
+        const gesture = effectivePerformance.gesture;
+        const intensity = Math.max(0.2, Math.min(1, effectivePerformance.intensity));
         const frameNow = window.performance.now();
+        const touchNonce = touchImpulseNonceRef.current;
+        if (touchNonce !== undefined && touchNonce !== handledTouchImpulseNonce) {
+          handledTouchImpulseNonce = touchNonce;
+          autonomy.triggerTouchReaction(effectivePerformance, state, frameNow);
+          host.dataset.avatarTouchImpulse = String(touchNonce);
+        }
         // Sample once per render frame: the same live signal drives both visemes
         // and emphasis beats, keeping head/hands synchronized with the voice.
         const lip = audioFeedRef.current?.sample(frameNow);
-        const frame = autonomy.step(
+        const autonomyFrame = autonomy.step(
           frameNow,
-          currentPerformance,
+          effectivePerformance,
           state,
           pointer,
           speaking && lip?.active ? lip.level : undefined,
         );
+        const frame = headLocked ? {
+          ...autonomyFrame,
+          headX: 0,
+          headY: 0,
+          headZ: 0,
+          rotation: 0,
+          speechAccent: 0,
+        } : autonomyFrame;
         const breath = frame.breath * 2 - 1;
         const blend = 1 - Math.exp(-delta * 7.5);
         // 姿态低频、变了才写；逐帧变化的眨眼调试值只在 dev 面板可用时写 DOM。
@@ -280,15 +352,17 @@ const VRMAvatarCanvas: React.FC<VRMAvatarCanvasProps> = ({
           + breath * avatarHeight * 0.0015
           + frame.lift * avatarHeight * 0.08;
         vrm.scene.position.z = modelBasePositionZ + frame.lean * avatarHeight * 0.12;
-        vrm.scene.rotation.y = modelBaseRotationY + frame.bodyX * 0.018 + frame.rotation;
+        vrm.scene.rotation.y = headLocked
+          ? modelBaseRotationY
+          : modelBaseRotationY + frame.bodyX * 0.018 + frame.rotation;
 
         // Autonomy uses normalized tracker coordinates (horizontal, vertical,
         // roll). Convert them once here to humanoid Euler rotations.
-        const headX = -frame.headY * 0.24;
-        const headY = frame.headX * 0.3;
-        const headZ = -frame.headZ * 0.18;
-        setBone(vrm, VRMHumanBoneName.Head, headX, headY, headZ, blend);
-        setBone(vrm, VRMHumanBoneName.Neck, headX * 0.25, headY * 0.22, headZ * 0.25, blend);
+        const headX = headLocked ? 0 : -frame.headY * 0.24;
+        const headY = headLocked ? 0 : frame.headX * 0.3;
+        const headZ = headLocked ? 0 : -frame.headZ * 0.18;
+        setBone(vrm, VRMHumanBoneName.Head, headX, headY, headZ, headLocked ? 1 : blend);
+        setBone(vrm, VRMHumanBoneName.Neck, headX * 0.25, headY * 0.22, headZ * 0.25, headLocked ? 1 : blend);
         setBone(vrm, VRMHumanBoneName.Chest, -frame.bodyY * 0.075 + breath * 0.003, frame.bodyX * 0.1, -frame.bodyZ * 0.06, blend * 0.65);
         setBone(vrm, VRMHumanBoneName.Spine, -frame.bodyY * 0.035 + breath * 0.0015, frame.bodyX * 0.04, -frame.bodyZ * 0.025, blend * 0.5);
 
@@ -417,8 +491,16 @@ const VRMAvatarCanvas: React.FC<VRMAvatarCanvasProps> = ({
         // 用户锚定过脸部时，特写镜头直接落到锚点构图——不再按"身高的 84%"
         // 这类启发式猜脸的位置（Q版/戴帽/比例特殊的模型会飘出画面）。
         const anchored = closeShot && anchorFraming ? anchorFraming : null;
+        // Companion touches must not replace the user's desktop composition
+        // with a one-size-fits-all full-body close-up. A saved face anchor is
+        // the only close-shot position allowed on the always-on desktop.
+        const suppressUnanchoredCloseShot = closeShot
+          && ambientAutonomyDisabledRef.current
+          && !anchored;
         const cameraZFactor = anchored
           ? 0.7
+          : suppressUnanchoredCloseShot
+            ? 0.7
           : closeShot
             ? 0.57
             : currentPerformance.camera === 'wide' || currentPerformance.camera === 'pull-out'
@@ -428,6 +510,8 @@ const VRMAvatarCanvas: React.FC<VRMAvatarCanvasProps> = ({
         // 引起的上下跳动要尽量轻，拉近拉远主要靠距离（Z）表达。
         const cameraYFactor = anchored
           ? 0.82
+          : suppressUnanchoredCloseShot
+            ? 0.82
           : closeShot
             ? 0.84
             : currentPerformance.camera === 'wide' || currentPerformance.camera === 'pull-out'
@@ -501,6 +585,7 @@ const VRMAvatarCanvas: React.FC<VRMAvatarCanvasProps> = ({
         } catch { /* 表情枚举失败不影响渲染 */ }
 
         onLoadingChange?.(false);
+        onReadyRef.current?.();
       },
       undefined,
       error => {

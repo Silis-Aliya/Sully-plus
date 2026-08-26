@@ -1,20 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import TokenImg from '../components/os/TokenImg';
-import { Microphone, SpeakerHigh, SpeakerSlash, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretDown, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Check, Moon, Sun } from '@phosphor-icons/react';
+import { Microphone, SpeakerHigh, SpeakerSlash, PhoneDisconnect, Translate, Gear, Clock, CaretLeft, CaretRight, Phone, VideoCamera, VideoCameraSlash, Cube, FolderOpen, FileZip, Moon, Sun, Check } from '@phosphor-icons/react';
 import { useOS } from '../context/OSContext';
 import { extractContent, safeFetchJson } from '../utils/safeApi';
 import { minimaxFetch } from '../utils/minimaxEndpoint';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
-import { hashTtsParams, getCachedTts, saveCachedTts } from '../utils/ttsCache';
-import { cleanTextForTts, insertSpeechBreaks, convertHexAudioToBlob, fetchRemoteAudioBlob, VALID_EMOTIONS, stripEmotionTags, VOICE_ACTING_GUIDE, cleanVoiceMarkupForDisplay } from '../utils/minimaxTts';
+import { getCachedTts, saveCachedTts } from '../utils/ttsCache';
+import { buildMiniMaxTtsCacheKey, buildMiniMaxTtsPayload, cleanTextForTts, convertHexAudioToBlob, fetchRemoteAudioBlob, getMiniMaxParamVersion, prepareMiniMaxSpeechText, VALID_EMOTIONS, stripEmotionTags, VOICE_ACTING_GUIDE } from '../utils/minimaxTts';
 import { normalizeVoiceTags } from '../utils/sanitize';
-import { FISH_VOICE_ACTING_GUIDE, synthesizeSpeechFishDetailed, resolveFishAudioApiKey, cleanTextForTtsFish, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
-import { resolveTtsProvider, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
+import { FISH_VOICE_ACTING_GUIDE, stripFishMarkupForDisplay } from '../utils/fishAudioTts';
+import { resolveTtsProvider, getElevenLabsModel, getTtsProvider, getVoicePromptOverride } from '../utils/ttsProvider';
+import { getElevenLabsVoiceActingGuide, stripElevenLabsMarkupForDisplay } from '../utils/elevenLabsTts';
+import { canSynthesizeSpeech, stripTtsMarkupForDisplay, synthesizeSpeechDetailed as synthesizeSpeechRoutedDetailed } from '../utils/ttsRouter';
 import { VOICE_LANGUAGE_OPTIONS } from '../utils/voiceLanguage';
 import { startStt, isSttSupported, type SttSession } from '../utils/speechToText';
 import { ContextBuilder } from '../utils/context';
 import { resolveCharTimeZone } from '../utils/timezone';
-import { getVideoCallBackgroundPreset, resolveVideoCallBackground, resolveVideoCallBackgroundPeriod, resolveVideoCallForeground, resolveVideoCallForegroundPlacement, type VideoCallBackgroundPeriod, type VideoCallBackgroundSegmentCount } from '../utils/videoCallBackground';
 import {
   injectMemoryPalace,
 } from '../utils/memoryPalace/pipeline';
@@ -31,6 +31,8 @@ import Live2DActionSettings from '../components/call/Live2DActionSettings';
 import VRoidBetaWarning from '../components/call/VRoidBetaWarning';
 import UserCameraModePicker, { type UserCameraMode } from '../components/call/UserCameraModePicker';
 import CallSetupGuide, { type CallSetupGuideStep } from '../components/call/CallSetupGuide';
+import CallPreferencesSheet from '../components/call/CallPreferencesSheet';
+import CallUpdateAnnouncement from '../components/call/CallUpdateAnnouncement';
 import { deleteAvatarModel, inspectAvatarFile, saveAvatarModel } from '../utils/avatarModelStore';
 import { getLive2DAIActions, prewarmLive2DModelSource, saveLive2DModelFromFiles, saveLive2DModelFromZip, upgradeLive2DAutoPermissions, type Live2DAvatarConfig } from '../utils/live2dModelStore';
 import { preloadLive2DRuntime } from '../utils/live2dCore';
@@ -61,7 +63,14 @@ import {
   parseAvatarPerformanceRehearsal,
   splitAvatarPerformanceSentences,
 } from '../utils/avatarPerformanceRehearsal';
-import { CallAudioFeed } from '../utils/callAudioFeed';
+import { CallAudioFeed, shouldKeepNativeCallAudio } from '../utils/callAudioFeed';
+import {
+  loadCallPreferences,
+  markCallUpdateAnnouncementSeen,
+  saveCallPreferences,
+  shouldShowCallUpdateAnnouncement,
+  type CallPreferences,
+} from '../utils/callPreferences';
 import {
   appendPendingAvatarTouch,
   avatarTouchTargetLabel,
@@ -74,10 +83,11 @@ import {
   type AvatarTouchHit,
   type AvatarTouchRecord,
 } from '../utils/avatarTouch';
-import { dataUrlToBlob, deleteBlobRefIfUnreferenced, isBlobRef, putImageBlob, useBlobRefUrl } from '../utils/blobRef';
+import { dataUrlToBlob, deleteBlobRef, isBlobRef, putImageBlob, useBlobRefUrl } from '../utils/blobRef';
+import TokenImg from '../components/os/TokenImg';
 import { CALL_LIGHT_THEME_CSS } from '../components/call/callLightTheme';
 import AvatarTouchFeedback, { type AvatarTouchEffect } from '../components/call/AvatarTouchFeedback';
-import { createBuiltinSullyLive2DConfig, isBuiltinSullyLive2D, setBuiltinSullyLive2DQuality, type BuiltinSullyLive2DQuality } from '../utils/builtinSullyLive2D';
+import { isBuiltinSullyLive2D, setBuiltinSullyLive2DQuality, type BuiltinSullyLive2DQuality } from '../utils/builtinSullyLive2D';
 import {
   buildUserCameraEmotionPrompt,
   detectUserCameraEmotion,
@@ -146,6 +156,9 @@ const VIDEO_CALL_LAYOUT_KEY = 'sully-call-video-layout-v1';
 const FAKE_USER_CAMERA_IMAGE_KEY = 'sully-call-fake-camera-image-v1';
 const USER_CAMERA_PREVIEW_SIZE_KEY = 'sully-call-camera-preview-size-v1';
 const CALL_SETUP_GUIDE_KEY = 'sully-call-setup-guide-v2';
+// Four 8-bit PCM silent samples. Playing this exact call audio element from the
+// user's “接通” gesture primes iOS media playback before the async TTS response arrives.
+const SILENT_CALL_AUDIO_DATA_URL = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA';
 const VIDEO_CALL_LAYOUTS: Array<{ id: VideoCallLayout; name: string; hint: string }> = [
   { id: 'stage', name: '沉浸', hint: '角色最大，聊天收成字幕' },
   { id: 'story', name: '剧情', hint: '角色与完整对话均衡展示' },
@@ -294,26 +307,6 @@ const extractVoiceTag = (text: string): { display: string; speech: string; voice
   const display = text.replace(/<[语語]音[^>]*>[\s\S]*?<\/\s*[语語]音\s*>/g, '').trim();
   return { display, speech: voiceText, voiceText, emotion };
 };
-// Derive the shared TTS cache key from the MiniMax payload. Must match the
-// key used by `synthesizeSpeechDetailed` so chat/date/call can reuse each
-// other's cached audio when the effective request matches.
-const ttsCacheKeyFromPayload = (payload: any): string => hashTtsParams({
-  kind: 'minimax-t2a',
-  text: payload.text,
-  model: payload.model,
-  voice_setting: payload.voice_setting,
-  timber_weights: payload.timber_weights,
-  voice_modify: payload.voice_modify,
-  language_boost: payload.language_boost,
-  audio_setting: payload.audio_setting,
-});
-
-// A tiny valid PCM WAV. Playing it from a real user gesture primes the same
-// media element that later receives the asynchronously generated TTS URL.
-// This is especially important in iOS standalone PWAs, where the eventual
-// play() call happens long after the original tap and is otherwise treated as
-// unsolicited autoplay.
-const CALL_AUDIO_UNLOCK_SRC = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQQAAACAgICA';
 const splitTextForTts = (rawText: string, maxChunkLen = 120): string[] => {
   const normalized = rawText.replace(/\s+/g, ' ').trim();
   if (!normalized) return [];
@@ -361,11 +354,29 @@ const SoundWaveGlyph = () => (
     ))}
   </span>
 );
+const currentVoiceActingGuide = (): string => {
+  const provider = getTtsProvider();
+  const custom = getVoicePromptOverride(provider);
+  if (custom) return custom;
+  if (provider === 'fishaudio') return FISH_VOICE_ACTING_GUIDE;
+  if (provider === 'elevenlabs') return getElevenLabsVoiceActingGuide(getElevenLabsModel());
+  return VOICE_ACTING_GUIDE;
+};
+
+const cleanCurrentVoiceMarkupForDisplay = (text?: string | null): string => {
+  if (!text) return '';
+  const provider = getTtsProvider();
+  if (provider === 'fishaudio') return stripFishMarkupForDisplay(text);
+  if (provider === 'elevenlabs') return stripElevenLabsMarkupForDisplay(text);
+  // MiniMax 的 (sighs)/(chuckle) 会在 renderAssistantLine 里渲染成声音动作图标，不能提前剥掉。
+  return text;
+};
+
 const renderAssistantLine = (text: string, accent = '#8b5cf6') => {
   // 朗读用的停顿标记 <#0.4#> 不显示出来
   let trimmed = text.replace(/<#[\d.]+#>/g, '').trim();
   // 鱼声的 inline cue（[whispering]/[break] 等）是演出指令，不该显示给用户。
-  if (getTtsProvider() === 'fishaudio') trimmed = stripFishMarkupForDisplay(trimmed);
+  trimmed = cleanCurrentVoiceMarkupForDisplay(trimmed);
   // 按 中文舞台指示（…）、英文语气词标签 (sighs)、换行 切分，前两者作为特殊元素渲染
   const parts = trimmed.split(SOUND_TAG_SPLIT_RE).filter(Boolean);
   return parts.map((part, idx) => {
@@ -440,7 +451,7 @@ const buildCallPrompt = (
 ✅ 要这样——有自己的节奏，像真人一样不完美：
 “嘶……你刚说的那个，等一下。”
 “……好吧确实挺离谱的。”
-“(chuckle) 我刚差点把咖啡洒了，你别逗我。”
+"……我刚差点把咖啡洒了，你别逗我。"
 “说真的，今天有件事我还挺想跟你说的——但你先说完你那个。”
 
 ### 你能感受到对方
@@ -462,21 +473,9 @@ const buildCallPrompt = (
 
 ### 让声音有情绪（重要——直接写进文本，不要靠旁白）
 
-你的话会被转成真实语音，所以**情绪和语气要由你自己标出来**，不要写中文舞台指示（系统不会朗读它们，只会被删掉）。两种工具：
+你的话会被转成真实语音。不同引擎识别的演出标记不同，严格遵守下面这份**当前引擎规则**；不要混用别家的标签，也不要写会被念出来的小说旁白。
 
-1) **整段情绪**（可选，最多一个）：如果这通回复整体有明显情绪，**只在整段回复的最最开头**放一个标签，从这些里选一个：
-\`[happy] [sad] [angry] [fearful] [disgusted] [surprised] [calm] [fluent]\`
-   例：\`[angry] 你昨晚十二点半还喝咖啡？不要命了是吧。\`
-   **铁律**：整段回复最多一个，且必须在最开头。**绝对不要每段都标、不要标在句子中间、不要标在第二段以后**——放错位置只会被删掉、还会让声音忽高忽低。情绪不强就别标。
-
-2) **句中语气声**（要克制）：偶尔想要笑、叹气这种真实反应，直接写官方英文标签（**别写中文的（轻笑）（叹气）**）：
-\`(chuckle) (laughs) (sighs) (coughs) (groans) (breath) (pant) (gasps) (sniffs) (snorts) (hissing) (emm)\`
-   例：\`(sighs) 算了，听你的。\`
-   **整段回复里这种标签最多一两个**，多了声音会飘、很假。
-
-注意：不要写小说式中文旁白，如”（我靠在椅背上，目光看向远方）”——会被直接删掉，等于白写。
-
-${getVoicePromptOverride(getTtsProvider()) ?? (getTtsProvider() === 'fishaudio' ? FISH_VOICE_ACTING_GUIDE : VOICE_ACTING_GUIDE)}
+${currentVoiceActingGuide()}
 
 ### 历史消息的来源标记（重要）
 
@@ -497,14 +496,14 @@ ${getVoicePromptOverride(getTtsProvider()) ?? (getTtsProvider() === 'fishaudio' 
 
 示例：
 啊，我知道了
-<语音 emotion="happy">Ok, I get it (chuckle)</语音>
+<语音 emotion="happy">Okay, I get it now!</语音>
 
 你说真的？那也太离谱了吧。
 <语音 emotion="surprised">Wait... are you serious? That's insane.</语音>
 
 要求：
 - <语音> 里的翻译要自然口语化，不要机翻味，要符合你的角色性格
-- <语音> 里只写会被朗读的文字；想要笑/叹气等真实语气，用官方英文标签 (laughs)/(sighs)/(chuckle) 等，**不要写中文（轻笑）**，也不要写中文舞台旁白
+- <语音> 里只写会被朗读的文字；演出标记继续遵守上方「当前引擎规则」，不要混用其它引擎语法，也不要写中文舞台旁白
 - 每条消息只有一个 <语音> 标签，emotion 属性可选；情绪不强就别加
 - 中文部分和 <语音> 部分表达的意思要一致` : '';
   return [coreContext, timeContext, callPrompt, voiceLangPrompt].filter(Boolean).join('\n\n');
@@ -514,29 +513,28 @@ const CallApp: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<ViewMode>('role-select');
   const [selectedCharId, setSelectedCharId] = useState<string>(activeCharacterId || characters[0]?.id || '');
-  const [pendingDirectCallCharId, setPendingDirectCallCharId] = useState('');
+  const ROLES_PER_PAGE = 6;
   const [roleGroupId, setRoleGroupId] = useState<string>(GROUP_FILTER_ALL); // 选人页的分组筛选
+  const [rolePage, setRolePage] = useState<number>(() => {
+    const i = characters.findIndex(c => c.id === (activeCharacterId || characters[0]?.id));
+    return i > 0 ? Math.floor(i / 6) : 0;
+  });
   const [recordDetailId, setRecordDetailId] = useState<string>('');
   const [callState, setCallState] = useState<CallState>('idle');
   const [callMode, setCallMode] = useState<CallMode>(() => {
     try { return localStorage.getItem('sully-call-mode-v1') === 'video' ? 'video' : 'voice'; }
     catch { return 'voice'; }
   });
+  const [callPreferences, setCallPreferences] = useState<CallPreferences>(loadCallPreferences);
+  const [showCallPreferences, setShowCallPreferences] = useState(false);
+  const [showCallUpdateAnnouncement, setShowCallUpdateAnnouncement] = useState(shouldShowCallUpdateAnnouncement);
+  useEffect(() => saveCallPreferences(callPreferences), [callPreferences]);
   // 电话 App 独立的浅色主题偏好（覆盖选人页/通话中/视频/记录页）
   const [callTheme, setCallTheme] = useState<'dark' | 'light'>(() => {
-    try {
-      // Soft Modern UI 首次上线时统一迁到冷灰蓝浅色皮肤；之后仍允许用户自行切换。
-      if (!localStorage.getItem('sully-call-soft-modern-v1')) {
-        localStorage.setItem('sully-call-soft-modern-v1', '1');
-        localStorage.setItem('sully-call-theme-v1', 'light');
-        return 'light';
-      }
-      return localStorage.getItem('sully-call-theme-v1') === 'dark' ? 'dark' : 'light';
-    }
-    catch { return 'light'; }
+    try { return localStorage.getItem('sully-call-theme-v1') === 'light' ? 'light' : 'dark'; }
+    catch { return 'dark'; }
   });
   const lightTheme = callTheme === 'light';
-  const toggleCallTheme = () => setCallTheme(theme => theme === 'light' ? 'dark' : 'light');
   useEffect(() => {
     try { localStorage.setItem('sully-call-theme-v1', callTheme); } catch { /* localStorage may be unavailable */ }
   }, [callTheme]);
@@ -550,9 +548,6 @@ const CallApp: React.FC = () => {
   const sttSessionRef = useRef<SttSession | null>(null);
   const sttSupported = useMemo(() => isSttSupported(), []);
   const [audioUrl, setAudioUrl] = useState<string>('');
-  const [voiceFavoriteTarget, setVoiceFavoriteTarget] = useState<CallBubble | null>(null);
-  const [voiceFavoriteSaved, setVoiceFavoriteSaved] = useState(false);
-  const [voiceFavoriteBusy, setVoiceFavoriteBusy] = useState(false);
   const [traceId, setTraceId] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isSpeakerOn, setIsSpeakerOn] = useState(true);
@@ -563,6 +558,10 @@ const CallApp: React.FC = () => {
   const [editingBubble, setEditingBubble] = useState<CallBubble | null>(null);
   const [editingText, setEditingText] = useState('');
   const [rerollingBubbleId, setRerollingBubbleId] = useState<string | null>(null);
+  const [generatingAudioBubbleId, setGeneratingAudioBubbleId] = useState<string | null>(null);
+  const [voiceFavoriteTarget, setVoiceFavoriteTarget] = useState<{ bubble: CallBubble; charId: string; charName: string } | null>(null);
+  const [voiceFavoriteSaved, setVoiceFavoriteSaved] = useState(false);
+  const [voiceFavoriteBusy, setVoiceFavoriteBusy] = useState(false);
   const [showHangupConfirm, setShowHangupConfirm] = useState(false);
   const [deleteConfirmRecord, setDeleteConfirmRecord] = useState<CallRecord | null>(null);
   const [voiceLang, setVoiceLang] = useState('');
@@ -572,7 +571,6 @@ const CallApp: React.FC = () => {
   const [live2DWardrobeOnboarding, setLive2DWardrobeOnboarding] = useState(false);
   const [showCallSetupGuide, setShowCallSetupGuide] = useState(false);
   const [callSetupGuideStep, setCallSetupGuideStep] = useState<CallSetupGuideStep>('model');
-  const [callSetupGuideSettingsMode, setCallSetupGuideSettingsMode] = useState(false);
   const [setupCameraMode, setSetupCameraMode] = useState<UserCameraMode>('off');
   const [avatarImportStatus, setAvatarImportStatus] = useState('');
   const [pendingVRoidImport, setPendingVRoidImport] = useState<PendingVRoidImport | null>(null);
@@ -591,17 +589,19 @@ const CallApp: React.FC = () => {
   const [detectedUserEmotion, setDetectedUserEmotion] = useState<(UserCameraEmotionResult & { nonce: number }) | null>(null);
   const [showBgPicker, setShowBgPicker] = useState(false);
   const [bgUrlInput, setBgUrlInput] = useState('');
-  const [bgScheduleUrlInputs, setBgScheduleUrlInputs] = useState<Partial<Record<VideoCallBackgroundPeriod, string>>>({});
-  const [expandedBackgroundPeriod, setExpandedBackgroundPeriod] = useState<VideoCallBackgroundPeriod | null>(null);
-  const [stageLayerPicker, setStageLayerPicker] = useState<'background' | 'foreground'>('background');
-  const [foregroundEditing, setForegroundEditing] = useState(false);
-  const [foregroundEditingPeriod, setForegroundEditingPeriod] = useState<VideoCallBackgroundPeriod | null>(null);
-  const [stageClock, setStageClock] = useState(() => Date.now());
   const [videoCallLayout, setVideoCallLayout] = useState<VideoCallLayout>(loadVideoCallLayout);
   const [userCameraPreviewSize, setUserCameraPreviewSize] = useState<UserCameraPreviewSize>(loadUserCameraPreviewSize);
   const [videoTranscriptExpanded, setVideoTranscriptExpanded] = useState(false);
+  // Keep one audio element alive across role picker / history / active call views.
+  // iOS media permission can be element-scoped, so remounting a JSX audio node after
+  // the user taps “接通” would throw away the element that was just unlocked.
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const callAudioUnlockedRef = useRef(false);
+  if (!audioRef.current && typeof Audio !== 'undefined') {
+    audioRef.current = new Audio();
+    audioRef.current.preload = 'auto';
+  }
+  const audioPrimingRef = useRef(false);
+  const nativeCallAudioOnly = useMemo(() => shouldKeepNativeCallAudio(), []);
   const userCameraVideoRef = useRef<HTMLVideoElement | null>(null);
   const userCameraStreamRef = useRef<MediaStream | null>(null);
   const userCameraRequestRef = useRef(0);
@@ -822,7 +822,9 @@ const CallApp: React.FC = () => {
     sessionBlobUrlsRef.current.clear();
   };
   const longPressTimerRef = useRef<number | null>(null);
+  const callLongPressTriggeredRef = useRef(false);
   const callTouchStartPos = useRef({ x: 0, y: 0 });
+  const idleNudgeCountRef = useRef(0);
   // VRM 模型的自定义表情名（加载时由画布回传），喂给基础版主模型或高质量导演。
   const vrmExpressionsRef = useRef<string[]>([]);
   const selectedChar = useMemo(() => characters.find(c => c.id === selectedCharId) || null, [characters, selectedCharId]);
@@ -897,10 +899,10 @@ const CallApp: React.FC = () => {
   }, [callMode]);
 
   useEffect(() => {
-    const feed = getAudioFeed();
-    if (isAudioPlaying && audioRef.current) feed.attach(audioRef.current);
-    feed.setActive(isAudioPlaying);
-  }, [isAudioPlaying]);
+    // The analyser is a video-only enhancement. Voice calls stay entirely on the
+    // browser's native audio path, and iOS always uses the synthetic lip fallback.
+    audioFeedRef.current?.setActive(callMode === 'video' && isAudioPlaying);
+  }, [callMode, isAudioPlaying]);
 
   useEffect(() => () => {
     audioFeedRef.current?.dispose();
@@ -1203,105 +1205,47 @@ const CallApp: React.FC = () => {
     setVoiceLang(selectedChar?.callVoiceLang || '');
   }, [selectedCharId]);
   const resolveVoiceId = () => selectedChar?.voiceProfile?.voiceId?.trim() || '';
-  const resolveModel = () => selectedChar?.voiceProfile?.model?.trim() || 'speech-2.8-hd';
   const resolveGroupId = () => (apiConfig.minimaxGroupId || '').trim();
-  const buildTtsExtras = () => {
-    const vp = selectedChar?.voiceProfile;
-    if (!vp) return {};
-    const extras: any = {};
-    const tw = vp.timberWeights;
-    if (tw && tw.length > 1) {
-      extras.timber_weights = (() => {
-        const totalWeight = tw.reduce((sum: number, t: any) => sum + (t.weight || 0), 0);
-        if (totalWeight === 0) return tw.map((t: any) => ({ voice_id: t.voice_id, weight: Math.round(100 / tw.length) }));
-        const raw = tw.map((t: any) => ({ voice_id: t.voice_id, weight: Math.round((t.weight / totalWeight) * 100) }));
-        const diff = 100 - raw.reduce((s: number, r: any) => s + r.weight, 0);
-        if (diff !== 0) raw[0].weight += diff;
-        return raw;
-      })();
-    }
-    if (vp.voiceModify) {
-      const vm: any = {};
-      // Soft-clamp voice_modify to prevent extreme spikes during excited speech
-      const sc = (v: number, limit: number) => {
-        if (Math.abs(v) <= limit) return v;
-        const sign = v > 0 ? 1 : -1;
-        return sign * (limit + Math.log1p(Math.abs(v) - limit) * (limit * 0.15));
-      };
-      if (vp.voiceModify.pitch) vm.pitch = Math.round(sc(vp.voiceModify.pitch, 40));
-      if (vp.voiceModify.intensity) vm.intensity = Math.round(sc(vp.voiceModify.intensity, 30));
-      if (vp.voiceModify.timbre) vm.timbre = Math.round(sc(vp.voiceModify.timbre, 40));
-      if (vp.voiceModify.sound_effects) vm.sound_effects = vp.voiceModify.sound_effects;
-      if (Object.keys(vm).length) extras.voice_modify = vm;
-    }
-    return extras;
-  };
-  const resolveVoiceSettingFields = (emotionOverride?: string) => {
-    const vp = selectedChar?.voiceProfile;
-    // Per-utterance emotion from <语音 emotion="…"> wins over the static voiceProfile emotion.
-    const emotion = (emotionOverride && VALID_EMOTIONS.has(emotionOverride)) ? emotionOverride : (vp?.emotion || '');
-    return {
-      // Clamp speed & pitch to safe human-like ranges
-      speed: Math.max(0.75, Math.min(1.4, vp?.speed ?? 1)),
-      vol: Math.max(0.3, Math.min(2, vp?.vol ?? 1)),
-      pitch: Math.max(-8, Math.min(8, vp?.pitch ?? 0)),
-      english_normalization: true,
-      ...(emotion ? { emotion } : {}),
-    };
-  };
-  // ── TTS 服务商分发：电话语音也支持 MiniMax ↔ 鱼声二选一 ──
-  const isFishTts = resolveTtsProvider(apiConfig) === 'fishaudio';
+  // ── TTS 服务商分发：MiniMax 保留电话专用分段兜底；Fish / ElevenLabs 走共享适配器。 ──
+  const activeTtsProvider = resolveTtsProvider(apiConfig);
   // 当前服务商下，这个角色能否合成语音（决定要不要走 TTS / 给"语音未配置"提示）。
-  const canSpeakVoice = (): boolean => {
-    if (!isSpeakerOn) return false;
-    if (isFishTts) {
-      return !!resolveFishAudioApiKey(apiConfig) && !!selectedChar?.voiceProfile?.fishReferenceId;
-    }
-    const voiceId = resolveVoiceId();
-    const hasTimber = (selectedChar?.voiceProfile?.timberWeights?.length || 0) > 1;
-    return !!resolveMiniMaxApiKey(apiConfig) && (!!voiceId || hasTimber);
+  const hasConfiguredVoice = (): boolean => {
+    return !!selectedChar && canSynthesizeSpeech(selectedChar, apiConfig);
   };
-  // 鱼声合成：直接把（带 inline cue 的）文本交给鱼声合成器，由 cleanTextForTtsFish 做
-  // 鱼声专属清洗——保留 [happy]/[whispering]/[break] 等 cue，只清系统标记 / <#秒#> 残留。
-  // 绝不能先走 MiniMax 的 cleanTextForTts，那会把方括号 cue 全剥掉。
-  const synthesizeFishCallUrl = async (rawText: string, emotion?: string): Promise<string> => {
-    if (!selectedChar) throw new Error('未选择角色');
-    if (!cleanTextForTtsFish(rawText).trim()) throw new Error('可朗读文本为空');
-    const { url } = await synthesizeSpeechFishDetailed(rawText, selectedChar, apiConfig, {
-      languageBoost: voiceLang || undefined,
-      emotion,
-    });
-    return url;
-  };
+  const canSpeakVoice = (): boolean => isSpeakerOn && hasConfiguredVoice();
   // ── 通话语音合成统一入口：开场白 / 正常回合 / 重roll / 主动开口共用 ──
-  // MiniMax：缓存命中 → 单发合成 → 失败再分段兜底；鱼声：直接合成。
+  // MiniMax：缓存命中 → 单发合成 → 失败再分段兜底；Fish / ElevenLabs：共享 router 直接合成。
   // 抛错或返回空 url 都表示没有可播放音频，由调用方降级为纯文字。
   const synthesizeCallAudioUrl = async (rawText: string, emotion?: string): Promise<{ url: string; traceIds: string[] }> => {
-    if (isFishTts) {
-      const fishUrl = await synthesizeFishCallUrl(rawText, emotion);
-      return { url: fishUrl || '', traceIds: [] };
+    if (activeTtsProvider !== 'minimax') {
+      if (!selectedChar) throw new Error('未选择角色');
+      const { url } = await synthesizeSpeechRoutedDetailed(rawText, selectedChar, apiConfig, {
+        languageBoost: voiceLang || undefined,
+        emotion,
+      });
+      return { url: url || '', traceIds: [] };
     }
     const minimaxApiKey = resolveMiniMaxApiKey(apiConfig);
     const voiceId = resolveVoiceId();
     const groupId = resolveGroupId();
-    const speechText = insertSpeechBreaks(cleanTextForTts(rawText));
-    const model = resolveModel();
+    const voiceProfile = selectedChar?.voiceProfile;
+    const paramVersion = getMiniMaxParamVersion(voiceProfile);
+    const speechText = prepareMiniMaxSpeechText(cleanTextForTts(rawText), voiceProfile);
+    const model = voiceProfile?.model?.trim() || 'speech-2.8-hd';
     if (!speechText.trim()) throw new Error('可朗读文本为空');
 
     const synthesizeChunk = async (chunk: string, idx = 0, total = 1): Promise<{ blob?: Blob; remoteUrl?: string; traceId: string }> => {
-      const ttsPayload: any = {
+      const ttsPayload = buildMiniMaxTtsPayload(chunk, voiceProfile, {
+        voiceId,
         model,
-        text: chunk,
-        stream: false,
-        output_format: 'url',
-        voice_setting: { voice_id: voiceId, ...resolveVoiceSettingFields(emotion) },
-        audio_setting: { format: 'mp3', sample_rate: 32000, bitrate: 128000, channel: 1 },
-        ...(voiceLang ? { language_boost: voiceLang } : {}),
-        ...buildTtsExtras(),
-      };
-      if (groupId) ttsPayload.group_id = groupId;
+        emotion,
+        languageBoost: voiceLang || undefined,
+        groupId: groupId || undefined,
+        legacyTransport: 'call',
+        textAlreadyPrepared: true,
+      });
 
-      const chunkCacheKey = ttsCacheKeyFromPayload(ttsPayload);
+      const chunkCacheKey = buildMiniMaxTtsCacheKey(ttsPayload, paramVersion);
       const cachedChunk = await getCachedTts(chunkCacheKey);
       if (cachedChunk) {
         return { blob: cachedChunk, traceId: 'cache' };
@@ -1362,6 +1306,7 @@ const CallApp: React.FC = () => {
       model,
       voice_id: voiceId,
       group_id: groupId,
+      param_version: paramVersion,
       assistant_text_length: rawText.length,
       speech_text_length: speechText.length,
       speech_text_preview: speechText.slice(0, 120),
@@ -1407,7 +1352,7 @@ const CallApp: React.FC = () => {
   };
   const callAudioPrefetchKey = (rawText: string, emotion?: string) => `${emotion || ''}\u0000${rawText}`;
   const prefetchCallAudio = (rawText: string, emotion?: string) => {
-    if (!canSpeakVoice()) return;
+    if (!callPreferences.voiceAutoPlay || !canSpeakVoice()) return;
     const key = callAudioPrefetchKey(rawText, emotion);
     if (prefetchedCallAudioRef.current.has(key)) return;
     // A call normally has one pending reply. Bound the map defensively so abandoned
@@ -1499,44 +1444,6 @@ const CallApp: React.FC = () => {
       addToast('语音文件已失效或无法读取，请重新生成后再下载', 'error');
     }
   };
-
-  const chooseBuiltinSullyAvatar = () => {
-    if (!selectedChar) return;
-    const quality = selectedBuiltinSullyAvatar?.builtinQuality || 'balanced';
-    updateCharacter(selectedChar.id, {
-      videoAvatar: createBuiltinSullyLive2DConfig(quality),
-      companionAvatar: { version: 1, ...selectedChar.companionAvatar, source: 'model' },
-    });
-    setCallMode('video');
-    addToast('已切换到 Sully 默认内置模型', 'success');
-  };
-  const callFavoriteKey = (bubble: CallBubble) => `${currentSessionId}:${bubble.id}`;
-  const openCallVoiceFavorite = async (bubble: CallBubble) => {
-    setVoiceFavoriteTarget(bubble);
-    setVoiceFavoriteSaved(!!(await getVoiceFavorite('call', callFavoriteKey(bubble))));
-  };
-  const toggleCallVoiceFavorite = async () => {
-    const bubble = voiceFavoriteTarget;
-    if (!bubble?.audioUrl || !selectedChar) return;
-    setVoiceFavoriteBusy(true);
-    try {
-      const sourceKey = callFavoriteKey(bubble);
-      if (voiceFavoriteSaved) {
-        await removeVoiceFavorite('call', sourceKey);
-        setVoiceFavoriteSaved(false);
-        addToast('已取消收藏语音', 'success');
-      } else {
-        const blob = await fetchBlobForShare(bubble.audioUrl, 'audio/mpeg');
-        const parsed = extractVoiceTag(bubble.text);
-        await saveVoiceFavorite({ source: 'call', sourceKey, charId: selectedChar.id, charName: selectedChar.name, sourceTimestamp: bubble.timestamp, originalText: parsed.display || bubble.text, spokenText: cleanVoiceMarkupForDisplay(parsed.voiceText) || parsed.display || bubble.text, language: voiceLang || undefined, blob });
-        setVoiceFavoriteSaved(true);
-        addToast('已收藏到语音收藏', 'success');
-      }
-    } catch (error) {
-      console.error('[Call] favorite audio failed', error);
-      addToast('收藏语音失败，请重新生成后再试', 'error');
-    } finally { setVoiceFavoriteBusy(false); }
-  };
   useEffect(() => {
     if (!callStartedAt || ['idle', 'ended'].includes(callState)) return;
     const timer = window.setInterval(() => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - callStartedAt) / 1000))), 1000);
@@ -1559,17 +1466,11 @@ const CallApp: React.FC = () => {
     setIsAudioPlaying(false);
   };
   const loadCallRecords = async (charId?: string) => {
-    const targetIds = charId ? [charId] : characters.map(character => character.id);
-    if (!targetIds.length) return setCallRecords([]);
+    if (!charId) return setCallRecords([]);
     // includeProcessed=true：通话消息与聊天消息同存一个 store，记忆宫殿处理后会推进
     // 高水位标记 mp_lastMsgId_<charId>，默认的 getMessagesByCharId 会过滤掉水位线之前的
     // 消息——这会导致继续聊天后通话记录被"清空"。这里必须读取全部消息。
-    const allByCharacter = await Promise.all(targetIds.map(async targetId => ({
-      characterId: targetId,
-      characterName: characters.find(character => character.id === targetId)?.name || '未知角色',
-      messages: await DB.getMessagesByCharId(targetId, true),
-    })));
-    const records = allByCharacter.flatMap(({ characterId, characterName, messages: all }) => {
+    const all = await DB.getMessagesByCharId(charId, true);
     const callMsgs = all
       .filter(m => m.metadata?.source === 'call' && m.metadata?.callSessionId)
       .sort((a, b) => a.timestamp - b.timestamp);
@@ -1585,7 +1486,7 @@ const CallApp: React.FC = () => {
       arr.push(m);
       grouped.set(sid, arr);
     });
-    return Array.from(grouped.entries()).map(([sessionId, msgs]): CallRecord => {
+    const records: CallRecord[] = Array.from(grouped.entries()).map(([sessionId, msgs]) => {
       const start = msgs[0]?.timestamp || Date.now();
       const end = msgs[msgs.length - 1]?.timestamp || start;
       const endMarker = callEnds.get(sessionId);
@@ -1595,8 +1496,8 @@ const CallApp: React.FC = () => {
       return {
         id: sessionId,
         sessionId,
-        characterId,
-        characterName,
+        characterId: charId,
+        characterName: selectedChar?.name || '未选择角色',
         createdAt: new Date(start).toLocaleString('zh-CN'),
         durationSec: Number.isFinite(savedDuration)
           ? Math.max(1, Math.floor(savedDuration))
@@ -1619,7 +1520,6 @@ const CallApp: React.FC = () => {
           timestamp: m.timestamp,
         })),
       };
-    });
     }).sort((a, b) => (b.transcript[b.transcript.length - 1]?.timestamp || 0) - (a.transcript[a.transcript.length - 1]?.timestamp || 0));
     setCallRecords(records);
   };
@@ -1652,6 +1552,7 @@ const CallApp: React.FC = () => {
     setAvatarTouchEffects([]);
     avatarTouchEffectTimersRef.current.forEach(timer => window.clearTimeout(timer));
     avatarTouchEffectTimersRef.current = [];
+    idleNudgeCountRef.current = 0;
     setCallState('idle');
     setBubbles([]);
     setDraftInput('');
@@ -1669,16 +1570,56 @@ const CallApp: React.FC = () => {
     callSetupGuideOpenRef.current = false;
     setShowCallSetupGuide(false);
   };
-  const openCallSetupGuide = (step: CallSetupGuideStep = 'model', settingsMode = false) => {
+  const openCallSetupGuide = (step: CallSetupGuideStep = 'model') => {
     setSetupCameraMode('off');
     setCallSetupGuideStep(step);
-    setCallSetupGuideSettingsMode(settingsMode);
     callSetupGuideOpenRef.current = true;
     setShowCallSetupGuide(true);
+  };
+  const dismissCallUpdateAnnouncement = () => {
+    markCallUpdateAnnouncementSeen();
+    setShowCallUpdateAnnouncement(false);
+    trackEvent('关闭通话功能更新提示');
+  };
+  const openCallPreferencesPanel = () => {
+    markCallUpdateAnnouncementSeen();
+    setShowCallUpdateAnnouncement(false);
+    setShowCallPreferences(true);
+    trackEvent('打开通话偏好');
+  };
+  const primeCallAudioFromGesture = (forceManualPlayback = false) => {
+    if (!forceManualPlayback && (!callPreferences.voiceAutoPlay || !isSpeakerOn)) return;
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    if (forceManualPlayback && !isSpeakerOn) setIsSpeakerOn(true);
+
+    // Desktop/Android may use WebAudio for real-time lip sync. Invoke resume()
+    // directly in the click stack; never wait for React onPlay/useEffect.
+    if (!nativeCallAudioOnly) void getAudioFeed().unlock();
+
+    audioPrimingRef.current = true;
+    audio.muted = false;
+    audio.src = SILENT_CALL_AUDIO_DATA_URL;
+    audio.currentTime = 0;
+    const finishPrime = () => {
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+      window.setTimeout(() => { audioPrimingRef.current = false; }, 0);
+    };
+    try {
+      const attempt = audio.play();
+      if (attempt) void attempt.then(finishPrime).catch(() => { audioPrimingRef.current = false; });
+      else finishPrime();
+    } catch {
+      audioPrimingRef.current = false;
+    }
   };
   const beginSelectedCall = (cameraMode: UserCameraMode = 'off') => {
     closeCallSetupGuide();
     resetCurrentCall();
+    primeCallAudioFromGesture();
     setViewMode('in-call');
     setCallStartedAt(Date.now());
     setCallState('listening');
@@ -1704,15 +1645,6 @@ const CallApp: React.FC = () => {
       }
     }
     beginSelectedCall('off');
-  };
-  useEffect(() => {
-    if (!pendingDirectCallCharId || pendingDirectCallCharId !== selectedCharId) return;
-    setPendingDirectCallCharId('');
-    requestSelectedCall();
-  }, [pendingDirectCallCharId, selectedCharId]);
-  const requestDirectCall = (characterId: string) => {
-    setSelectedCharId(characterId);
-    setPendingDirectCallCharId(characterId);
   };
   const finishCallSetupGuide = () => {
     try { localStorage.setItem(CALL_SETUP_GUIDE_KEY, 'complete'); } catch { /* private WebView */ }
@@ -2142,7 +2074,65 @@ ${sentencePlan}`;
     clearSilentSpeechTimer();
   }, []);
 
-  const playAudio = (url?: string, cues?: AvatarPerformanceCue[], fallbackMs?: number) => {
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const handlePlay = () => {
+      if (audioPrimingRef.current) return;
+      clearSilentSpeechTimer();
+      setIsAudioPlaying(true);
+      setCallState('speaking');
+      const pending = pendingCueScheduleRef.current;
+      if (!pending) return;
+      pendingCueScheduleRef.current = null;
+      const durationSec = audio.duration;
+      const durationMs = Number.isFinite(durationSec) && durationSec > 0
+        ? durationSec * 1000
+        : pending.fallbackMs;
+      schedulePerformanceCues(pending.cues, durationMs);
+    };
+    const handleStop = () => {
+      if (audioPrimingRef.current) return;
+      setIsAudioPlaying(false);
+      clearPerformanceCueTimers();
+      setCallState(previous => (previous === 'speaking' ? 'listening' : previous));
+    };
+    audio.addEventListener('play', handlePlay);
+    audio.addEventListener('pause', handleStop);
+    audio.addEventListener('ended', handleStop);
+    return () => {
+      audio.removeEventListener('play', handlePlay);
+      audio.removeEventListener('pause', handleStop);
+      audio.removeEventListener('ended', handleStop);
+      audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.muted = !isSpeakerOn;
+  }, [isSpeakerOn]);
+
+  const startCallAudioElement = (audio: HTMLAudioElement, forceAudible = false): Promise<void> => {
+    audio.muted = forceAudible ? false : !isSpeakerOn;
+    const feed = callMode === 'video' && !nativeCallAudioOnly ? getAudioFeed() : null;
+    // Both calls are made immediately in the originating click stack. The graph
+    // is attached only after both succeeded, so a suspended context can never
+    // steal otherwise-audible native media output.
+    const unlockAttempt = feed?.unlock();
+    const playbackAttempt = audio.play();
+    if (feed && unlockAttempt) {
+      void Promise.allSettled([unlockAttempt, playbackAttempt]).then(([unlockResult, playbackResult]) => {
+        if (unlockResult.status === 'fulfilled' && unlockResult.value && playbackResult.status === 'fulfilled') {
+          feed.attach(audio);
+        }
+      });
+    }
+    return playbackAttempt;
+  };
+
+  const playAudio = (url?: string, cues?: AvatarPerformanceCue[], fallbackMs?: number, forceAudible = false) => {
     const targetUrl = url || audioUrl;
     const estimatedDurationMs = fallbackMs || 4000;
     if (!targetUrl || !audioRef.current) {
@@ -2153,77 +2143,226 @@ ${sentencePlan}`;
     if (audioUrl !== targetUrl) setAudioUrl(targetUrl);
     // 时间轴在 onPlay 时用真实音频时长调度；拿不到时长再用估计值。
     pendingCueScheduleRef.current = cues?.length ? { cues, fallbackMs: estimatedDurationMs } : null;
-    audioRef.current.src = targetUrl;
-    audioRef.current.currentTime = 0;
-    audioRef.current.play().then(() => {
-      callAudioUnlockedRef.current = true;
-    }).catch((error: any) => {
+    const audio = audioRef.current;
+    audio.src = targetUrl;
+    audio.currentTime = 0;
+    startCallAudioElement(audio, forceAudible).catch(() => {
       pendingCueScheduleRef.current = null;
-      callAudioUnlockedRef.current = false;
       if (callMode === 'video') playSilentAvatarSpeech('', cues, estimatedDurationMs);
       else setCallState('listening');
-      const autoplayBlocked = error?.name === 'NotAllowedError' || error?.name === 'PermissionDeniedError';
-      console.warn('[call] audio playback failed', {
-        name: error?.name,
-        message: error?.message,
-        autoplayBlocked,
-        visibility: document.visibilityState,
-      });
-      addToast(
-        autoplayBlocked
-          ? '音频已生成，但 iOS 阻止了自动播放；点本轮“重播语音”即可继续'
-          : `语音加载或解码失败：${error?.message || '未知播放错误'}`,
-        'info',
-      );
+      addToast(forceAudible ? '播放失败，请再点一次“重播语音”' : '浏览器拦截了本次自动播放；点“重播语音”即可恢复', 'info');
     });
     setCallState('speaking');
   };
-  const unlockCallAudio = () => {
-    const audio = audioRef.current;
-    if (!audio || callAudioUnlockedRef.current || !audio.paused) return;
-    const previousSrc = audio.getAttribute('src') || '';
-    const previousMuted = audio.muted;
-    audio.src = CALL_AUDIO_UNLOCK_SRC;
-    audio.muted = false;
-    audio.currentTime = 0;
-    const attempt = audio.play();
-    if (!attempt) return;
-    void attempt.then(() => {
-      audio.pause();
-      audio.currentTime = 0;
-      if (previousSrc) audio.src = previousSrc;
-      else audio.removeAttribute('src');
-      audio.muted = previousMuted;
-      audio.load();
-      callAudioUnlockedRef.current = true;
-    }).catch((error: any) => {
-      callAudioUnlockedRef.current = false;
-      audio.muted = previousMuted;
-      if (previousSrc) audio.src = previousSrc;
-      else audio.removeAttribute('src');
-      console.warn('[call] audio unlock failed', error?.name, error?.message);
-    });
+  const ensureCallBubbleAudio = async (bubble: CallBubble, forceRegenerate = false): Promise<string | null> => {
+    if (bubble.role !== 'assistant' || generatingAudioBubbleId) return null;
+    if (bubble.audioUrl && !forceRegenerate) return bubble.audioUrl;
+    if (!hasConfiguredVoice()) {
+      addToast('还没有配置这个角色的语音', 'info');
+      return null;
+    }
+    setGeneratingAudioBubbleId(bubble.id);
+    setErrorMessage('');
+    try {
+      const voiceTag = extractVoiceTag(bubble.text);
+      const { url, traceIds } = await takeOrSynthesizeCallAudio(
+        bubble.text,
+        voiceTag.emotion || bubble.performance?.emotion,
+      );
+      if (!url) throw new Error('未获得可播放音频');
+      trackBlobUrl(url);
+      setAudioUrl(url);
+      setTraceId(traceIds.filter(Boolean).join(' | '));
+      setBubbles(previous => previous.map(item => item.id === bubble.id ? { ...item, audioUrl: url } : item));
+      setCallRecords(previous => previous.map(record => ({
+        ...record,
+        transcript: record.transcript.map(item => item.id === bubble.id ? { ...item, audioUrl: url } : item),
+      })));
+      return url;
+    } catch (error: any) {
+      setCallState('listening');
+      setErrorMessage(error?.message || '语音生成失败');
+      addToast(`语音生成失败：${error?.message || '未知错误'}`, 'error');
+      return null;
+    } finally {
+      setGeneratingAudioBubbleId(null);
+    }
   };
-  useEffect(() => {
-    const resetUnlockAfterBackground = () => {
-      if (document.visibilityState === 'hidden') callAudioUnlockedRef.current = false;
-    };
-    document.addEventListener('visibilitychange', resetUnlockAfterBackground);
-    window.addEventListener('pagehide', resetUnlockAfterBackground);
-    return () => {
-      document.removeEventListener('visibilitychange', resetUnlockAfterBackground);
-      window.removeEventListener('pagehide', resetUnlockAfterBackground);
-    };
-  }, []);
+  const handlePlayBubbleAudio = async (bubble: CallBubble) => {
+    if (bubble.role !== 'assistant' || generatingAudioBubbleId) return;
+    if (bubble.audioUrl) {
+      if (!isSpeakerOn) setIsSpeakerOn(true);
+      playAudio(bubble.audioUrl, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
+      trackEvent('重播一条通话语音');
+      return;
+    }
+    // The click itself unlocks the persistent media element. TTS happens only
+    // after this point when automatic voice is disabled.
+    if (isAudioPlaying) pauseAudio();
+    primeCallAudioFromGesture(true);
+    const url = await ensureCallBubbleAudio(bubble);
+    if (!url) return;
+    if (!isSpeakerOn) setIsSpeakerOn(true);
+    playAudio(url, bubble.performanceTimeline, estimateSpeechMs(bubble.text), true);
+    trackEvent('按需生成并播放通话语音');
+  };
+  const callFavoriteSourceKey = (charId: string, bubble: CallBubble) => `${charId}:${bubble.dbId || bubble.id}`;
+  const openCallVoiceFavorite = async (bubble: CallBubble, charId = selectedChar?.id || '', charName = selectedChar?.name || '未知角色') => {
+    if (bubble.role !== 'assistant' || !charId) return;
+    setVoiceFavoriteTarget({ bubble, charId, charName });
+    setVoiceFavoriteBusy(false);
+    setVoiceFavoriteSaved(!!await getVoiceFavorite('call', callFavoriteSourceKey(charId, bubble)).catch(() => null));
+  };
+  const toggleCallVoiceFavorite = async () => {
+    const target = voiceFavoriteTarget;
+    if (!target || voiceFavoriteBusy) return;
+    const sourceKey = callFavoriteSourceKey(target.charId, target.bubble);
+    setVoiceFavoriteBusy(true);
+    try {
+      if (voiceFavoriteSaved) {
+        await removeVoiceFavorite('call', sourceKey);
+        setVoiceFavoriteSaved(false);
+        addToast('已取消收藏语音', 'info');
+        return;
+      }
+
+      let url = target.bubble.audioUrl || await ensureCallBubbleAudio(target.bubble);
+      let blob: Blob | null = null;
+      if (url) {
+        try { blob = await fetchBlobForShare(url, 'audio/mpeg'); } catch { /* stale session URL: regenerate below */ }
+      }
+      if (!blob) {
+        url = await ensureCallBubbleAudio(target.bubble, true);
+        if (url) {
+          try { blob = await fetchBlobForShare(url, 'audio/mpeg'); } catch { /* handled below */ }
+        }
+      }
+      if (!blob) throw new Error('暂时拿不到这条语音的音频文件');
+
+      const parsed = extractVoiceTag(target.bubble.text);
+      const originalText = stripCallTextFormatting(parsed.display).trim()
+        || stripTtsMarkupForDisplay(parsed.voiceText, apiConfig)
+        || stripCallTextFormatting(target.bubble.text).trim();
+      const spokenText = stripTtsMarkupForDisplay(parsed.voiceText, apiConfig) || originalText;
+      await saveVoiceFavorite({
+        source: 'call',
+        sourceKey,
+        charId: target.charId,
+        charName: target.charName,
+        sourceTimestamp: target.bubble.timestamp,
+        originalText,
+        spokenText: spokenText !== originalText ? spokenText : undefined,
+        language: voiceLang || undefined,
+        blob,
+      });
+      setVoiceFavoriteSaved(true);
+      addToast('已收藏通话语音', 'success');
+      trackEvent('收藏通话语音');
+    } catch (error: any) {
+      addToast(error?.message || '收藏失败，请检查浏览器存储空间', 'error');
+    } finally {
+      setVoiceFavoriteBusy(false);
+    }
+  };
   const resumeAudio = () => {
     if (!audioRef.current || !audioUrl) return;
-    audioRef.current.play().catch(() => addToast('继续播放失败，请点击重播', 'error'));
+    startCallAudioElement(audioRef.current).catch(() => addToast('继续播放失败，请点击重播', 'error'));
   };
   const pauseAudio = () => {
     if (!audioRef.current) return;
     audioRef.current.pause();
     setCallState('listening');
   };
+
+  useEffect(() => {
+    if (nativeCallAudioOnly) return;
+    const recoverAudioGraph = () => {
+      if (document.visibilityState !== 'visible' || !isAudioPlaying) return;
+      void audioFeedRef.current?.unlock();
+    };
+    document.addEventListener('visibilitychange', recoverAudioGraph);
+    window.addEventListener('pageshow', recoverAudioGraph);
+    return () => {
+      document.removeEventListener('visibilitychange', recoverAudioGraph);
+      window.removeEventListener('pageshow', recoverAudioGraph);
+    };
+  }, [isAudioPlaying, nativeCallAudioOnly]);
+
+  // 接通后由角色先说第一句。它和后续静默主动接话共用一个显式通话偏好，
+  // 默认开启；关闭后 CallApp 会等待用户先说，ChatApp 不受影响。
+  const greetingFiredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!callPreferences.characterInitiative || viewMode !== 'in-call' || bubbles.length > 0) return;
+    if (!selectedChar?.id || greetingFiredRef.current === currentSessionId) return;
+    greetingFiredRef.current = currentSessionId;
+    void (async () => {
+      try {
+        setCallState('connecting');
+        const greetingReply = prepareCallAssistantReply(
+          await requestAssistantReply('（电话刚接通。你先开口——像平时接到这个人电话一样自然地说第一句话。不要解释规则，就是最自然的那个“喂”“诶”或者符合你性格的开场。）'),
+          callMode === 'video' && selectedChar?.videoCallPerformanceQuality !== 'high',
+        );
+        const greetingText = greetingReply.text;
+        setAvatarEmotion(greetingReply.performance.emotion);
+        setAvatarPerformance(greetingReply.performance);
+        const nowTs = Date.now();
+        const greetingBubble: CallBubble = {
+          id: `${nowTs}-greeting`,
+          role: 'assistant',
+          text: greetingText,
+          time: formatTime(),
+          timestamp: nowTs,
+          thinkingChain: greetingReply.thinkingChain,
+          performance: greetingReply.performance,
+          performanceTimeline: greetingReply.performanceCues,
+        };
+        setCallState('speaking');
+        setBubbles([greetingBubble]);
+        const dbId = await DB.saveMessage({
+          charId: selectedChar.id,
+          role: 'assistant',
+          type: 'text',
+          content: greetingText,
+          metadata: {
+            source: 'call',
+            callSessionId: currentSessionId,
+            ...(greetingReply.thinkingChain ? { thinkingChain: greetingReply.thinkingChain } : {}),
+            avatarPerformance: greetingReply.performance,
+            avatarPerformanceCues: greetingReply.performanceCues,
+          },
+        });
+        setBubbles(previous => previous.map(bubble => bubble.id === greetingBubble.id ? { ...bubble, dbId } : bubble));
+        markCallTurnDirty();
+
+        let playbackStarted = false;
+        if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
+          try {
+            const { url } = await takeOrSynthesizeCallAudio(greetingText, greetingReply.speechEmotion);
+            if (url) {
+              trackBlobUrl(url);
+              setAudioUrl(url);
+              setBubbles(previous => previous.map(bubble => bubble.id === greetingBubble.id ? { ...bubble, audioUrl: url } : bubble));
+              window.setTimeout(() => playAudio(url, greetingReply.performanceCues, estimateSpeechMs(greetingText)), 0);
+              playbackStarted = true;
+            }
+          } catch {
+            // 语音失败不抹掉角色已经说出的文字。
+          }
+        }
+        if (!playbackStarted) {
+          if (callMode === 'video' && callPreferences.voiceAutoPlay) {
+            playSilentAvatarSpeech(greetingText, greetingReply.performanceCues);
+          } else {
+            setCallState('listening');
+          }
+        }
+      } catch (error: any) {
+        setCallState('error');
+        setErrorMessage(error?.message || '开场白生成失败');
+      }
+    })();
+  }, [viewMode, currentSessionId, callPreferences.characterInitiative]);
+
   const handleAvatarTouch = (hit: AvatarTouchHit) => {
     const character = selectedChar;
     if (!character) return;
@@ -2327,17 +2466,16 @@ ${sentencePlan}`;
     avatarTouchEffectTimersRef.current.forEach(timer => window.clearTimeout(timer));
     avatarTouchEffectTimersRef.current = [];
   }, []);
-  const handleTurn = async (overrideText?: string) => {
-    // Must run synchronously inside the send tap / Enter key / mini-window event.
-    // The AI + TTS awaits below would otherwise lose iOS user activation.
-    unlockCallAudio();
+  const handleTurn = async () => {
     if (isListening) { sttSessionRef.current?.stop(); setIsListening(false); }
-    const typedInput = overrideText?.trim() || draftInput.trim();
+    const typedInput = draftInput.trim();
     const retryInput = getPendingReplyText(bubbles);
     const input = typedInput || retryInput;
     if (!input) return addToast('说点什么吧', 'info');
     if (['connecting', 'thinking'].includes(callState)) return addToast(`${selectedChar?.name || '对方'}还在想，等一等`, 'info');
     if (isAudioPlaying) pauseAudio();
+    primeCallAudioFromGesture();
+    idleNudgeCountRef.current = 0;
     const pendingTouchesForTurn = pendingAvatarTouchesRef.current.slice();
     const latestBubble = bubbles[bubbles.length - 1];
     const retryBubble = latestBubble?.role === 'user' && latestBubble.text.trim() === input
@@ -2500,6 +2638,10 @@ ${sentencePlan}`;
       markCallTurnDirty();
       runCallMemoryPalaceHook(selectedChar);
     }
+    if (!callPreferences.voiceAutoPlay) {
+      setCallState('listening');
+      return;
+    }
     if (!canSpeakVoice()) {
       if (callMode === 'video') {
         playSilentAvatarSpeech(assistantText, turnPerformanceCues);
@@ -2529,21 +2671,12 @@ ${sentencePlan}`;
       addToast(`TTS失败：${e?.message || '语音生成失败'}，已保留文本并启用无声表演`, 'info');
     }
   };
-  useEffect(() => {
-    const onMiniMessage = (event: Event) => {
-      const text = (event as CustomEvent<{ text?: string }>).detail?.text?.trim();
-      if (text) void handleTurn(text);
-    };
-    window.addEventListener('sully-suspended-call-message', onMiniMessage);
-    return () => window.removeEventListener('sully-suspended-call-message', onMiniMessage);
-  }, [handleTurn]);
   const sendingBusy = ['connecting', 'thinking'].includes(callState);
   const pendingCallRetryText = getPendingReplyText(bubbles);
   const displayCallState: CallState = isAudioPlaying ? 'speaking' : callState;
-  const latestAssistantAudio = [...bubbles].reverse().find(b => b.role === 'assistant' && b.audioUrl)?.audioUrl;
   useEffect(() => {
-    void loadCallRecords(viewMode === 'history' ? undefined : selectedCharId);
-  }, [selectedCharId, viewMode]);
+    loadCallRecords(selectedCharId);
+  }, [selectedCharId]);
   const handleDeleteRecord = async (record: CallRecord) => {
     setDeleteConfirmRecord(record);
   };
@@ -2570,7 +2703,7 @@ ${sentencePlan}`;
       setRecordDetailId('');
       setViewMode('history');
     }
-    await loadCallRecords(viewMode === 'history' ? undefined : record.characterId);
+    await loadCallRecords(record.characterId);
     addToast('通话记录已删除', 'success');
     trackEvent('删除一条通话记录');
   };
@@ -2591,7 +2724,6 @@ ${sentencePlan}`;
     trackEvent('修改自己的通话发言');
   };
   const handleRerollAssistant = async (bubble: CallBubble) => {
-    unlockCallAudio();
     if (!selectedChar || bubble.role !== 'assistant') return;
     const idx = bubbles.findIndex(b => b.id === bubble.id);
     if (idx <= 0) return;
@@ -2632,9 +2764,9 @@ ${sentencePlan}`;
       addToast('台词已重 roll', 'success');
       runCallMemoryPalaceHook(selectedChar);
 
-      // Synthesize voice for the rerolled text (same pipeline as handleTurn)
+      // Synthesize immediately only when automatic call voice is enabled.
       let rerollAudioPlayed = false;
-      if (canSpeakVoice()) {
+      if (callPreferences.voiceAutoPlay && canSpeakVoice()) {
         try {
           setCallState('speaking');
           const { url: rerollAudioUrl } = await takeOrSynthesizeCallAudio(rerolled, rerollReply.speechEmotion);
@@ -2650,7 +2782,7 @@ ${sentencePlan}`;
           addToast('语音合成失败，已保留文本', 'info');
         }
       }
-      if (!rerollAudioPlayed && callMode === 'video') {
+      if (!rerollAudioPlayed && callMode === 'video' && callPreferences.voiceAutoPlay) {
         playSilentAvatarSpeech(rerolled, rerollReply.performanceCues);
       } else {
         setCallState('listening');
@@ -2763,59 +2895,17 @@ ${sentencePlan}`;
     addToast(faceFraming ? '脸部锚点已保存，AI 拉近镜头会落到这里' : '脸部锚点已清除', 'success');
   };
   // ── 视频舞台自定义背景：blobref 令牌（本地图片）或 http(s) 图床直链 ──
-  useEffect(() => {
-    if (callMode !== 'video' || (selectedChar?.videoCallBackgroundMode !== 'time' && selectedChar?.videoCallForegroundMode !== 'time')) return;
-    const timer = window.setInterval(() => setStageClock(Date.now()), 60_000);
-    return () => window.clearInterval(timer);
-  }, [callMode, selectedChar?.id, selectedChar?.videoCallBackgroundMode, selectedChar?.videoCallForegroundMode]);
-  const activeStageBackground = selectedChar
-    ? resolveVideoCallBackground(selectedChar, new Date(stageClock))
-    : undefined;
-  const activeStageBackgroundPeriod = selectedChar
-    ? resolveVideoCallBackgroundPeriod(selectedChar, new Date(stageClock))
-    : 'afternoon';
-  const stageBackgroundPeriods = getVideoCallBackgroundPreset(selectedChar);
-  const stageBackgroundUrl = useBlobRefUrl(activeStageBackground);
-  const activeStageForeground = selectedChar ? resolveVideoCallForeground(selectedChar, new Date(stageClock)) : undefined;
-  const editedStageForeground = foregroundEditingPeriod
-    ? selectedChar?.videoCallForegroundSchedule?.[foregroundEditingPeriod] || selectedChar?.videoCallForeground
-    : activeStageForeground;
-  const stageForegroundUrl = useBlobRefUrl(editedStageForeground);
-  const stageForegroundPlacement = selectedChar
-    ? (foregroundEditingPeriod
-      ? selectedChar.videoCallForegroundPlacementSchedule?.[foregroundEditingPeriod] || selectedChar.videoCallForegroundPlacement
-      : resolveVideoCallForegroundPlacement(selectedChar, new Date(stageClock)))
-    : undefined;
-  const stageLayerMode = stageLayerPicker === 'foreground' ? selectedChar?.videoCallForegroundMode : selectedChar?.videoCallBackgroundMode;
-  const stageLayerSingle = stageLayerPicker === 'foreground' ? selectedChar?.videoCallForeground : selectedChar?.videoCallBackground;
-  const stageLayerSchedule = stageLayerPicker === 'foreground' ? selectedChar?.videoCallForegroundSchedule : selectedChar?.videoCallBackgroundSchedule;
+  const stageBackgroundUrl = useBlobRefUrl(selectedChar?.videoCallBackground);
+  // 通话页那层模糊头像画在 CSS background-image 上，吃不到 TokenImg 的解析，这里自己解析一次。
+  const blurredAvatarUrl = useBlobRefUrl(selectedChar?.avatar);
   const applyStageBackground = async (value?: string) => {
     if (!selectedChar) return;
-    const foreground = stageLayerPicker === 'foreground';
-    const previous = foreground ? selectedChar.videoCallForeground : selectedChar.videoCallBackground;
-    updateCharacter(selectedChar.id, foreground ? { videoCallForeground: value } : { videoCallBackground: value });
-    // 同一张本地图可能也被某个时间槽复用；仍有引用时不能删除 Blob。
-    const stillUsed = previous === value
-      || Object.values(foreground ? selectedChar.videoCallForegroundSchedule || {} : selectedChar.videoCallBackgroundSchedule || {}).includes(previous || '');
-    if (previous && !stillUsed) await deleteBlobRefIfUnreferenced(previous);
+    const previous = selectedChar.videoCallBackground;
+    updateCharacter(selectedChar.id, { videoCallBackground: value });
+    // 背景令牌只被这个字段引用，替换/清除后旧 Blob 直接删掉，不留孤儿
+    if (previous && previous !== value) await deleteBlobRef(previous);
   };
-  const applyScheduledStageBackground = async (period: VideoCallBackgroundPeriod, value?: string) => {
-    if (!selectedChar) return;
-    const foreground = stageLayerPicker === 'foreground';
-    const sourceSchedule = foreground ? selectedChar.videoCallForegroundSchedule : selectedChar.videoCallBackgroundSchedule;
-    const previous = sourceSchedule?.[period];
-    const nextSchedule = { ...(sourceSchedule || {}) };
-    if (value) nextSchedule[period] = value;
-    else delete nextSchedule[period];
-    updateCharacter(selectedChar.id, foreground
-      ? { videoCallForegroundMode: 'time', videoCallForegroundSchedule: nextSchedule }
-      : { videoCallBackgroundMode: 'time', videoCallBackgroundSchedule: nextSchedule });
-    const stillUsed = value === previous
-      || (foreground ? selectedChar.videoCallForeground : selectedChar.videoCallBackground) === previous
-      || Object.entries(nextSchedule).some(([key, ref]) => key !== period && ref === previous);
-    if (previous && !stillUsed) await deleteBlobRefIfUnreferenced(previous);
-  };
-  const chooseStageBackgroundFile = (period?: VideoCallBackgroundPeriod) => {
+  const chooseStageBackgroundFile = () => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
@@ -2828,18 +2918,12 @@ ${sentencePlan}`;
       if (!file) return removeInput();
       try {
         if (file.size > 20 * 1024 * 1024) {
-          addToast('图片超过 20 MB，请压缩后再使用', 'error');
+          addToast('图片超过 20 MB，请压缩后再用作背景', 'error');
           return;
         }
-        const ref = await putImageBlob(file);
-        if (period) await applyScheduledStageBackground(period, ref);
-        else await applyStageBackground(ref);
-        addToast(period ? '时段图片已保存' : `${stageLayerPicker === 'foreground' ? '舞台前景' : '视频背景'}已更新`, 'success');
-        if (stageLayerPicker === 'foreground') {
-          setShowBgPicker(false);
-          setForegroundEditingPeriod(period || null);
-          setForegroundEditing(true);
-        }
+        await applyStageBackground(await putImageBlob(file));
+        setShowBgPicker(false);
+        addToast('视频背景已更新', 'success');
       } catch (error: any) {
         addToast(error?.message || '背景导入失败', 'error');
       } finally {
@@ -2848,17 +2932,9 @@ ${sentencePlan}`;
     };
     input.click();
   };
-  const openBgPicker = (layer: 'background' | 'foreground' = 'background') => {
-    setStageLayerPicker(layer);
-    setForegroundEditingPeriod(null);
-    const current = layer === 'foreground' ? selectedChar?.videoCallForeground : selectedChar?.videoCallBackground;
+  const openBgPicker = () => {
+    const current = selectedChar?.videoCallBackground;
     setBgUrlInput(current && !isBlobRef(current) ? current : '');
-    const schedule = (layer === 'foreground' ? selectedChar?.videoCallForegroundSchedule : selectedChar?.videoCallBackgroundSchedule) || {};
-    setBgScheduleUrlInputs(Object.fromEntries(
-      (['morning', 'noon', 'afternoon', 'dusk', 'evening', 'night'] as VideoCallBackgroundPeriod[])
-        .map(id => [id, schedule[id] && !isBlobRef(schedule[id]!) ? schedule[id] : '']),
-    ));
-    setExpandedBackgroundPeriod(selectedChar ? resolveVideoCallBackgroundPeriod(selectedChar) : null);
     setShowBgPicker(true);
   };
   const applyBgUrlInput = async () => {
@@ -2869,49 +2945,7 @@ ${sentencePlan}`;
     }
     await applyStageBackground(url);
     setShowBgPicker(false);
-    if (stageLayerPicker === 'foreground') {
-      setForegroundEditingPeriod(null);
-      setForegroundEditing(true);
-    }
-    addToast(`${stageLayerPicker === 'foreground' ? '舞台前景' : '视频背景'}已更新`, 'success');
-  };
-  const applyScheduledBgUrlInput = async (period: VideoCallBackgroundPeriod) => {
-    const url = (bgScheduleUrlInputs[period] || '').trim();
-    if (!/^https?:\/\//i.test(url)) {
-      addToast('请输入 http(s) 开头的图片直链', 'error');
-      return;
-    }
-    await applyScheduledStageBackground(period, url);
-    if (stageLayerPicker === 'foreground') {
-      setShowBgPicker(false);
-      setForegroundEditingPeriod(period);
-      setForegroundEditing(true);
-    }
-    addToast('时段图片已保存', 'success');
-  };
-  const updateForegroundPlacement = (placement: NonNullable<CharacterProfile['videoCallForegroundPlacement']>) => {
-    if (!selectedChar) return;
-    if (foregroundEditingPeriod && selectedChar.videoCallForegroundMode === 'time') {
-      updateCharacter(selectedChar.id, {
-        videoCallForegroundPlacementSchedule: {
-          ...(selectedChar.videoCallForegroundPlacementSchedule || {}),
-          [foregroundEditingPeriod]: placement,
-        },
-      });
-      return;
-    }
-    updateCharacter(selectedChar.id, { videoCallForegroundPlacement: placement });
-  };
-  const finishForegroundPlacementEditing = () => {
-    if (!selectedChar) return;
-    const placement = stageForegroundPlacement || { x: 0, y: 0, scale: 1 };
-    updateForegroundPlacement({ ...placement, locked: true });
-    const periodLabel = foregroundEditingPeriod
-      ? stageBackgroundPeriods.find(item => item.id === foregroundEditingPeriod)?.label
-      : '';
-    setForegroundEditing(false);
-    setForegroundEditingPeriod(null);
-    addToast(periodLabel ? `${periodLabel}前景位置已锁定` : '舞台前景位置已锁定', 'success');
+    addToast('视频背景已更新', 'success');
   };
 
   const avatarImportOverlay = avatarImportStatus ? (
@@ -2934,42 +2968,38 @@ ${sentencePlan}`;
   ) : null;
   if (viewMode === 'role-select') {
     const groupChars = filterCharactersByGroup(characters, characterGroups, roleGroupId);
+    const totalPages = Math.max(1, Math.ceil(groupChars.length / ROLES_PER_PAGE));
+    const page = Math.min(rolePage, totalPages - 1);
+    const pagedChars = groupChars.slice(page * ROLES_PER_PAGE, page * ROLES_PER_PAGE + ROLES_PER_PAGE);
     return (
-      <div className={`relative flex h-full w-full flex-col overflow-hidden ${lightTheme ? 'bg-[#f0f3f8] text-[#1e293b]' : 'sully-call-role-night bg-[#0f172a] text-[#e2e8f0]'}`}>
-        {!lightTheme && <style>{`
-          .sully-call-role-night .call-home-icon{background:#172033!important;border-color:#334155!important;color:#dbeafe!important}
-          .sully-call-role-night .call-mode-switch{background:#1e293b!important}
-          .sully-call-role-night .call-mode-tab{color:#94a3b8!important}
-          .sully-call-role-night .call-mode-tab.is-active{background:#334155!important;color:#f8fafc!important}
-          .sully-call-role-night .call-home-title,.sully-call-role-night .call-contact-name{color:#f1f5f9!important}
-          .sully-call-role-night .call-home-subtitle,.sully-call-role-night .call-contact-desc{color:#94a3b8!important}
-          .sully-call-role-night .call-contact-card{background:#172033!important;border-color:#2b3a50!important;box-shadow:0 5px 16px rgba(2,6,23,.22)!important}
-          .sully-call-role-night .call-contact-settings{background:#223047!important;color:#a9bad0!important}
-        `}</style>}
+      <div className={`relative h-full w-full bg-gradient-to-b text-white flex flex-col overflow-hidden ${lightTheme ? 'sully-call-light from-[#f5f2fd] via-[#eef0f8] to-[#e9ecf5]' : 'from-[#140d28] via-[#0a0613] to-[#05030c]'}`}>
+        {lightTheme && <style>{CALL_LIGHT_THEME_CSS}</style>}
         {avatarImportOverlay}
         {vroidBetaOverlay}
+        {showCallUpdateAnnouncement && (
+          <CallUpdateAnnouncement
+            accentColor={accentColor}
+            onDismiss={dismissCallUpdateAnnouncement}
+            onOpenSettings={openCallPreferencesPanel}
+          />
+        )}
         {showCallSetupGuide && (
           <CallSetupGuide
             step={callSetupGuideStep}
             characterName={selectedChar?.name || '当前角色'}
             modelName={selectedChar?.videoAvatar?.fileName}
             modelFormat={selectedChar?.videoAvatar?.format}
-            builtinModel={!!selectedBuiltinSullyAvatar}
             avatarSource={selectedVisualSource}
             staticImageName={selectedChar?.companionAvatar?.fileName}
             hasDatePortraits={hasDatePortraits(selectedChar)}
             dateOutfitName={selectedDateOutfit?.name}
             cameraMode={setupCameraMode}
             hasFakeImage={!!fakeUserCameraRef}
-            accentColor="#3b82f6"
+            accentColor={accentColor}
             lightTheme={lightTheme}
-            settingsMode={callSetupGuideSettingsMode}
-            builtinQuality={selectedBuiltinSullyAvatar?.builtinQuality || 'balanced'}
-            performanceQuality={selectedChar?.videoCallPerformanceQuality || 'basic'}
             onStepChange={setCallSetupGuideStep}
             onChooseModelFile={chooseAvatarModel}
             onChooseLive2DFolder={chooseLive2DDirectory}
-            onChooseBuiltinModel={chooseBuiltinSullyAvatar}
             onChooseAvatarSource={chooseVideoAvatarSource}
             onChooseStaticImage={chooseStaticAvatarImage}
             onManageDatePortraits={() => openApp(AppID.Date)}
@@ -2981,11 +3011,6 @@ ${sentencePlan}`;
             onChooseFakeImage={() => chooseFakeUserCameraImage(false)}
             onStart={finishCallSetupGuide}
             onClose={closeCallSetupGuide}
-            onBuiltinQualityChange={chooseBuiltinSullyQuality}
-            onPerformanceQualityChange={(quality) => {
-              if (!selectedChar) return;
-              updateCharacter(selectedChar.id, { videoCallPerformanceQuality: quality });
-            }}
           />
         )}
         {showCallPreferences && (
@@ -3019,7 +3044,7 @@ ${sentencePlan}`;
         {selectedChar?.avatar && (
           <div className="absolute top-0 right-0 w-48 h-60 pointer-events-none"
             style={{ WebkitMaskImage: 'radial-gradient(135% 105% at 100% 0%, #000 32%, transparent 72%)', maskImage: 'radial-gradient(135% 105% at 100% 0%, #000 32%, transparent 72%)' }}>
-            <img src={selectedChar.avatar} alt="" className="w-full h-full object-cover object-top opacity-60" />
+            <TokenImg value={selectedChar.avatar} alt="" className="w-full h-full object-cover object-top opacity-60" />
           </div>
         )}
 
@@ -3030,59 +3055,42 @@ ${sentencePlan}`;
             paddingBottom: 'max(1.25rem, var(--safe-bottom, 0px))',
           }}
         >
-          {/* 3028 顶栏：返回 / 语音视频切换 / 通话记录 */}
+          {/* header */}
           <div className="shrink-0">
-            <div className="relative flex min-h-9 items-center justify-between">
-              <button onClick={closeApp} aria-label="返回" className="call-home-icon flex h-9 w-9 items-center justify-center rounded-full border border-[#e2e8f0] bg-white text-[#334155] active:scale-95">
-                <CaretLeft size={18} weight="bold" />
-              </button>
-              <div className="call-mode-switch absolute left-1/2 top-1/2 flex w-[140px] -translate-x-1/2 -translate-y-1/2 gap-0.5 rounded-[14px] bg-[#e2e8f0] p-[3px] max-[370px]:w-[128px]">
-                <button onClick={() => setCallMode('voice')} className={`call-mode-tab flex-1 rounded-[11px] py-2 text-xs font-semibold transition ${callMode === 'voice' ? 'is-active bg-white text-[#1e293b] shadow-sm' : 'text-[#64748b]'}`}>语音</button>
-                <button onClick={() => setCallMode('video')} className={`call-mode-tab flex-1 rounded-[11px] py-2 text-xs font-semibold transition ${callMode === 'video' ? 'is-active bg-white text-[#1e293b] shadow-sm' : 'text-[#64748b]'}`}>视频</button>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={toggleCallTheme} aria-label={lightTheme ? '切换夜间皮肤' : '切换日间皮肤'} title={lightTheme ? '夜间模式' : '日间模式'} className="call-home-icon flex h-9 w-9 items-center justify-center rounded-full border border-[#e2e8f0] bg-white text-[#334155] active:scale-95">
-                  {lightTheme ? <Moon size={17} weight="fill" /> : <Sun size={17} weight="fill" />}
-                </button>
-                <button onClick={() => { setViewMode('history'); trackEvent('打开通话记录'); }} aria-label="通话记录" className="call-home-icon flex h-9 w-9 items-center justify-center rounded-full border border-[#e2e8f0] bg-white text-[#334155] active:scale-95">
-                  <Clock size={17} weight="bold" />
-                </button>
-              </div>
-            </div>
-            <h1 className="call-home-title mt-5 text-[26px] font-bold leading-tight tracking-[-0.5px] text-[#1e293b]">拨号连线</h1>
-            <p className="call-home-subtitle mt-1 text-xs text-[#64748b]">选择角色，建立{callMode === 'video' ? '视频' : '语音'}通讯</p>
+            <div className="text-[10px] tracking-[0.42em] text-white/35 font-semibold">CHAT WITH</div>
+            <h1 className="mt-1 text-[2rem] font-bold leading-tight inline-flex items-start gap-1.5">
+              想找谁聊聊？
+              <span className="text-sm mt-1" style={{ color: accentColor, textShadow: `0 0 10px ${accentColor}` }}>✦</span>
+            </h1>
+            <p className="text-sm text-white/45 mt-1">选一个人，拨过去吧。</p>
           </div>
 
           {/* 分组筛选（没建分组时不渲染） */}
           <CharacterGroupFilterBar characters={characters} groups={characterGroups} dark={!lightTheme}
-            value={roleGroupId} onChange={setRoleGroupId} className="mt-4 shrink-0" />
+            value={roleGroupId} onChange={(id) => { setRoleGroupId(id); setRolePage(0); }} className="mt-4 shrink-0" />
 
-          {/* 3028：联系人本身就是拨号入口，不再先选中、再到底部发起。 */}
+          {/* character cards (6 / page) */}
           <div className="mt-4 min-h-[5rem] flex-1 overflow-y-auto overscroll-contain no-scrollbar space-y-2.5 pr-0.5" data-testid="call-character-picker">
-            {groupChars.map(char => {
+            {pagedChars.map(char => {
+              const selected = selectedCharId === char.id;
               return (
-                <div key={char.id}
-                  className="call-contact-card relative w-full rounded-[20px] border border-[#e2e8f0] bg-white px-4 py-3.5 text-left shadow-[0_2px_8px_rgba(30,41,59,0.03)] transition active:scale-[0.98]">
+                <button key={char.id} onClick={() => setSelectedCharId(char.id)}
+                  className="relative w-full rounded-3xl px-4 py-3.5 text-left border backdrop-blur-md transition active:scale-[0.99]"
+                  style={selected
+                    ? { borderColor: accentColor, background: `${accentColor}22`, boxShadow: `0 0 18px ${accentColor}55, inset 0 0 18px ${accentColor}1f` }
+                    : { borderColor: 'rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.04)' }}>
                   <div className="flex items-center gap-3.5">
-                    <button type="button" onClick={() => setSelectedCharId(char.id)} className="w-12 h-12 rounded-full overflow-hidden flex items-center justify-center font-semibold shrink-0 bg-[#475569] text-white outline-none">
+                    <div className="w-12 h-12 rounded-full overflow-hidden border flex items-center justify-center font-semibold shrink-0"
+                      style={{ borderColor: selected ? accentColor : 'rgba(255,255,255,0.25)', backgroundColor: `${accentColor}40` }}>
                       {char.avatar ? <TokenImg value={char.avatar} alt={char.name} className="w-full h-full object-cover" /> : (char.name?.[0] || '角')}
-                    </button>
-                    <button type="button" onClick={() => setSelectedCharId(char.id)} className="min-w-0 flex-1 text-left outline-none">
-                      <div className="call-contact-name truncate text-[15px] font-bold text-[#1e293b]">{char.name}</div>
-                      <div className="call-contact-desc mt-0.5 truncate text-xs text-[#64748b]">{char.description || '等待建立通讯连接'}</div>
-                    </button>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {callMode === 'video' && (
-                        <button type="button" onClick={() => { setSelectedCharId(char.id); openCallSetupGuide('overview', true); }} aria-label={`设置${char.name}的视频形象`} className="call-contact-settings flex h-8 w-8 items-center justify-center rounded-full bg-[#f1f5f9] text-[#64748b] outline-none active:scale-90">
-                          <Gear size={15} weight="fill" />
-                        </button>
-                      )}
-                      <button type="button" onClick={() => requestDirectCall(char.id)} aria-label={`${callMode === 'video' ? '视频呼叫' : '呼叫'}${char.name}`} className="flex h-[38px] w-[38px] items-center justify-center rounded-full bg-[#3b82f6] text-white shadow-[0_4px_12px_rgba(59,130,246,.25)] active:scale-90">
-                        {callMode === 'video' ? <VideoCamera size={17} weight="fill" /> : <Phone size={17} weight="fill" />}
-                      </button>
                     </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-[15px] truncate" style={selected ? { color: accentColor } : undefined}>{char.name}</div>
+                      <div className="text-xs text-white/45 mt-0.5 truncate">{char.description || '点击编辑设定...'}</div>
+                    </div>
+                    <span className="text-base shrink-0" style={{ color: selected ? accentColor : 'rgba(255,255,255,0.25)' }}>✦</span>
                   </div>
-                </div>
+                </button>
               );
             })}
             {!groupChars.length && (
@@ -3090,9 +3098,43 @@ ${sentencePlan}`;
             )}
           </div>
 
-          {/* 视频设置只由每张联系人卡片的齿轮进入；首页保持 3028 的纯联系人列表。 */}
-          {callMode === 'video' && selectedChar && (
-          <div className="hidden" aria-hidden="true" data-testid="call-role-actions">
+          {/* pagination */}
+          {totalPages > 1 && (
+            <div className="shrink-0 flex items-center justify-center gap-3 pt-3">
+              <button disabled={page === 0} onClick={() => setRolePage(p => Math.max(0, p - 1))}
+                className="w-7 h-7 rounded-full border border-white/15 bg-white/[0.04] flex items-center justify-center text-white/70 disabled:opacity-25 active:scale-90 transition">
+                <CaretLeft size={14} weight="bold" />
+              </button>
+              <div className="flex items-center gap-1.5">
+                {Array.from({ length: totalPages }).map((_, i) => (
+                  <button key={i} onClick={() => setRolePage(i)} aria-label={`第${i + 1}页`}
+                    className="rounded-full transition-all" style={{ width: i === page ? 16 : 6, height: 6, background: i === page ? accentColor : 'rgba(255,255,255,0.25)' }} />
+                ))}
+              </div>
+              <button disabled={page >= totalPages - 1} onClick={() => setRolePage(p => Math.min(totalPages - 1, p + 1))}
+                className="w-7 h-7 rounded-full border border-white/15 bg-white/[0.04] flex items-center justify-center text-white/70 disabled:opacity-25 active:scale-90 transition">
+                <CaretRight size={14} weight="bold" />
+              </button>
+            </div>
+          )}
+
+          {/* actions */}
+          <div className="shrink-0 pt-4 space-y-2.5" data-testid="call-role-actions">
+            <div className="flex items-center gap-1 rounded-2xl border border-white/10 bg-black/20 p-1">
+              <button
+                onClick={() => setCallMode('voice')}
+                className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-medium transition ${callMode === 'voice' ? 'bg-white/12 text-white' : 'text-white/40'}`}
+              >
+                <Phone size={15} weight={callMode === 'voice' ? 'fill' : 'regular'} /> 语音
+              </button>
+              <button
+                onClick={() => setCallMode('video')}
+                className={`flex-1 flex items-center justify-center gap-2 rounded-xl py-2 text-xs font-medium transition ${callMode === 'video' ? 'bg-white/12 text-white' : 'text-white/40'}`}
+                style={callMode === 'video' ? { boxShadow: `inset 0 0 0 1px ${accentColor}55` } : undefined}
+              >
+                <VideoCamera size={15} weight={callMode === 'video' ? 'fill' : 'regular'} /> 视频
+              </button>
+            </div>
             {callMode === 'video' && (
               <div className="space-y-2">
                 <button
@@ -3216,8 +3258,34 @@ ${sentencePlan}`;
                 </details>
               </div>
             )}
+            <button onClick={requestSelectedCall}
+              className="relative w-full py-3.5 rounded-2xl overflow-hidden transition active:scale-[0.98]"
+              style={{ background: `linear-gradient(to right, ${accentColor}26, ${accentColor}4d, ${accentColor}26)`, border: `1px solid ${accentColor}80`, boxShadow: `0 0 22px ${accentColor}40` }}>
+              <span className="absolute inset-[3px] rounded-xl border border-white/10 pointer-events-none" />
+              <span className="absolute left-5 top-1/2 -translate-y-1/2 text-xs" style={{ color: accentColor }}>✦</span>
+              <span className="absolute right-5 top-1/2 -translate-y-1/2 text-xs text-white/60">✦</span>
+              <span className="relative text-white/90 text-[15px]">
+                {selectedChar ? <>{callMode === 'video' ? '视频接通 ' : '拨给 '}<span className="font-serif italic text-xl align-baseline" style={{ textShadow: `0 0 12px ${accentColor}` }}>{selectedChar.name}</span></> : '开始通话'}
+              </span>
+            </button>
+            <button onClick={() => { setViewMode('history'); trackEvent('打开通话记录'); }}
+              className="relative w-full py-3 rounded-2xl border border-white/15 bg-white/[0.04] backdrop-blur-md text-white/80 flex items-center justify-center gap-2 transition active:scale-[0.98] hover:bg-white/[0.08]">
+              <Clock size={16} weight="bold" style={{ color: accentColor }} /> 通话记录
+            </button>
+            <div className="flex items-center justify-between pt-1">
+              <button onClick={openCallPreferencesPanel} title="通话偏好" data-testid="call-preferences-entry"
+                className="w-9 h-9 rounded-full border border-white/15 bg-white/[0.04] flex items-center justify-center text-white/60 active:scale-90 transition">
+                <Gear size={16} weight="fill" />
+              </button>
+              <button onClick={closeApp} className="flex items-center gap-2 text-sm text-white/45 active:scale-95 transition">
+                <span style={{ color: accentColor }}>✦</span> 关闭 <span style={{ color: accentColor }}>✦</span>
+              </button>
+              <button onClick={() => setCallTheme(lightTheme ? 'dark' : 'light')} title={lightTheme ? '切换到深色主题' : '切换到浅色主题'}
+                className="w-9 h-9 rounded-full border border-white/15 bg-white/[0.04] flex items-center justify-center text-white/60 active:scale-90 transition">
+                {lightTheme ? <Moon size={16} weight="fill" /> : <Sun size={16} weight="fill" />}
+              </button>
+            </div>
           </div>
-          )}
         </div>
         {showLive2DSettings && selectedChar?.videoAvatar?.format === 'live2d' && (
           <div className="sully-stage-dark" style={{ display: 'contents' }}>
@@ -3225,7 +3293,6 @@ ${sentencePlan}`;
               config={selectedChar.videoAvatar}
               characterName={selectedChar.name}
               accentColor={accentColor}
-              lightTheme={lightTheme}
               setupMode={live2DWardrobeOnboarding ? 'import' : 'advanced'}
               onClose={() => { setShowLive2DSettings(false); setLive2DWardrobeOnboarding(false); }}
               onSave={(config: Live2DAvatarConfig) => {
@@ -3242,55 +3309,48 @@ ${sentencePlan}`;
   }
   if (viewMode === 'history') {
     return (
-      <div className={`relative flex h-full w-full flex-col px-5 pb-6 ${lightTheme ? 'bg-[#f0f3f8] text-[#1e293b]' : 'sully-call-history-night bg-[#0f172a] text-[#e2e8f0]'}`} style={{ paddingTop: 'max(2.5rem, var(--safe-top))' }}>
-        {!lightTheme && <style>{`
-          .sully-call-history-night .history-nav{color:#cbd5e1!important}
-          .sully-call-history-night .history-card{background:#172033!important;border-color:#2b3a50!important;box-shadow:0 5px 16px rgba(2,6,23,.22)!important}
-          .sully-call-history-night .history-name{color:#f1f5f9!important}
-          .sully-call-history-night .history-meta,.sully-call-history-night .history-date,.sully-call-history-night .history-delete{color:#94a3b8!important}
-          .sully-call-history-night .history-quote{background:#1e293b!important;color:#dbe4ef!important}
-        `}</style>}
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center">
-          <button onClick={() => setViewMode('role-select')} className="history-nav justify-self-start text-sm font-semibold text-[#334155] outline-none">‹ 返回</button>
-          <h1 className="text-[18px] font-bold">通话记录</h1>
-          <button onClick={() => setViewMode('role-select')} className="justify-self-end text-sm font-semibold text-[#3b82f6] outline-none">新通话</button>
+      <div className={`h-full w-full bg-gradient-to-b text-white px-5 pb-6 flex flex-col ${lightTheme ? 'sully-call-light from-[#f5f2fd] via-[#eef0f8] to-[#eef0f8]' : 'from-[#140d28] via-[#0a0613] to-[#0a0613]'}`} style={{ paddingTop: 'max(2.5rem, var(--safe-top))' }}>
+        {lightTheme && <style>{CALL_LIGHT_THEME_CSS}</style>}
+        <div className="flex items-center justify-between">
+          <button onClick={() => setViewMode('role-select')} className="text-sm text-white/45">← 返回</button>
+          <h1 className="text-lg font-medium">通话记录</h1>
+          <button onClick={() => setViewMode('role-select')} className="text-sm font-medium" style={{ color: accentColor }}>新通话</button>
         </div>
-        <div className="mt-5 flex-1 space-y-3 overflow-y-auto no-scrollbar">
+        <div className="mt-4 flex-1 overflow-y-auto space-y-3">
           {!callRecords.length && (
             <div className="flex flex-col items-center justify-center py-10 text-center">
-              <p className="text-base text-[#64748b]">还没有通话记录</p>
-              <p className="mt-1 text-sm text-[#94a3b8]">每一通电话都会留在这里</p>
+              <p className="text-base text-white/45">还没有通话记录</p>
+              <p className="text-sm text-white/35 mt-1">每一通电话都会留在这里</p>
             </div>
           )}
           {callRecords.map(record => {
             const turnCount = record.transcript.filter(t => t.role === 'user').length;
             const keepsake = summarizeKeepsakeLine(record.transcript, record.characterName);
-            const recordCharacter = characters.find(character => character.id === record.characterId);
             return (
-            <div key={record.id} role="button" tabIndex={0} onClick={() => { setRecordDetailId(record.id); setViewMode('record-detail'); }} onKeyDown={event => { if (event.key === 'Enter') { setRecordDetailId(record.id); setViewMode('record-detail'); } }} className="history-card w-full rounded-[20px] border border-[#e2e8f0] bg-white p-4 text-left shadow-[0_2px_8px_rgba(30,41,59,.03)] outline-none transition active:scale-[.99]">
+            <button key={record.id} onClick={() => { setRecordDetailId(record.id); setViewMode('record-detail'); }} className="w-full rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md p-4 text-left transition hover:bg-white/[0.08]">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-[#475569] text-sm font-semibold text-white">{recordCharacter?.avatar ? <TokenImg value={recordCharacter.avatar} alt="" className="h-full w-full object-cover" /> : record.characterName[0] || '角'}</div>
+                <div className="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center text-sm" style={{ backgroundColor: `${accentColor}35` }}>{record.characterName[0] || '角'}</div>
                 <div className="min-w-0 flex-1">
-                  <div className="history-name text-[15px] font-bold text-[#1e293b]">{record.characterName}</div>
-                  <div className="history-meta mt-0.5 text-xs text-[#64748b]">{record.mode === 'video' ? '视频' : '通话'} · {formatDuration(record.durationSec)} · {turnCount}轮对话</div>
+                  <div className="font-medium text-sm">{record.characterName}</div>
+                  <div className="text-xs text-white/45 mt-0.5">{record.mode === 'video' ? '视频' : record.mode === 'voice' ? '语音' : '通话'} · {formatDuration(record.durationSec)} · {turnCount}轮对话</div>
                 </div>
-                <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record); }} className="history-delete px-2 py-1 text-xs font-semibold text-[#94a3b8] outline-none transition active:text-[#ef4444]">删除</button>
+                <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(record); }} className="text-xs px-2 py-1 rounded-lg text-white/35 transition hover:text-rose-300">删除</button>
               </div>
-              <div className="history-quote mt-3 line-clamp-3 rounded-[14px] border-l-[3px] border-[#3b82f6] bg-[#f8fafc] px-3 py-2.5 text-[13px] italic leading-relaxed text-[#334155]">“{keepsake}” —— {record.characterName}</div>
-              <div className="history-date mt-3 text-[11px] text-[#94a3b8]">{record.createdAt}</div>
-            </div>
+              <div className="text-xs text-white/60 mt-2.5 italic leading-relaxed line-clamp-2">{keepsake}</div>
+              <div className="text-[10px] text-white/30 mt-1.5">{record.createdAt}</div>
+            </button>
           );})}
         </div>
 
         {/* Delete confirm overlay */}
         {deleteConfirmRecord && (
-          <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#0f172a]/35 px-6 backdrop-blur-sm">
-            <div className="w-full max-w-sm rounded-3xl border border-[#e2e8f0] bg-white p-5 text-[#1e293b] shadow-2xl">
-              <div className="text-base font-semibold">删除通话记录？</div>
-              <p className="mt-2 text-sm leading-relaxed text-[#64748b]">和 {deleteConfirmRecord.characterName} 的这通通话将被永久删除。</p>
+          <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center px-6">
+            <div className={`w-full max-w-sm rounded-3xl border border-white/15 bg-gradient-to-b p-5 shadow-2xl ${lightTheme ? 'from-white to-[#f0edf9]' : 'from-[#1a1130] to-[#0a0613]'}`}>
+              <div className="text-base font-semibold text-white">删除通话记录？</div>
+              <p className="mt-2 text-sm text-white/55 leading-relaxed">和 {deleteConfirmRecord.characterName} 的这通通话将被永久删除。</p>
               <div className="mt-5 grid grid-cols-2 gap-2">
-                <button onClick={() => setDeleteConfirmRecord(null)} className="rounded-2xl border border-[#e2e8f0] py-2.5 text-[#64748b] transition active:scale-[0.97]">取消</button>
-                <button onClick={confirmDeleteRecord} className="rounded-2xl bg-[#ef4444] py-2.5 font-semibold text-white transition active:scale-[0.97]">删除</button>
+                <button onClick={() => setDeleteConfirmRecord(null)} className="py-2.5 rounded-2xl border border-white/20 text-white/80 transition active:scale-[0.97]">取消</button>
+                <button onClick={confirmDeleteRecord} className="keep-white py-2.5 rounded-2xl bg-rose-500/80 text-white font-semibold transition active:scale-[0.97]">删除</button>
               </div>
             </div>
           </div>
@@ -3312,16 +3372,58 @@ ${sentencePlan}`;
         </div>
         <div className="mt-4 flex-1 overflow-y-auto space-y-2.5">
           {recordDetail.transcript.map(item => (
-            <div key={item.id} className={`rounded-2xl px-3.5 py-2.5 border border-white/10 backdrop-blur-md ${item.role === 'user' ? 'bg-white/[0.07] ml-6' : 'bg-white/[0.03] mr-6'}`}>
+            <div
+              key={item.id}
+              onContextMenu={(event) => {
+                if (item.role !== 'assistant') return;
+                event.preventDefault();
+                void openCallVoiceFavorite(item, recordDetail.characterId, recordDetail.characterName);
+              }}
+              onTouchStart={(event) => {
+                if (item.role !== 'assistant') return;
+                callLongPressTriggeredRef.current = false;
+                callTouchStartPos.current = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+                longPressTimerRef.current = window.setTimeout(() => {
+                  callLongPressTriggeredRef.current = true;
+                  void openCallVoiceFavorite(item, recordDetail.characterId, recordDetail.characterName);
+                }, 450);
+              }}
+              onTouchMove={(event) => {
+                if (!longPressTimerRef.current) return;
+                const dx = Math.abs(event.touches[0].clientX - callTouchStartPos.current.x);
+                const dy = Math.abs(event.touches[0].clientY - callTouchStartPos.current.y);
+                if (dx > 10 || dy > 10) {
+                  window.clearTimeout(longPressTimerRef.current);
+                  longPressTimerRef.current = null;
+                }
+              }}
+              onTouchEnd={() => {
+                if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+                longPressTimerRef.current = null;
+              }}
+              className={`rounded-2xl px-3.5 py-2.5 border border-white/10 backdrop-blur-md ${item.role === 'user' ? 'bg-white/[0.07] ml-6' : 'bg-white/[0.03] mr-6'}`}
+            >
               <div className="text-[10px] text-white/45">{item.role === 'user' ? '你' : recordDetail.characterName} · {item.time}</div>
               {item.role === 'user' && <CallSnapshotImage imageRef={item.cameraSnapshotRef} expired={item.cameraSnapshotExpired} />}
               <div className="text-sm mt-1 leading-relaxed">{(() => {
                 if (item.role !== 'assistant') return item.text;
                 const { display, voiceText } = extractVoiceTag(item.text);
-                const cleanVoice = cleanVoiceMarkupForDisplay(voiceText);
+                const cleanVoice = stripTtsMarkupForDisplay(voiceText, apiConfig);
                 return <>{renderAssistantLine(display, accentColor)}{cleanVoice && <div className="mt-1 text-[10px] text-white/40 italic">{cleanVoice}</div>}</>;
               })()}</div>
-              {!!item.audioUrl && <button onClick={() => { playAudio(item.audioUrl); trackEvent('重播通话记录里的语音'); }} className="mt-2 text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/60 transition hover:bg-white/15">重播语音</button>}
+              {item.role === 'assistant' && (
+                <button
+                  onClick={() => {
+                    if (callLongPressTriggeredRef.current) { callLongPressTriggeredRef.current = false; return; }
+                    void handlePlayBubbleAudio(item);
+                    trackEvent('播放通话记录里的语音');
+                  }}
+                  disabled={!!generatingAudioBubbleId}
+                  className="mt-2 text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/60 transition hover:bg-white/15 disabled:opacity-40"
+                >
+                  {generatingAudioBubbleId === item.id ? '生成语音…' : item.audioUrl ? '重播语音' : '播放语音'}
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -3329,12 +3431,24 @@ ${sentencePlan}`;
           onClick={() => {
             setSelectedCharId(recordDetail.characterId || selectedCharId);
             resetCurrentCall();
+            primeCallAudioFromGesture();
+            setCallStartedAt(Date.now());
+            setCallState('listening');
             setViewMode('in-call');
             trackEvent('再打一通电话');
           }}
           className="keep-white w-full py-3 rounded-2xl mt-4 font-medium text-white transition active:scale-[0.98]"
           style={{ backgroundColor: accentColor }}
         >再打一通</button>
+        <VoiceFavoriteActionSheet
+          open={!!voiceFavoriteTarget}
+          favorited={voiceFavoriteSaved}
+          busy={voiceFavoriteBusy}
+          title="通话语音"
+          preview={voiceFavoriteTarget ? (stripCallTextFormatting(extractVoiceTag(voiceFavoriteTarget.bubble.text).display) || stripTtsMarkupForDisplay(extractVoiceTag(voiceFavoriteTarget.bubble.text).voiceText, apiConfig)) : ''}
+          onToggle={() => void toggleCallVoiceFavorite()}
+          onClose={() => { if (!voiceFavoriteBusy) setVoiceFavoriteTarget(null); }}
+        />
       </div>
     );
   }
@@ -3357,7 +3471,7 @@ ${sentencePlan}`;
   const callControlSize = callMode === 'video' ? 'h-10 w-10' : 'h-14 w-14';
   return (
     <div
-      className={`h-full w-full relative text-white flex flex-col overflow-hidden ${callMode === 'voice' ? (lightTheme ? 'sully-call-light sully-call-voice-5226 bg-[#f0f3f8]' : 'bg-[#0f172a]') : callMode === 'video' ? (lightTheme ? 'sully-call-light sully-call-video-0210 bg-[#f0f3f8]' : 'sully-call-video-0210-night bg-[#0f172a]') : lightTheme ? 'sully-call-light bg-[#eef0f7]' : 'bg-[#0a0613]'}`}
+      className={`h-full w-full relative text-white flex flex-col overflow-hidden ${lightTheme ? 'sully-call-light bg-[#eef0f7]' : 'bg-[#0a0613]'}`}
       data-avatar-touch-pending={pendingAvatarTouchCount}
       data-call-video-layout={callMode === 'video' ? videoCallLayout : undefined}
     >
@@ -3367,95 +3481,37 @@ ${sentencePlan}`;
         @keyframes sully-call-subtitle-in { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:translateY(0) } }
         @keyframes sully-camera-emotion-readout { 0% { opacity:0; transform:translate(-50%,6px) } 18%,72% { opacity:.78; transform:translate(-50%,0) } 100% { opacity:0; transform:translate(-50%,-3px) } }
         .sully-video-stage-shell { animation: sully-call-stage-in 420ms cubic-bezier(.2,.8,.2,1) both; transition: height 320ms cubic-bezier(.2,.8,.2,1), min-height 320ms cubic-bezier(.2,.8,.2,1); }
-        .sully-call-voice-5226{background:#f0f3f8!important;color:#1e293b!important}
-        .sully-call-voice-5226 .call-channel-meta,.sully-call-voice-5226 .call-signal-meta{display:none!important}
-        .sully-call-voice-5226 .voice-call-name{color:#1e293b!important;text-shadow:none!important;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif!important;font-size:1.5rem!important;font-weight:700!important}
-        .sully-call-voice-5226 .voice-call-status{color:#64748b!important;letter-spacing:0!important}
-        .sully-call-voice-5226 .voice-call-timer{color:#475569!important;letter-spacing:.08em!important;font-size:13px!important}
-        .sully-call-voice-5226 .voice-call-avatar{height:82px!important;width:82px!important}
-        .sully-call-voice-5226 .voice-call-avatar>div>div:not(:last-child){display:none!important}
-        .sully-call-voice-5226 .voice-call-avatar img{box-shadow:0 6px 20px rgba(30,41,59,.1)!important;border:3px solid #fff}
-        .sully-call-voice-5226 .voice-dialogue-card{background:#fff!important;border-color:#e2e8f0!important;box-shadow:0 4px 12px rgba(30,41,59,.03)!important;color:#1e293b!important}
-        .sully-call-voice-5226 .voice-input-shell{background:#fff!important;border-color:#e2e8f0!important;box-shadow:0 2px 8px rgba(30,41,59,.03)!important}
-        .sully-call-voice-5226 .voice-input-shell input{color:#1e293b!important}
-        .sully-call-voice-5226 .voice-control-circle{background:#fff!important;border-color:#e2e8f0!important;box-shadow:0 2px 6px rgba(30,41,59,.04)!important}
-        .sully-call-voice-5226 .voice-control-label{color:#475569!important}
-        .sully-call-video-0210{background:#f0f3f8!important;color:#1e293b!important}
-        .sully-call-video-0210 .call-channel-meta,.sully-call-video-0210 .call-signal-meta{display:none!important}
-        .sully-call-video-0210 .video-call-name{color:#1e293b!important;text-shadow:none!important;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif!important;font-size:1.25rem!important;font-weight:700!important}
-        .sully-call-video-0210 .video-call-status{color:#64748b!important;letter-spacing:0!important;font-size:11px!important}
-        .sully-call-video-0210 .video-call-status-dot{color:#3b82f6!important}
-        .sully-call-video-0210 .video-call-timer{color:#475569!important;font-size:12px!important;font-weight:500!important}
-        .sully-call-video-0210 .sully-video-stage-shell{margin:4px 12px 6px;padding:0!important;border:1px solid #cbd5e1;border-radius:22px;overflow:hidden;background:#172033;box-shadow:0 6px 20px rgba(30,41,59,.12)}
-        .sully-call-video-0210 .video-stage-decoration{display:none!important}
-        .sully-call-video-0210 .sully-call-video-subtitle{background:#fff!important;border-color:#e2e8f0!important;box-shadow:0 3px 12px rgba(30,41,59,.05)!important;color:#1e293b!important}
-        .sully-call-video-0210 .video-subtitle-avatar{background:#e8eef7!important;border-color:#d7e0ec!important;color:#334155!important}
-        .sully-call-video-0210 .video-subtitle-title{color:#64748b!important}
-        .sully-call-video-0210 .video-subtitle-content{color:#1e293b!important}
-        .sully-call-video-0210 .video-record-button{border-color:#dbe3ee!important;background:#f8fafc!important;color:#475569!important}
-        .sully-call-video-0210 .video-dialogue-card{background:#fff!important;border-color:#e2e8f0!important;box-shadow:0 3px 12px rgba(30,41,59,.05)!important;color:#1e293b!important}
-        .sully-call-video-0210 .video-dialogue-card .text-white\/95,.sully-call-video-0210 .video-dialogue-card .text-white\/90,.sully-call-video-0210 .video-dialogue-card .text-white\/85{color:#1e293b!important}
-        .sully-call-video-0210 .video-dialogue-card .text-white\/55,.sully-call-video-0210 .video-dialogue-card .text-white\/45,.sully-call-video-0210 .video-dialogue-card .text-white\/35{color:#64748b!important}
-        .sully-call-video-0210 .video-input-shell{background:#fff!important;border-color:#dbe3ee!important;box-shadow:0 2px 8px rgba(30,41,59,.04)!important}
-        .sully-call-video-0210 .video-input-shell input{color:#1e293b!important}
-        .sully-call-video-0210 .video-input-shell input::placeholder{color:#94a3b8!important}
-        .sully-call-video-0210 .video-controls-grid{background:transparent!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important;padding:2px 0!important}
-        .sully-call-video-0210 .video-control-circle{background:#fff!important;border-color:#dbe3ee!important;box-shadow:0 2px 7px rgba(30,41,59,.06)!important;color:#334155!important}
-        .sully-call-video-0210 .video-control-circle svg{color:#334155!important}
-        .sully-call-video-0210 .video-control-circle.is-active{background:#e8f0ff!important;border-color:#a9c5fb!important;box-shadow:0 2px 9px rgba(59,130,246,.14)!important}
-        .sully-call-video-0210 .video-control-circle.is-danger{background:#ef4444!important;border-color:#ef4444!important;box-shadow:0 4px 12px rgba(239,68,68,.28)!important}
-        .sully-call-video-0210 .video-control-circle.is-danger svg{color:#fff!important}
-        .sully-call-video-0210 .video-control-label{color:#64748b!important}
-        .sully-call-video-0210-night .call-channel-meta,.sully-call-video-0210-night .call-signal-meta{display:none!important}
-        .sully-call-video-0210-night .video-call-name{color:#f1f5f9!important;text-shadow:none!important;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC",sans-serif!important;font-size:1.25rem!important;font-weight:700!important}
-        .sully-call-video-0210-night .video-call-status{color:#94a3b8!important;letter-spacing:0!important;font-size:11px!important}
-        .sully-call-video-0210-night .video-call-status-dot{color:#60a5fa!important}
-        .sully-call-video-0210-night .video-call-timer{color:#bfdbfe!important;font-size:12px!important;font-weight:500!important}
-        .sully-call-video-0210-night [data-testid="video-call-layout-picker"]{background:#1e293b!important;border:1px solid #334155}
-        .sully-call-video-0210-night [data-testid="video-call-layout-picker"] button[aria-selected="true"]{background:#334155!important;color:#dbeafe!important;box-shadow:0 2px 6px rgba(2,6,23,.24)!important}
-        .sully-call-video-0210-night [data-testid="video-call-layout-picker"] button[aria-selected="false"]{color:#94a3b8!important}
-        .sully-call-video-0210-night .sully-video-stage-shell{margin:4px 12px 6px;padding:0!important;border:1px solid #334155;border-radius:22px;overflow:hidden;background:#0b1220;box-shadow:0 8px 24px rgba(2,6,23,.4)}
-        .sully-call-video-0210-night .video-stage-decoration{display:none!important}
-        .sully-call-video-0210-night .sully-call-video-subtitle,.sully-call-video-0210-night .video-input-shell,.sully-call-video-0210-night .video-dialogue-card{background:#172033!important;border-color:#334155!important;box-shadow:0 4px 14px rgba(2,6,23,.25)!important;color:#e2e8f0!important}
-        .sully-call-video-0210-night .video-subtitle-avatar{background:#223047!important;border-color:#3b4b63!important;color:#dbeafe!important}
-        .sully-call-video-0210-night .video-subtitle-title{color:#93c5fd!important}
-        .sully-call-video-0210-night .video-subtitle-content,.sully-call-video-0210-night .video-input-shell input{color:#f1f5f9!important}
-        .sully-call-video-0210-night .video-record-button{border-color:#3b4b63!important;background:#223047!important;color:#cbd5e1!important}
-        .sully-call-video-0210-night .video-controls-grid{background:transparent!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important;padding:2px 0!important}
-        .sully-call-video-0210-night .video-control-circle{background:#1e293b!important;border-color:#3b4b63!important;box-shadow:0 3px 9px rgba(2,6,23,.25)!important}
-        .sully-call-video-0210-night .video-control-circle.is-active{background:#1e3a5f!important;border-color:#4f83bd!important}
-        .sully-call-video-0210-night .video-control-circle.is-danger{background:#ef4444!important;border-color:#ef4444!important}
-        .sully-call-video-0210-night .video-control-label{color:#94a3b8!important}
+        [data-call-video-layout="stage"] .sully-video-stage-shell { max-height: none; }
+        body.ios-keyboard-open [data-call-video-layout="stage"] .sully-video-stage-shell { max-height: 0; }
         @media (prefers-reduced-motion: reduce) { .sully-video-stage-shell, .sully-call-video-subtitle, .sully-camera-emotion-readout { animation-duration:.01ms!important; transition-duration:.01ms!important; } }
       `}</style>
       {avatarImportOverlay}
       {vroidBetaOverlay}
-      {/* 深色皮肤保留环境光；Soft Modern 让语音/视频的控件颜色保持同一套冷灰蓝。 */}
-      {!lightTheme && <><div
+      {/* blurred character art */}
+      <div
         className="absolute inset-0 bg-cover bg-center scale-125 blur-3xl opacity-30"
-        style={{ backgroundImage: selectedChar?.avatar ? `url(${selectedChar.avatar})` : undefined }}
+        style={{ backgroundImage: blurredAvatarUrl ? `url(${blurredAvatarUrl})` : undefined }}
       />
       {/* accent aura glows */}
       <div className="absolute -top-28 left-1/2 -translate-x-1/2 w-[130%] h-72 rounded-full blur-3xl opacity-40 pointer-events-none"
         style={{ background: `radial-gradient(closest-side, ${accentColor}, transparent)` }} />
       <div className="absolute -bottom-20 left-1/2 -translate-x-1/2 w-[150%] h-80 rounded-full blur-3xl opacity-25 pointer-events-none"
         style={{ background: `radial-gradient(closest-side, ${accentColor}, transparent)` }} />
-      </>}
       {/* vignette —— 浅色主题换成柔白薄纱，压住模糊头像但不发灰 */}
-      <div className={`absolute inset-0 pointer-events-none ${lightTheme ? 'bg-[#f0f3f8]' : callMode === 'video' ? 'bg-[#0f172a]/94' : 'bg-gradient-to-b from-black/55 via-[#0a0613]/75 to-black/90'}`} />
+      <div className={`absolute inset-0 bg-gradient-to-b pointer-events-none ${lightTheme ? 'from-white/60 via-[#f2f0fa]/70 to-white/80' : 'from-black/55 via-[#0a0613]/75 to-black/90'}`} />
       {/* floating sparkles */}
-      {!lightTheme && <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
         {CALL_SPARKLES.map((p, i) => (
           <span key={i} className="absolute rounded-full bg-white animate-pulse"
             style={{ top: p.top, left: p.left, width: p.s, height: p.s, opacity: 0.5, animationDelay: `${i * 0.4}s`, boxShadow: `0 0 6px ${accentColor}` }} />
         ))}
-      </div>}
+      </div>
       <div className="relative z-10 flex h-full min-h-0 flex-col overflow-hidden">
         {/* 键盘避让不在这里做 paddingBottom 兜底：交给全局 interactive-widget=resizes-content
             与 iOS 全屏 PWA 的 app 高度跟随可视区（见 utils/iosStandalone.ts），和聊天等其它 App 一致。 */}
       {/* top channel bar */}
       <div className="relative shrink-0 px-5" style={{ paddingTop: 'max(2.25rem, var(--safe-top))' }}>
-        <div className="call-channel-meta absolute left-5 leading-tight" style={{ top: 'max(2.25rem, var(--safe-top))' }}>
+        <div className="absolute left-5 leading-tight" style={{ top: 'max(2.25rem, var(--safe-top))' }}>
           <div className="text-[9px] tracking-[0.28em] text-white/45 font-semibold">{callMode === 'video' ? 'SULLYOS · VIDEO DATE' : 'PRIVATE CHANNEL'}</div>
           <div className="mt-1.5 flex items-center gap-1.5 text-[8px] tracking-[0.22em] text-white/35">
             {callMode === 'video' ? 'CHARACTER LINK' : 'VOICE SYNC'}
@@ -3466,7 +3522,7 @@ ${sentencePlan}`;
             </span>
           </div>
         </div>
-        <div className="call-signal-meta absolute right-5 flex items-center gap-1 text-[9px] tracking-[0.2em] text-white/45 font-medium" style={{ top: 'max(2.25rem, var(--safe-top))' }}>
+        <div className="absolute right-5 flex items-center gap-1 text-[9px] tracking-[0.2em] text-white/45 font-medium" style={{ top: 'max(2.25rem, var(--safe-top))' }}>
           信号良好
           <span className="flex items-end gap-[2px] h-2.5 ml-0.5">
             {[4, 6, 8, 10].map((h, i) => (
@@ -3478,32 +3534,27 @@ ${sentencePlan}`;
         {/* name block */}
         <div className={`${callMode === 'video' ? 'pt-3' : 'pt-7'} text-center`}>
           {callMode !== 'video' && <div className="text-sm" style={{ color: `${accentColor}cc`, textShadow: `0 0 12px ${accentColor}` }}>❀</div>}
-          <h1 className={`font-serif leading-none tracking-wide text-white ${callMode === 'video' ? 'video-call-name text-[1.55rem]' : 'voice-call-name mt-0.5 text-[2.6rem]'}`} style={{ textShadow: `0 0 26px ${accentColor}aa, 0 0 6px ${accentColor}66` }}>{selectedChar?.name || '未选择'}</h1>
+          <h1 className={`font-serif leading-none tracking-wide text-white ${callMode === 'video' ? 'text-[1.55rem]' : 'mt-0.5 text-[2.6rem]'}`} style={{ textShadow: `0 0 26px ${accentColor}aa, 0 0 6px ${accentColor}66` }}>{selectedChar?.name || '未选择'}</h1>
           {callMode === 'video' ? (
-            <div className="video-call-status mt-1 flex items-center justify-center gap-2 text-[8px] tracking-[0.18em] text-white/48">
-              <span>{connSub}</span><span className="video-call-status-dot" style={{ color: accentColor }}>◆</span><span className="video-call-timer tabular-nums text-[13px] font-light" style={{ color: accentColor }}>{formatDuration(elapsedSeconds)}</span>
+            <div className="mt-1 flex items-center justify-center gap-2 text-[8px] tracking-[0.18em] text-white/48">
+              <span>{connSub}</span><span style={{ color: accentColor }}>◆</span><span className="tabular-nums text-[13px] font-light" style={{ color: accentColor }}>{formatDuration(elapsedSeconds)}</span>
             </div>
           ) : (
             <>
-              <div className="voice-call-status mt-2.5 text-[11px] tracking-[0.25em] text-white/55">{connSub}</div>
-              <div className="voice-call-timer mt-1.5 text-lg tabular-nums font-extralight tracking-[0.2em]" style={{ color: accentColor }}>{formatDuration(elapsedSeconds)}</div>
+              <div className="mt-2.5 text-[11px] tracking-[0.25em] text-white/55">{connSub}</div>
+              <div className="mt-1.5 text-lg tabular-nums font-extralight tracking-[0.2em]" style={{ color: accentColor }}>{formatDuration(elapsedSeconds)}</div>
             </>
           )}
           {callMode === 'video' && (
-            <div className="mx-auto mt-2 grid w-[13.75rem] grid-cols-3 rounded-[14px] bg-[#e2e8f0] p-[3px]" data-testid="video-call-layout-picker" role="tablist" aria-label="视频布局">
+            <div className="mx-auto mt-1 grid w-[15rem] grid-cols-3 rounded-full border border-white/10 bg-black/25 p-0.5 backdrop-blur-md" data-testid="video-call-layout-picker">
               {VIDEO_CALL_LAYOUTS.map(option => (
                 <button
                   key={option.id}
                   onClick={() => chooseVideoCallLayout(option.id)}
-                  role="tab"
-                  aria-selected={videoCallLayout === option.id}
-                  className="flex items-center justify-center rounded-[11px] py-1.5 text-[11px] font-semibold outline-none transition active:scale-[.97]"
-                  style={videoCallLayout === option.id
-                    ? { background: '#ffffff', color: '#2563eb', boxShadow: '0 2px 6px rgba(30,41,59,.08)' }
-                    : { background: 'transparent', color: '#64748b' }}
+                  className={`flex items-center justify-center gap-1 rounded-full py-1 text-[9px] font-medium transition active:scale-95 ${videoCallLayout === option.id ? 'bg-white/14 text-white' : 'text-white/38'}`}
                   title={option.hint}
                 >
-                  {option.name}
+                  {videoCallLayout === option.id && <Check size={9} weight="bold" style={{ color: accentColor }} />}{option.name}
                 </button>
               ))}
             </div>
@@ -3519,10 +3570,10 @@ ${sentencePlan}`;
           避免大头像把输入框顶出键盘上方的可视区（见 index.html 的 .sully-call-hero 规则）。 */}
       {callMode === 'video' ? (
         <div className={`sully-call-hero sully-stage-dark sully-video-stage-shell relative px-2 pb-2 pt-2 ${videoCallLayout === 'stage' ? 'flex-1 min-h-0' : 'shrink-0'} ${videoStageSize}`}>
-          <span className="video-stage-decoration pointer-events-none absolute left-3 top-3 z-20 h-8 w-8 rounded-tl-[1.8rem] border-l border-t" style={{ borderColor: `${accentColor}aa` }} aria-hidden />
-          {userCameraMode === 'off' && <span className="video-stage-decoration pointer-events-none absolute right-3 top-3 z-20 h-8 w-8 rounded-tr-[1.8rem] border-r border-t" style={{ borderColor: `${accentColor}aa` }} aria-hidden />}
-          <span className="video-stage-decoration pointer-events-none absolute bottom-3 left-3 z-20 text-[8px]" style={{ color: accentColor }} aria-hidden>✦</span>
-          <span className="video-stage-decoration pointer-events-none absolute bottom-3 right-3 z-20 text-[7px] text-white/55" aria-hidden>✦</span>
+          <span className="pointer-events-none absolute left-3 top-3 z-20 h-8 w-8 rounded-tl-[1.8rem] border-l border-t" style={{ borderColor: `${accentColor}aa` }} aria-hidden />
+          {userCameraMode === 'off' && <span className="pointer-events-none absolute right-3 top-3 z-20 h-8 w-8 rounded-tr-[1.8rem] border-r border-t" style={{ borderColor: `${accentColor}aa` }} aria-hidden />}
+          <span className="pointer-events-none absolute bottom-3 left-3 z-20 text-[8px]" style={{ color: accentColor }} aria-hidden>✦</span>
+          <span className="pointer-events-none absolute bottom-3 right-3 z-20 text-[7px] text-white/55" aria-hidden>✦</span>
           {/* The action editor owns its own WebGL preview; suspend this one. */}
           <VRMVideoCallStage
             characterName={selectedChar?.name || '未选择'}
@@ -3539,21 +3590,15 @@ ${sentencePlan}`;
             performanceQuality={selectedChar?.videoCallPerformanceQuality || 'basic'}
             accentColor={accentColor}
             backgroundUrl={stageBackgroundUrl}
-            foregroundUrl={stageForegroundUrl}
-            foregroundPlacement={stageForegroundPlacement}
-            foregroundEditing={foregroundEditing}
-            onForegroundPlacementChange={updateForegroundPlacement}
-            onForegroundEditingDone={finishForegroundPlacementEditing}
             onChooseModel={() => openCallSetupGuide('model')}
             onChooseLive2DFolder={chooseLive2DDirectory}
             onConfigureActions={() => setShowLive2DSettings(true)}
-            onConfigureBackground={() => openBgPicker('background')}
-            onConfigureForeground={() => openBgPicker('foreground')}
+            onConfigureBackground={openBgPicker}
             onFramingChange={handleStageFramingChange}
             onFaceAnchorChange={handleFaceAnchorChange}
             onExpressionsDiscovered={names => { vrmExpressionsRef.current = names; }}
             onAvatarTouch={handleAvatarTouch}
-            maxFps={suspendedCall ? 1 : 30}
+            maxFps={30}
           />
           <AvatarTouchFeedback
             characterName={selectedChar?.name || '对方'}
@@ -3615,7 +3660,7 @@ ${sentencePlan}`;
       <div className="sully-call-hero pt-3 pb-1 flex flex-col items-center justify-center">
         <button
           type="button"
-          className="voice-call-avatar relative h-40 w-40 touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          className="relative h-40 w-40 touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white/70"
           aria-label={`戳戳${selectedChar?.name || '对方'}`}
           onPointerDown={handleVoiceAvatarPointerDown}
           onPointerMove={handleVoiceAvatarPointerMove}
@@ -3666,15 +3711,15 @@ ${sentencePlan}`;
           style={{ animation: 'sully-call-subtitle-in 240ms ease-out both', boxShadow: `inset 0 1px 0 ${accentColor}35, 0 12px 32px rgba(0,0,0,.22)` }}
           data-testid="video-call-subtitle"
         >
-          <span className="video-subtitle-avatar flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[.06] text-[11px]" style={{ color: accentColor }}>
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/12 bg-white/[.06] text-[11px]" style={{ color: accentColor }}>
             {latestCallBubble?.role === 'user' ? '你' : selectedChar?.name?.[0] || '角'}
           </span>
           <div className="min-w-0 flex-1">
-            <div className="video-subtitle-title mb-1 flex items-center gap-1.5 text-[8px] font-semibold tracking-[0.15em]" style={{ color: `${accentColor}dd` }}>
+            <div className="mb-1 flex items-center gap-1.5 text-[8px] font-semibold tracking-[0.15em]" style={{ color: `${accentColor}dd` }}>
               {latestCallBubble?.role === 'user' ? '你刚刚说' : displayCallState === 'thinking' ? '正在想怎么回答' : `${selectedChar?.name || '对方'} · LIVE`}
               {waveActive && <span className="h-1.5 w-1.5 animate-pulse rounded-full" style={{ background: accentColor }} />}
             </div>
-            <div className="video-subtitle-content line-clamp-2 text-[13px] leading-relaxed text-white/90">
+            <div className="line-clamp-2 text-[13px] leading-relaxed text-white/90">
               {latestCallBubble
                 ? latestCallBubble.role === 'assistant'
                   ? renderAssistantLine(extractVoiceTag(latestCallBubble.text).display, accentColor)
@@ -3684,10 +3729,10 @@ ${sentencePlan}`;
                   : `${selectedChar?.name || '对方'}在等你开口。`}
             </div>
           </div>
-          <button onClick={() => setVideoTranscriptExpanded(true)} className="video-record-button shrink-0 rounded-full border border-white/12 px-2.5 py-1.5 text-[9px] text-white/52 active:scale-95">记录</button>
+          <button onClick={() => setVideoTranscriptExpanded(true)} className="shrink-0 rounded-full border border-white/12 px-2.5 py-1.5 text-[9px] text-white/52 active:scale-95">记录</button>
         </div>
       ) : (
-      <div ref={callScrollableRef} className={`${callMode === 'video' && videoCallLayout === 'stage' && videoTranscriptExpanded ? 'h-[clamp(230px,30dvh,360px)] flex-none' : 'flex-1'} min-h-0 overflow-y-auto no-scrollbar mx-4 mb-2 px-4 py-3 space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md ${callMode === 'voice' ? 'voice-dialogue-card' : 'video-dialogue-card'}`} style={{ boxShadow: `inset 0 1px 0 ${accentColor}33` }}>
+      <div ref={callScrollableRef} className="flex-1 min-h-0 overflow-y-auto no-scrollbar mx-4 mb-2 px-4 py-3 space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-md" style={{ boxShadow: `inset 0 1px 0 ${accentColor}33` }}>
         {callMode === 'video' && videoCallLayout === 'stage' && videoTranscriptExpanded && (
           <div className="sticky top-0 z-10 -mx-1 flex justify-end pb-1">
             <button onClick={() => setVideoTranscriptExpanded(false)} className="rounded-full border border-white/10 bg-black/35 px-2.5 py-1 text-[9px] text-white/48 backdrop-blur">收成字幕</button>
@@ -3717,12 +3762,17 @@ ${sentencePlan}`;
             key={bubble.id}
             onContextMenu={(e) => {
               e.preventDefault();
-              startEditBubble(bubble);
+              if (bubble.role === 'assistant') void openCallVoiceFavorite(bubble);
+              else startEditBubble(bubble);
             }}
             onTouchStart={(e) => {
-              if (bubble.role !== 'user') return;
+              callLongPressTriggeredRef.current = false;
               callTouchStartPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-              longPressTimerRef.current = window.setTimeout(() => startEditBubble(bubble), 450);
+              longPressTimerRef.current = window.setTimeout(() => {
+                callLongPressTriggeredRef.current = true;
+                if (bubble.role === 'assistant') void openCallVoiceFavorite(bubble);
+                else startEditBubble(bubble);
+              }, 450);
             }}
             onTouchMove={(e) => {
               if (!longPressTimerRef.current) return;
@@ -3748,7 +3798,7 @@ ${sentencePlan}`;
             <div className={`${sizeClass} whitespace-pre-wrap leading-relaxed ${bubble.role === 'user' ? 'inline-block text-left text-white/90 bg-white/[0.06] border border-white/10 rounded-2xl rounded-tr-sm px-3 py-1.5' : 'text-white/95'}`}>
               {bubble.role === 'assistant' ? (() => {
                 const { display, voiceText } = extractVoiceTag(line || bubble.text);
-                const cleanVoice = cleanVoiceMarkupForDisplay(voiceText);
+                const cleanVoice = stripTtsMarkupForDisplay(voiceText, apiConfig);
                 return <>
                   {bubble.thinkingChain && (
                     <details className="group mb-2 rounded-xl border border-white/10 bg-white/[0.035] px-2.5 py-2 text-[11px] text-white/55">
@@ -3761,11 +3811,19 @@ ${sentencePlan}`;
                 </>;
               })() : (line || bubble.text)}
             </div>
-            {bubble.role === 'assistant' && (bubble.audioUrl || isLatest) && (
+            {bubble.role === 'assistant' && (
               <div className="mt-2 flex gap-2 flex-wrap">
-                {bubble.audioUrl && <button onClick={() => { playAudio(bubble.audioUrl, bubble.performanceTimeline, estimateSpeechMs(bubble.text)); trackEvent('重播一条通话语音'); }} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">重播语音</button>}
+                <button
+                  onClick={() => {
+                    if (callLongPressTriggeredRef.current) { callLongPressTriggeredRef.current = false; return; }
+                    void handlePlayBubbleAudio(bubble);
+                  }}
+                  disabled={!!generatingAudioBubbleId}
+                  className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15 disabled:opacity-40"
+                >
+                  {generatingAudioBubbleId === bubble.id ? '生成语音…' : bubble.audioUrl ? '重播语音' : '播放语音'}
+                </button>
                 {bubble.audioUrl && <button onClick={() => handleDownloadCallAudio(bubble.audioUrl, bubble.timestamp)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">下载</button>}
-                {bubble.audioUrl && <button onClick={() => void openCallVoiceFavorite(bubble)} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15">收藏</button>}
                 {isLatest && <button onClick={() => handleRerollAssistant(bubble)} disabled={!!rerollingBubbleId} className="text-xs px-2.5 py-1 rounded-full bg-white/8 border border-white/15 text-white/70 transition hover:bg-white/15 disabled:opacity-40">{rerollingBubbleId === bubble.id ? '换一种说法…' : '换个说法'}</button>}
               </div>
             )}
@@ -3776,7 +3834,7 @@ ${sentencePlan}`;
       )}
       {showInputPanel && (
         <div className={`shrink-0 ${callMode === 'video' ? 'px-3 pb-1.5' : 'px-4 pb-2'}`}>
-          <div className={`${callMode === 'video' ? 'video-input-shell rounded-[1.15rem] p-1.5' : 'voice-input-shell rounded-[24px] p-2'} border border-white/12 bg-black/30 backdrop-blur-md flex gap-2 items-center`} style={{ boxShadow: `inset 0 0 20px ${accentColor}1f` }}>
+          <div className={`${callMode === 'video' ? 'rounded-[1.15rem] p-1.5' : 'rounded-2xl p-2'} border border-white/12 bg-black/30 backdrop-blur-md flex gap-2 items-center`} style={{ boxShadow: `inset 0 0 20px ${accentColor}1f` }}>
             {sttSupported && (
               <button
                 onClick={toggleStt}
@@ -3795,7 +3853,7 @@ ${sentencePlan}`;
               className="flex-1 min-w-0 bg-transparent px-2 text-sm outline-none placeholder:text-white/35"
               placeholder={isListening ? '在听你说……' : sendingBusy ? `${selectedChar?.name || '对方'}正在想……` : pendingCallRetryText ? '上次回复中断，可直接重试' : `想对${selectedChar?.name || '对方'}说什么？`}
             />
-            <button onClick={() => void handleTurn()} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-[18px] text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: callMode === 'video' ? '#3b82f6' : '#2563eb', boxShadow: '0 2px 6px rgba(37,99,235,.2)' }}>{sendingBusy ? '…' : '发送'}</button>
+            <button onClick={handleTurn} disabled={sendingBusy} className="keep-white shrink-0 px-4 py-2 rounded-xl text-sm font-medium text-white disabled:opacity-40 transition active:scale-95" style={{ backgroundColor: accentColor, boxShadow: `0 0 16px ${accentColor}66` }}>{sendingBusy ? '…' : '发送'}</button>
           </div>
           {!sendingBusy && pendingCallRetryText && !draftInput.trim() && <div className="text-[10px] text-amber-200/70 mt-1 px-1">上一句话还没得到回复，点击重试即可继续</div>}
           {isListening && <div className="text-[10px] text-white/40 mt-1 px-1 animate-pulse">正在聆听，点麦克风结束</div>}
@@ -3803,45 +3861,45 @@ ${sentencePlan}`;
       )}
       <div className={`shrink-0 ${callMode === 'video' ? 'px-3 pb-2 pt-0.5' : 'px-7 pb-2 pt-1.5'}`} data-testid={callMode === 'video' ? 'video-call-compact-controls' : undefined}>
         <div
-          className={`${callMode === 'video' ? 'video-controls-grid grid grid-cols-5 items-center gap-1 rounded-[1.35rem] border border-white/12 bg-black/30 px-1.5 py-1.5 backdrop-blur-xl' : 'flex items-start justify-between'}`}
+          className={`${callMode === 'video' ? 'grid grid-cols-5 items-center gap-1 rounded-[1.35rem] border border-white/12 bg-black/30 px-1.5 py-1.5 backdrop-blur-xl' : 'flex items-start justify-between'}`}
           style={callMode === 'video' ? { boxShadow: `inset 0 1px 0 ${accentColor}32, 0 14px 32px rgba(0,0,0,.2)` } : undefined}
         >
           {/* mic */}
           <button onClick={() => setShowInputPanel(prev => !prev)} className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}>
-            <span className={`${callControlSize} ${callMode === 'voice' ? 'voice-control-circle' : 'video-control-circle'} ${callMode === 'video' && showInputPanel ? 'is-active' : ''} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
+            <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
               style={showInputPanel ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
               <Microphone size={22} weight="fill" className="text-white/90" />
             </span>
-            <span className={`${callMode === 'video' ? 'video-control-label' : 'voice-control-label'} text-[10px] text-white/70`}>麦克风</span>
+            <span className="text-[10px] text-white/70">麦克风</span>
             {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: showInputPanel ? accentColor : 'rgba(255,255,255,0.3)' }}>{showInputPanel ? 'ON' : 'OFF'}</span>}
           </button>
           {callMode === 'video' && (
             <button onClick={() => setShowUserCameraModePicker(true)} title="选择用户摄像头方式" className="flex flex-col items-center gap-0.5 transition active:scale-95">
-              <span className={`${callControlSize} video-control-circle ${userCameraMode !== 'off' ? 'is-active' : ''} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
+              <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
                 style={userCameraMode !== 'off' ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
                 {userCameraMode !== 'off'
                   ? <VideoCamera size={21} weight="fill" className="text-white/90" />
                   : <VideoCameraSlash size={21} weight="fill" className={userCameraLoading ? 'animate-pulse text-white/70' : 'text-white/48'} />}
               </span>
-              <span className="video-control-label text-[10px] text-white/70">{userCameraLoading ? '准备中' : userCameraMode === 'fake' ? '假机位' : userCameraMode === 'emotion' ? '情绪' : userCameraMode === 'snapshot' ? '快照' : '用户画面'}</span>
+              <span className="text-[10px] text-white/70">{userCameraLoading ? '准备中' : userCameraMode === 'fake' ? '假机位' : userCameraMode === 'emotion' ? '情绪' : userCameraMode === 'snapshot' ? '快照' : '用户画面'}</span>
             </button>
           )}
           {/* translate */}
           <button onClick={() => setShowLangPicker(prev => !prev)} title="语音语种" className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}>
-            <span className={`${callControlSize} ${callMode === 'voice' ? 'voice-control-circle' : 'video-control-circle'} ${callMode === 'video' && voiceLang ? 'is-active' : ''} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
+            <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
               style={voiceLang ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
               <Translate size={22} weight="fill" className="text-white/90" />
             </span>
-            <span className={`${callMode === 'video' ? 'video-control-label' : 'voice-control-label'} text-[10px] text-white/70`}>翻译</span>
+            <span className="text-[10px] text-white/70">翻译</span>
             {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: voiceLang ? accentColor : 'rgba(255,255,255,0.3)' }}>{voiceLang ? 'ON' : 'OFF'}</span>}
           </button>
           {/* end call */}
           <button onClick={handleHangup} className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}>
-            <span className={`${callControlSize} ${callMode === 'video' ? 'video-control-circle is-danger' : ''} rounded-full border flex items-center justify-center backdrop-blur-md transition hover:bg-rose-500/20 mx-auto`}
-              style={callMode === 'voice' ? { background: '#ef4444', borderColor: '#ef4444', boxShadow: '0 4px 12px rgba(239,68,68,.3)' } : { background: 'rgba(244,63,94,0.12)', borderColor: 'rgba(251,113,133,0.4)' }}>
-              <PhoneDisconnect size={22} weight="fill" className={callMode === 'voice' ? 'text-white' : 'text-rose-300/90'} />
+            <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition hover:bg-rose-500/20 mx-auto`}
+              style={{ background: 'rgba(244,63,94,0.12)', borderColor: 'rgba(251,113,133,0.4)' }}>
+              <PhoneDisconnect size={22} weight="fill" className="text-rose-300/90" />
             </span>
-            <span className={`${callMode === 'video' ? 'video-control-label' : 'voice-control-label'} text-[10px] text-white/70`}>结束通话</span>
+            <span className="text-[10px] text-white/70">结束通话</span>
           </button>
           {/* speaker */}
           <button
@@ -3849,44 +3907,22 @@ ${sentencePlan}`;
               const next = !isSpeakerOn;
               setIsSpeakerOn(next);
               if (!next && isAudioPlaying) pauseAudio();
+              if (next) primeCallAudioFromGesture(true);
             }}
             title={isSpeakerOn ? '外放开启' : '外放关闭'}
             className={`flex flex-col items-center transition active:scale-95 ${callMode === 'video' ? 'gap-0.5' : 'gap-1.5'}`}
           >
-            <span className={`${callControlSize} ${callMode === 'voice' ? 'voice-control-circle' : 'video-control-circle'} ${callMode === 'video' && isSpeakerOn ? 'is-active' : ''} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
+            <span className={`${callControlSize} rounded-full border flex items-center justify-center backdrop-blur-md transition mx-auto`}
               style={isSpeakerOn ? { background: `${accentColor}33`, borderColor: `${accentColor}88`, boxShadow: `0 0 18px ${accentColor}55` } : { background: 'rgba(255,255,255,0.06)', borderColor: 'rgba(255,255,255,0.15)' }}>
               {isSpeakerOn
                 ? <SpeakerHigh size={22} weight="fill" className="text-white/90" />
                 : <SpeakerSlash size={22} weight="fill" className="text-white/50" />}
             </span>
-            <span className={`${callMode === 'video' ? 'video-control-label' : 'voice-control-label'} text-[10px] text-white/70`}>外放</span>
+            <span className="text-[10px] text-white/70">外放</span>
             {callMode !== 'video' && <span className="text-[8px] tracking-[0.15em]" style={{ color: isSpeakerOn ? accentColor : 'rgba(255,255,255,0.3)' }}>{isSpeakerOn ? 'ON' : 'OFF'}</span>}
           </button>
         </div>
       </div>
-      <audio
-        ref={audioRef}
-        src={audioUrl}
-        muted={!isSpeakerOn}
-        onPlay={() => {
-          clearSilentSpeechTimer();
-          setIsAudioPlaying(true);
-          setCallState('speaking');
-          const pending = pendingCueScheduleRef.current;
-          if (pending) {
-            pendingCueScheduleRef.current = null;
-            const durationSec = audioRef.current?.duration;
-            const durationMs = Number.isFinite(durationSec) && (durationSec as number) > 0
-              ? (durationSec as number) * 1000
-              : pending.fallbackMs;
-            schedulePerformanceCues(pending.cues, durationMs);
-          }
-        }}
-        onPause={() => { setIsAudioPlaying(false); clearPerformanceCueTimers(); if (callState === 'speaking') setCallState('listening'); }}
-        onEnded={() => { setIsAudioPlaying(false); clearPerformanceCueTimers(); if (callState === 'speaking') setCallState('listening'); }}
-      />
-      <VoiceFavoriteActionSheet open={!!voiceFavoriteTarget} favorited={voiceFavoriteSaved} busy={voiceFavoriteBusy}
-        title="通话语音" preview={voiceFavoriteTarget?.text} onToggle={() => void toggleCallVoiceFavorite()} onClose={() => setVoiceFavoriteTarget(null)} />
       {showUserCameraModePicker && callMode === 'video' && (
         <UserCameraModePicker
           mode={userCameraMode}
@@ -3902,106 +3938,26 @@ ${sentencePlan}`;
       )}
       {showBgPicker && (
         <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end" onClick={() => setShowBgPicker(false)}>
-          <div className={`w-full max-h-[84%] overflow-y-auto border-t rounded-t-3xl p-5 space-y-4 ${lightTheme ? 'border-[#d9e1ec] bg-[#f6f8fb] text-[#20304a]' : 'border-white/10 bg-[#120c22] text-white'}`} onClick={e => e.stopPropagation()}>
-            <div>
-              <div className="text-base font-semibold">{stageLayerPicker === 'foreground' ? '舞台前景层' : '视频背景'}</div>
-              <p className={`mt-1 text-xs ${lightTheme ? 'text-[#66758e]' : 'text-white/45'}`}>本地图片保存在你的设备里（IndexedDB，随完整备份导出）；图床直链每次在线加载。</p>
+          <div className={`w-full border-t border-white/10 rounded-t-3xl p-5 space-y-3 ${lightTheme ? 'bg-[#f6f4fc]' : 'bg-[#120c22]'}`} onClick={e => e.stopPropagation()}>
+            <div className="text-sm text-white/80 font-medium">视频背景</div>
+            <p className="text-xs text-white/40">本地图片保存在你自己的设备里（IndexedDB，随备份导出）；图床直链则每次在线加载。</p>
+            <button onClick={chooseStageBackgroundFile} className="w-full py-2.5 rounded-2xl border border-white/15 bg-white/[0.06] text-sm text-white/85 transition active:scale-[0.98]">
+              选择本地图片
+            </button>
+            <div className="flex gap-2">
+              <input
+                value={bgUrlInput}
+                onChange={e => setBgUrlInput(e.target.value)}
+                placeholder="https:// 图片直链"
+                className="flex-1 min-w-0 bg-black/30 rounded-xl px-3 py-2.5 text-sm outline-none placeholder:text-white/30 border border-white/10"
+              />
+              <button onClick={() => void applyBgUrlInput()} className="keep-white shrink-0 px-4 rounded-xl text-sm font-medium text-white transition active:scale-95" style={{ backgroundColor: accentColor }}>使用</button>
             </div>
-            <div className={`grid grid-cols-2 rounded-2xl p-1 ${lightTheme ? 'bg-[#e7edf5]' : 'bg-white/[0.08]'}`}>
-              {(['single', 'time'] as const).map(mode => (
-                <button key={mode} onClick={() => selectedChar && updateCharacter(selectedChar.id, stageLayerPicker === 'foreground' ? { videoCallForegroundMode: mode } : { videoCallBackgroundMode: mode })}
-                  className={`rounded-xl py-2 text-sm font-medium transition ${stageLayerMode === mode || (mode === 'single' && stageLayerMode !== 'time') ? (lightTheme ? 'bg-[#ffffff] shadow-sm' : 'bg-white/15') : 'opacity-55'}`}>
-                  {mode === 'single' ? '固定图片' : '时间模式'}
-                </button>
-              ))}
-            </div>
-            {stageLayerPicker === 'foreground' && activeStageForeground && (
-              <button
-                onClick={() => {
-                  setShowBgPicker(false);
-                  setForegroundEditingPeriod(stageLayerMode === 'time' ? activeStageBackgroundPeriod : null);
-                  setForegroundEditing(true);
-                }}
-                className="keep-white sticky top-0 z-10 w-full rounded-2xl bg-[#ef4444] py-3 text-sm font-bold text-white shadow-[0_7px_20px_rgba(239,68,68,.28)] ring-1 ring-[#dc2626] transition active:scale-[0.98]"
-              >
-                {stageLayerMode === 'time'
-                  ? `调整当前「${stageBackgroundPeriods.find(item => item.id === activeStageBackgroundPeriod)?.label || '时段'}」前景位置与缩放`
-                  : '进入画面调整位置与缩放'}
+            {selectedChar?.videoCallBackground && (
+              <button onClick={() => { void applyStageBackground(undefined); setShowBgPicker(false); addToast('已恢复默认背景', 'success'); }} className="w-full py-2 text-xs text-white/45 transition active:opacity-60">
+                恢复默认背景
               </button>
             )}
-            {stageLayerMode !== 'time' ? (
-              <>
-                <button onClick={() => chooseStageBackgroundFile()} className={`w-full py-2.5 rounded-2xl border text-sm transition active:scale-[0.98] ${lightTheme ? 'border-[#d9e1ec] bg-[#ffffff]' : 'border-white/15 bg-white/[0.06]'}`}>
-                  选择本地图片
-                </button>
-                <div className="flex gap-2">
-                  <input value={bgUrlInput} onChange={e => setBgUrlInput(e.target.value)} placeholder="https:// 图片直链"
-                    className={`flex-1 min-w-0 rounded-xl px-3 py-2.5 text-sm outline-none border ${lightTheme ? 'border-[#d9e1ec] bg-[#ffffff] placeholder:text-[#9aa6b8]' : 'border-white/10 bg-black/30 placeholder:text-white/30'}`} />
-                  <button onClick={() => void applyBgUrlInput()} className="keep-white shrink-0 px-4 rounded-xl text-sm font-medium text-white transition active:scale-95" style={{ backgroundColor: accentColor }}>使用</button>
-                </div>
-                {stageLayerSingle && (
-                  <button onClick={() => { void applyStageBackground(undefined); addToast('图片已清除', 'success'); }} className="w-full py-2 text-xs opacity-55 transition active:opacity-30">清除图片</button>
-                )}
-              </>
-            ) : (
-              <>
-                <div className={`rounded-2xl px-3 py-2 text-xs ${lightTheme ? 'bg-[#eaf1fb] text-[#52647d]' : 'bg-white/[0.06] text-white/55'}`}>
-                  按 {selectedChar?.customTimezoneEnabled && selectedChar.customTimezone ? selectedChar.customTimezone : '设备时区'} 自动切换；当前为「{stageBackgroundPeriods.find(item => item.id === activeStageBackgroundPeriod)?.label}」。未配置的时段会沿用单张背景。
-                </div>
-                <div>
-                  <div className="mb-2 text-xs font-medium opacity-65">选择时间段数量</div>
-                  <div className="grid grid-cols-4 gap-2">
-                    {([3, 4, 5, 6] as VideoCallBackgroundSegmentCount[]).map(count => {
-                      const active = (selectedChar?.videoCallBackgroundSegmentCount || 4) === count;
-                      return <button key={count} onClick={() => selectedChar && updateCharacter(selectedChar.id, { videoCallBackgroundSegmentCount: count })}
-                        className={`rounded-xl border py-2 text-xs font-medium transition ${active ? 'keep-white text-white' : (lightTheme ? 'border-[#d9e1ec] bg-[#ffffff] text-[#52647d]' : 'border-white/10 bg-white/[0.04]')}`}
-                        style={active ? { backgroundColor: accentColor, borderColor: accentColor } : undefined}>{count} 段</button>;
-                    })}
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  {stageBackgroundPeriods.map(period => {
-                    const saved = stageLayerSchedule?.[period.id];
-                    const expanded = expandedBackgroundPeriod === period.id;
-                    return (
-                      <div key={period.id} className={`overflow-hidden rounded-2xl border ${lightTheme ? 'border-[#d9e1ec] bg-[#ffffff] text-[#20304a] shadow-[0_2px_10px_rgba(42,57,78,0.04)]' : 'border-white/10 bg-white/[0.04]'}`}>
-                        <button onClick={() => setExpandedBackgroundPeriod(current => current === period.id ? null : period.id)} className="flex w-full items-center justify-between gap-3 p-3 text-left">
-                          <div><div className="text-sm font-semibold">{period.label}</div><div className="text-[11px] opacity-50">{period.range}{activeStageBackgroundPeriod === period.id ? ' · 当前时段' : ''}</div></div>
-                          <div className="flex items-center gap-2">
-                            <span className={`rounded-full px-2 py-1 text-[10px] ${saved ? (lightTheme ? 'bg-[#eaf1fb] text-[#52647d]' : 'bg-white/10 text-white/65') : 'opacity-40'}`}>{saved ? '已配置' : '未配置'}</span>
-                            <CaretDown size={14} weight="bold" className={`transition-transform opacity-50 ${expanded ? 'rotate-180' : ''}`} />
-                          </div>
-                        </button>
-                        {expanded && <div className={`border-t p-3 ${lightTheme ? 'border-[#e5eaf1] bg-[#f8fafc]' : 'border-white/[0.07] bg-black/10'}`}>
-                          <div className="flex items-center justify-between gap-2">
-                            <button onClick={() => chooseStageBackgroundFile(period.id)} className={`flex-1 rounded-xl border px-3 py-2.5 text-xs font-medium ${lightTheme ? 'border-[#d9e1ec] bg-[#ffffff]' : 'border-white/15 bg-white/[0.06]'}`}>{saved ? '替换本地图片' : '选择本地图片'}</button>
-                            {saved && <button onClick={() => void applyScheduledStageBackground(period.id, undefined)} className={`rounded-xl px-3 py-2.5 text-xs ${lightTheme ? 'text-[#8b6670]' : 'text-rose-200/70'}`}>清除</button>}
-                          </div>
-                          {stageLayerPicker === 'foreground' && saved && (
-                            <button
-                              onClick={() => {
-                                setShowBgPicker(false);
-                                setForegroundEditingPeriod(period.id);
-                                setForegroundEditing(true);
-                              }}
-                              className="keep-white mt-2 w-full rounded-xl bg-[#ef4444] py-2.5 text-xs font-bold text-white shadow-[0_5px_14px_rgba(239,68,68,.24)] ring-1 ring-[#dc2626] transition active:scale-[0.98]"
-                            >
-                              调整「{period.label}」的位置与缩放
-                            </button>
-                          )}
-                          <div className="mt-2 flex gap-2">
-                            <input value={bgScheduleUrlInputs[period.id] || ''} onChange={e => setBgScheduleUrlInputs(current => ({ ...current, [period.id]: e.target.value }))} placeholder="https:// 该时段图片直链"
-                              className={`flex-1 min-w-0 rounded-xl px-3 py-2.5 text-xs outline-none border ${lightTheme ? 'border-[#d9e1ec] bg-[#ffffff] placeholder:text-[#9aa6b8]' : 'border-white/10 bg-black/25 placeholder:text-white/25'}`} />
-                            <button onClick={() => void applyScheduledBgUrlInput(period.id)} className="keep-white shrink-0 rounded-xl px-3 text-xs text-white" style={{ backgroundColor: accentColor }}>使用</button>
-                          </div>
-                        </div>}
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-            <button onClick={() => setShowBgPicker(false)} className="w-full py-2 text-sm opacity-65">完成</button>
           </div>
         </div>
       )}
@@ -4040,7 +3996,6 @@ ${sentencePlan}`;
                     sessionId: currentSessionId,
                     elapsedSeconds,
                     voiceLang,
-                    callMode,
                     pendingAvatarTouches: pendingAvatarTouchesRef.current,
                   });
                   addToast('通话已挂起，点击顶部绿色条可随时回来', 'success');
@@ -4069,13 +4024,21 @@ ${sentencePlan}`;
           </div>
         </div>
       )}
+      <VoiceFavoriteActionSheet
+        open={!!voiceFavoriteTarget}
+        favorited={voiceFavoriteSaved}
+        busy={voiceFavoriteBusy}
+        title="通话语音"
+        preview={voiceFavoriteTarget ? (stripCallTextFormatting(extractVoiceTag(voiceFavoriteTarget.bubble.text).display) || stripTtsMarkupForDisplay(extractVoiceTag(voiceFavoriteTarget.bubble.text).voiceText, apiConfig)) : ''}
+        onToggle={() => void toggleCallVoiceFavorite()}
+        onClose={() => { if (!voiceFavoriteBusy) setVoiceFavoriteTarget(null); }}
+      />
       {showLive2DSettings && selectedChar?.videoAvatar?.format === 'live2d' && (
         <div className="sully-stage-dark" style={{ display: 'contents' }}>
           <Live2DActionSettings
             config={selectedChar.videoAvatar}
             characterName={selectedChar.name}
             accentColor={accentColor}
-            lightTheme
             setupMode={live2DWardrobeOnboarding ? 'import' : 'advanced'}
             onClose={() => { setShowLive2DSettings(false); setLive2DWardrobeOnboarding(false); }}
             onSave={(config: Live2DAvatarConfig) => {

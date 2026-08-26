@@ -10,7 +10,7 @@
  *   · 实色按钮（accent/绿/红底）标 `.keep-white` 强制白字。
  */
 
-const INK = '30,41,59'; // #1e293b 冷灰蓝墨色
+const INK = '38,34,57'; // #262239 深紫灰墨色
 
 const rules: string[] = [];
 
@@ -23,7 +23,7 @@ const pair = (selector: string, lightDecl: string, darkDecl: string): void => {
 // ── 文字：白 → 墨（低透明度略抬高保证可读） ──
 pair('.text-white', 'color:#262239', 'color:#fff');
 // 根容器自己就挂着 text-white（后代选择器够不到自身），补一条复合选择器
-rules.push('.sully-call-light.text-white{color:#1e293b !important}');
+rules.push('.sully-call-light.text-white{color:#262239 !important}');
 for (const alpha of [95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30]) {
   const lightAlpha = Math.min(1, alpha / 100 + 0.08).toFixed(2);
   pair(`.text-white\\/${alpha}`, `color:rgba(${INK},${lightAlpha})`, `color:rgba(255,255,255,${alpha / 100})`);
@@ -67,7 +67,6 @@ pair('.text-rose-300\\/65', 'color:rgba(225,29,72,0.7)', 'color:rgba(253,164,175
 
 // 实色底按钮（accent/绿/红）不论主题都要白字
 rules.push('.sully-call-light .keep-white{color:#fff !important}');
-rules.push('.sully-call-light{color-scheme:light;background:#f0f3f8!important;background-image:none!important}');
-rules.push('.sully-call-light .call-channel-meta,.sully-call-light .call-signal-meta{display:none!important}');
+rules.push('.sully-call-light{color-scheme:light}');
 
 export const CALL_LIGHT_THEME_CSS = rules.join('\n');
