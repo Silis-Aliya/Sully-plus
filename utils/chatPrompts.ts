@@ -481,7 +481,7 @@ export const ChatPrompts = {
         // 自己去拉一次天气热搜、按角色时区判今天是不是节日，再填进去（见 worker/amsg 的
         // realtimeWorld）。两边的取数与措辞都来自 realtimeWorldCore，是同一份。
         const realtimePromise: Promise<string> = (async () => {
-            if (forFirePack) return '';
+            if (forFirePack || timelyByWorker) return '';
             try {
                 if (config.weatherEnabled || config.newsEnabled) {
                     // 时间行跟着角色的「时间感知」开关走：关掉的角色不该从天气块里读到

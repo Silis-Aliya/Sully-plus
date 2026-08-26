@@ -423,7 +423,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // ── 9d. 通用 MCP 工具模式 (用户自配的远程 MCP 服务器, 见 docs/mcp-client.md) ──
     // 工具清单来自持久化的发现结果，变化很慢 → 稳定段。
     const mcpChatActive = !isCodeSurface && isMcpChatAvailable(char.id);
-    if (mcpChatActive) {
+    if (mcpChatActive && !input.timelyByWorker) {
         const block = buildMcpSystemBlock(userProfile?.name || '用户', char.id);
         if (block) {
             systemPrompt += block;
@@ -477,7 +477,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             content: `[Reminder: 每句话必须用 <翻译><原文>...</原文><译文>...</译文></翻译> 标签包裹。一句一个标签。绝对不能省略。]`,
         });
     }
-    if (mcpChatActive) {
+    if (mcpChatActive && !input.timelyByWorker) {
         fullMessages.push({ role: 'system', content: MCP_TAIL_REMINDER });
     }
 
