@@ -221,10 +221,34 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         input.categories,
         char.id,
     );
-    const recentMsgsHint = input.recentMsgsHint ?? historyMsgs;
+    const rawRecentMsgsHint = input.recentMsgsHint ?? historyMsgs;
+    const useVisionDescriptions = input.visionApiConfig?.enabled === true;
+    let historyMsgsForPrompt = historyMsgs;
+    let recentMsgsHint = rawRecentMsgsHint;
+
+    if (useVisionDescriptions) {
+        const uniqueMessages = new Map<number, Message>();
+        for (const message of rawRecentMsgsHint) uniqueMessages.set(message.id, message);
+        for (const message of historyMsgs) uniqueMessages.set(message.id, message);
+        const prepared = await materializeVisionDescriptions(
+            [...uniqueMessages.values()],
+            input.visionApiConfig,
+        );
+        const preparedById = new Map(prepared.map(message => [message.id, message]));
+        historyMsgsForPrompt = historyMsgs.map(message => preparedById.get(message.id) || message);
+        recentMsgsHint = rawRecentMsgsHint.map(message => preparedById.get(message.id) || message);
+    }
 
     if (isPromptBuildSkipped()) {
-        const { apiMessages } = ChatPrompts.buildMessageHistory(historyMsgs, contextLimit, char, userProfile, emojis);
+        const { apiMessages } = ChatPrompts.buildMessageHistory(
+            historyMsgsForPrompt,
+            contextLimit,
+            char,
+            userProfile,
+            emojis,
+            undefined,
+            { useVisionDescriptions },
+        );
         const cleanedApiMessages = cleanApiMessages(input.stripImages ? flattenImageContentParts(apiMessages) : apiMessages);
         console.warn('[DevDebug] Prompt Build skipped: sending chat history without system prompt injection.');
         return {
@@ -342,7 +366,15 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     }
 
     // ── 7. 历史消息构造 ───────────────────────────────────
-    const { apiMessages } = ChatPrompts.buildMessageHistory(historyMsgs, contextLimit, char, userProfile, emojis);
+    const { apiMessages } = ChatPrompts.buildMessageHistory(
+        historyMsgsForPrompt,
+        contextLimit,
+        char,
+        userProfile,
+        emojis,
+        undefined,
+        { useVisionDescriptions },
+    );
 
     // ── 8. 剥离历史里旧的双语标签（stripImages 时先压平 image_url → 纯文本占位） ──
     const cleanedApiMessages = cleanApiMessages(input.stripImages ? flattenImageContentParts(apiMessages) : apiMessages);
