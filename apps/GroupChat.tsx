@@ -361,7 +361,7 @@ const GroupMessageItem = React.memo(({
                 {msg.replyTo && (
                     <div className="mb-1 text-[10px] bg-black/5 p-1.5 rounded-md border-l-2 border-slate-300 text-slate-500 flex flex-col gap-0.5 max-w-full overflow-hidden">
                         <span className="font-bold truncate">{msg.replyTo.name}</span>
-                        <span className="truncate italic">"{msg.replyTo.content.length > 10 ? msg.replyTo.content.slice(0, 10) + '...' : msg.replyTo.content}"</span>
+                        <span className="truncate italic">"{buildReplySnapshotContent({ content: msg.replyTo.content })}"</span>
                     </div>
                 )}
                 {renderContent()}
