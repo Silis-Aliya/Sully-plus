@@ -1399,6 +1399,8 @@ interface MessageItemProps {
     charAvatar: string;
     charName: string;
     userAvatar: string;
+    /** 当前窗口里的最后一条消息；最新图片立即解码，避免移动端懒加载卡在底部。 */
+    isLatestMessage?: boolean;
     onLongPress: (m: Message) => void;
     onReply: (m: Message) => void;
     selectionMode: boolean;
@@ -1458,6 +1460,7 @@ const MessageItem = React.memo(({
     charAvatar,
     charName,
     userAvatar,
+    isLatestMessage = false,
     onLongPress,
     onReply,
     selectionMode,
@@ -4233,6 +4236,7 @@ const MessageItem = React.memo(({
            prev.charAvatar === next.charAvatar &&
            prev.charName === next.charName &&
            prev.userAvatar === next.userAvatar &&
+           prev.isLatestMessage === next.isLatestMessage &&
            prev.selectionMode === next.selectionMode &&
            prev.isSelected === next.isSelected &&
            prev.translationEnabled === next.translationEnabled &&

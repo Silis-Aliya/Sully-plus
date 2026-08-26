@@ -3606,6 +3606,7 @@ const Chat: React.FC = () => {
                             charAvatar={char.avatar}
                             charName={char.name}
                             userAvatar={userProfile.perCharAvatars?.[char.id] || userProfile.avatar}
+                            isLatestMessage={i === displayMessages.length - 1}
                             moduleAlign={mergedFineTune.chatModuleAlign || 'center'}
                             onLongPress={handleMessageLongPress}
                             onReply={handleQuickReply}
