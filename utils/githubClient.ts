@@ -9,14 +9,12 @@
  *     UX as WebDAV ('cleanupOldBackups keeps latest N').
  *
  * Two transports, mirroring webdavClient.ts:
- *   - Native (Capacitor): CapacitorHttp talks straight to api.github.com /
- *     uploads.github.com. Bypasses CORS and the worker entirely.
- *   - Web: direct fetch by default. api.github.com sets CORS for any origin
- *     (per GitHub docs); uploads.github.com does too. If the user's network
- *     can't reach github.com (GFW), they flip 'githubUseProxy' on and we
- *     route through the same sully-n CF Worker that handles WebDAV — Worker
- *     free tier caps each request body at ~100 MB, but it's enough to
- *     unblock most users.
+ *   - Direct: api.github.com and uploads.github.com are contacted separately.
+ *     Reachability differs by device, browser/PWA, VPN rules and network; being
+ *     able to open github.com or pass token verification proves neither route.
+ *   - App-level proxy: after explicit user consent, both requests go through
+ *     the configured Cloudflare Worker. This is independent of the system VPN
+ *     and can succeed or fail independently too.
  */
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
@@ -367,9 +365,9 @@ const uploadOneAsset = async (
             if (xhr.status === 201) resolve({ ok: true, message: '上传成功' });
             else resolve({ ok: false, message: `上传失败 (${xhr.status}): ${(xhr.responseText || '').slice(0, 120)}` });
         };
-        xhr.onerror = () => resolve({ ok: false, message: '上传失败: 网络错误（如果在国内，试试在高级设置里开启代理）' });
+        xhr.onerror = () => resolve({ ok: false, message: describeGithubUploadTransportFailure(config) });
         xhr.onabort = () => resolve({ ok: false, message: '上传已取消' });
-        xhr.ontimeout = () => resolve({ ok: false, message: '上传超时' });
+        xhr.ontimeout = () => resolve({ ok: false, message: describeGithubUploadTransportFailure(config, 'timeout') });
         xhr.send(blob);
     });
 };

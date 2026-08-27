@@ -1482,6 +1482,21 @@ const Settings: React.FC = () => {
       setGhTesting(false);
   };
 
+  const handleGithubProxyToggle = (enabled: boolean) => {
+      setGhUseProxy(enabled);
+      // 勾选本身就是用户对中转的明确同意，立即持久化。旧行为只有再次完成
+      // “测试并连接”才保存，用户可能勾完直接关闭，实际上传仍在走直连。
+      updateCloudBackupConfig({
+          githubUseProxy: enabled,
+          githubProxyConsentVersion: enabled ? 1 : undefined,
+      });
+      trackEvent('切换 GitHub 备份线路', { route: enabled ? 'cloudflare_worker' : 'direct' });
+      addToast(
+          enabled ? '已改用应用内 Cloudflare 中转，下次备份立即生效' : '已改为直连 GitHub 附件域名',
+          'info',
+      );
+  };
+
   const handleDisableCloud = () => {
       trackEvent('关闭云端备份', { provider: cloudBackupConfig.provider === 'github' ? 'github' : 'webdav' });
       updateCloudBackupConfig({ enabled: false });
@@ -3555,12 +3570,19 @@ const Settings: React.FC = () => {
           out owner via /user and auto-create a private 'sully-backup' repo. */}
       <Modal isOpen={showGithubModal} title="GitHub 备份" onClose={() => setShowGithubModal(false)}>
           <div className="space-y-4 p-1">
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
                   <p className="text-[11px] text-slate-700 leading-relaxed">
-                      <b>三步搞定，不用梯子：</b><br/>
+                      <b>三步连接 GitHub：</b><br/>
                       ① 点下面按钮跳到 GitHub 创建 Token<br/>
                       ② 复制 token，回来粘到下面框里<br/>
                       ③ 点 <b>测试并连接</b> — 我们会自动帮你建好私有仓库 <code className="bg-white px-1 rounded">{ghRepo || 'sully-backup'}</code>
+                  </p>
+                  <p className="text-[10px] text-slate-500 leading-relaxed border-t border-slate-200 pt-2">
+                      <b>连接成功不等于上传一定能通。</b> GitHub 网页、账号接口和 ZIP 附件上传分别使用
+                      <code className="mx-0.5 bg-white px-1 rounded">github.com</code>、
+                      <code className="mx-0.5 bg-white px-1 rounded">api.github.com</code>、
+                      <code className="mx-0.5 bg-white px-1 rounded">uploads.github.com</code>。
+                      不同网络、梯子分流和 iOS PWA 可能只接管其中一部分，所以会出现“网页能进但上传失败”或“开着梯子反而不通”。
                   </p>
               </div>
 
@@ -3659,6 +3681,11 @@ const Settings: React.FC = () => {
                           />
                           <span>走 Cloudflare 代理（默认开，国内必需；能直连 GitHub 的可关掉提速）</span>
                       </label>
+                      <p className="text-[10px] text-slate-500 leading-relaxed pl-5">
+                          <b>{ghUseProxy ? '当前线路：浏览器 → Cloudflare Worker → GitHub。' : '当前线路：浏览器 → GitHub 直连。'}</b>
+                          勾选状态会立即保存，不必重新连接。系统梯子可能因规则分流、节点或 PWA 未接管而漏掉
+                          <code className="mx-0.5 bg-white px-1 rounded">uploads.github.com</code>；应用内中转是另一条独立线路，也可能被某些网络拦截。
+                      </p>
                       <p className="text-[10px] text-slate-400 leading-relaxed pl-5">
                           大于 80MB 的备份会自动切成多片上传，所以勾着也能传 1GB+ 的完整备份，恢复时自动拼回来。能直连 github.com 的可以关掉提速。
                       </p>
