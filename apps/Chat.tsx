@@ -4377,9 +4377,10 @@ const Chat: React.FC = () => {
                 <VoiceFavoritesPortal onClose={() => setVoiceFavoritesOpen(false)} />
             )}
 
-            {collaborationOpen && char && (
-                <React.Suspense fallback={<div className="absolute inset-0 z-[120] grid place-items-center bg-slate-50 text-xs text-slate-400">正在打开协同工作…</div>}>
+            {char && (
+                <React.Suspense fallback={collaborationOpen ? <div className="absolute inset-0 z-[120] grid place-items-center bg-slate-50 text-xs text-slate-400">正在打开协同工作…</div> : null}>
                     <CollaborationWindow
+                        open={collaborationOpen}
                         character={char}
                         user={userProfile}
                         theme={activeTheme}
