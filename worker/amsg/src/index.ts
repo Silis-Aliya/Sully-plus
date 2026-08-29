@@ -131,7 +131,7 @@ import { XhsMcpClient } from '../../../utils/xhsMcpClient';
 import type { ToolCall } from '../../instant-push/src/classifier';
 import {
   createFireSessionState,
-  MAX_TOOL_ITERATIONS,
+  resolveToolIterationBudget,
   processLLMRound,
   type FireSessionState,
 } from './agentic';
@@ -839,12 +839,12 @@ export const runFireScheduleTool = async (
 const FINAL_ROUND_NOTICE = '（提醒：这是最后一轮了，不要再调用任何工具，直接把想说的话写完。）';
 
 /** 本轮的工具结果是不是喂给最后一轮的（ctx.iteration 缺失的老部署不提示）。 */
-const feedsFinalRound = (iteration: number | undefined): boolean =>
-  typeof iteration === 'number' && iteration >= MAX_TOOL_ITERATIONS - 2;
+const feedsFinalRound = (iteration: number | undefined, maxToolIterations: number): boolean =>
+  typeof iteration === 'number' && iteration >= maxToolIterations - 2;
 
 /**
- * 单个 MCP 调用的超时。总 fire 预算 240s / 最多 5 轮，一个慢服务器不能吃光
- * 整条链（浏览器侧是 60s，那边没有轮次预算压力）。
+ * 单个 MCP 调用的超时。总 fire 预算 240s；MCP 虽可自适应推进到 12 轮，一个慢服务器
+ * 仍不能吃光整条链（浏览器侧是 60s，那边没有同一份 fire 总预算压力）。
  *
  * 单次上限之外还有下面那条共享总预算：native FC 一轮可以吐好几个调用，
  * executeToolCalls 是串行 await 的，只卡单次的话 25s × N 照样能顶穿 240s。
@@ -884,7 +884,7 @@ export const runMcpFireTool = async (
       message: 'MCP 调用时间预算已用完，这轮别再调外部工具了，用手上已有的信息收尾。',
     };
   }
-  // 每台服务器一份会话，单次 fire 内跨轮复用：一次 fire 最多五轮，每轮重握手就是白烧往返。
+  // 每台服务器一份会话，单次 fire 内跨轮复用：多步 MCP 最多十二轮，每轮重握手就是白烧往返。
   let session = stash.mcpSessions.get(hit.server.id);
   if (!session) {
     session = createMcpSessionState();
@@ -1137,7 +1137,7 @@ export const amsgHooks = {
 
     // 通用 MCP：提示词块 / tools 数组与凭据同源同拍（都来自这一行 tool_config），
     // 不存在「教了角色用、凭据却没到」的窗口。charIds 过滤与前台同语义。
-    // mcpUseNativeTools=false = 用户的中转拒 tools（前台兼容模式同款开关），
+    // mcpUseNativeTools=false = 用户的中转拒 tools（前台「原生 tools」开关已关闭），
     // 请求不带 tools 参数、提示词块教正文协议，识别走 processLLMRound 第二层。
     const mcpServers = filterMcpServersForChar(toolConfig.mcpServers, charId);
     // 暴露名后面要拼 MCP_FIRE_NAME_PREFIX，长度预算得先把前缀那几个字符扣掉。
@@ -1145,6 +1145,9 @@ export const amsgHooks = {
       ? buildMcpNameMap(mcpServers, { maxNameLen: MCP_FIRE_NAME_BUDGET })
       : null;
     const mcpNative = toolConfig.mcpUseNativeTools !== false;
+    // 只有通用 MCP 使用长预算；普通搜索/记忆/排程仍是原来的 5 轮。长预算也不是固定
+    // 跑满：模型正常收尾立即结束，连续重复调用则由 duplicate 闸提前收束。
+    const maxToolIterations = resolveToolIterationBudget(!!mcpResolve);
 
     // 角色上次到点自己说了什么：跟这份 fire_pack 对得上才算数，对不上就当没有、从空的一份
     // 重新开始攒。判定与「丢弃」的理由见 amsgFirePack 的 selfLogMatchesPack。
@@ -1567,7 +1570,11 @@ export const amsgHooks = {
         // 同名同参第二次直接打回，一次请求都不发。软提示（下面那段回喂）挡不住时靠它兜底：
         // 转满上限会抛 AGENTIC_LOOP_EXCEEDED，任务不出清、下一分钟整条从头重跑，代价远大于
         // 少查一次。只拦完全一样的调用——换月份、换关键词照常放行，多轮能力不受影响。
-        if (stash.session.toolCalls.some((r) => r.fingerprint === fingerprint)) {
+        // 只拦「连续原地重复」。游戏型 MCP 的正常流程会是 get_state({}) → act(...)
+        // → get_state({})；旧逻辑扫描整段历史，把第二次状态查询也当重复，角色永远看不到
+        // 动作后的新状态。中间只要有别的有效调用，就允许同名同参再次执行。
+        const previousCall = stash.session.toolCalls[stash.session.toolCalls.length - 1];
+        if (previousCall?.fingerprint === fingerprint) {
           // 计数交给 processLLMRound：连着重复到阈值就直接收尾，不陪它转到轮次上限
           // （上限一到整条任务失败重跑，用户一个字都收不到）。
           stash.session.duplicateToolCalls += 1;
@@ -1666,7 +1673,7 @@ export const amsgHooks = {
     }
 
     // 只挂在最后一条 tool 消息末尾（离模型下一次输出最近），不逐条重复刷屏。
-    if (feedsFinalRound(ctx.iteration) && results.length > 0) {
+    if (feedsFinalRound(ctx.iteration, stash.maxToolIterations) && results.length > 0) {
       const last = results[results.length - 1];
       last.content = `${last.content}\n${FINAL_ROUND_NOTICE}`;
     }
