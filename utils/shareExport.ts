@@ -84,6 +84,7 @@ export async function shareOrDownloadBlob(options: ShareOrDownloadBlobOptions): 
     try {
         const file = new File([blob], fileName, { type: blob.type || 'application/octet-stream' });
         const canShareFile = typeof navigator !== 'undefined'
+            && !preferDownloadOnWeb
             && typeof navigator.share === 'function'
             && (typeof navigator.canShare !== 'function' || navigator.canShare({ files: [file] }));
         if (canShareFile) {
@@ -92,7 +93,9 @@ export async function shareOrDownloadBlob(options: ShareOrDownloadBlobOptions): 
         }
     } catch (error: any) {
         if (error?.name === 'AbortError') return 'cancelled';
-        console.error('Web Blob Share Error', error);
+        const expectedPermissionFallback = error?.name === 'NotAllowedError'
+            || /permission denied|not allowed|user activation/i.test(String(error?.message || error));
+        if (!expectedPermissionFallback) console.error('Web Blob Share Error', error);
     }
 
     const url = URL.createObjectURL(blob);
