@@ -820,8 +820,8 @@ const DateSession: React.FC<DateSessionProps> = ({
                 style={{ backgroundImage: bgImageUrl ? `url(${bgImageUrl})` : 'none' }}
             ></div>
 
-            {/* Menu Layer — 手机横向空间很窄：继续 / 输入上下叠成一列，菜单独占右列。
-                顶部只占两列宽，避免压住左侧 OBSERVE 面板的折叠 / 放大键。 */}
+            {/* Menu Layer — 继续按钮单独在左；菜单 / 输入上下叠在最右列。
+                这样第二行的输入按钮贴右，不会压住阅读模式批量操作栏的中间区域。 */}
             <div className="absolute top-0 right-0 p-4 pt-12 z-[100] flex flex-col items-end gap-2 pointer-events-auto">
                 <div className="flex gap-3">
                     <button onClick={(e) => { e.stopPropagation(); setShowInputBox(!showInputBox); setShowMenu(false); setShowVoiceLangPicker(false); }} className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all shadow-lg active:scale-95 ${showInputBox ? 'bg-primary border-primary text-white' : 'bg-black/30 backdrop-blur-md border-white/20 text-white hover:bg-white/20'}`}>
