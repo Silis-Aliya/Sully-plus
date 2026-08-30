@@ -495,9 +495,14 @@ const processInboxMessageWithPostProcessing = async (
     // 这条 push 拆出的每条气泡共用一个时间戳 (跟降级存原稿路径同口径), 见
     // resolveInboxPersistTimestampForMessage。
     messageTimestamp: persistTimestamp,
-    // 补收的消息跳过拟人打字延迟, 一次性回填: 内容几小时前就在云端生成完了, 再一条条
-    // 慢放只会让用户干等, 期间他插的话还会把时间戳倒挂的口子撑开。实时收到的照旧慢放。
-    instantRender: !isFreshInboxDelivery(message.receivedAt, Date.now()),
+    // 两种情况跳过拟人打字延迟、一次性回填，共同点是「用户已经读过这句话了，再演一遍
+    // 打字过程只剩干等」：
+    //   1. 补收：内容几小时前就在云端生成完了，慢放期间用户插的话还会把时间戳倒挂的
+    //      口子撑开（见 resolveBackfillTimestamp）。
+    //   2. 送达时人不在场：系统通知已经把整句话完整显示过，他是看着通知点进来的。
+    // App 在前台时收到的实时消息照旧慢放——那才是「角色正在你眼前打字」的场景。
+    instantRender: !isFreshInboxDelivery(message.receivedAt, Date.now())
+      || wasDeliveredWhileAway(message.receivedAt),
   });
 
   // ─── Phase 2 Round 2 (2f): push 尾段 ───
@@ -887,6 +892,41 @@ export const isFreshInboxDelivery = (
 };
 
 /**
+ * 页面最近一次回到前台的时刻（epoch 毫秒）。0 = 这一辈子还没可见过 / 没人报过。
+ * 只在内存里，刷新即忘——它要回答的问题也只在本次会话内有意义。
+ */
+let pageBecameVisibleAt = 0;
+
+/** 页面回到前台了。init 时（当时就可见的话）和每次 visibilitychange 转 visible 时报一次。 */
+export const notePageBecameVisible = (at: number = Date.now()): void => {
+  pageBecameVisibleAt = at;
+};
+
+/**
+ * 这条消息落到设备时，用户是不是不在这个页面上（true = 不在，跳过慢放）。
+ *
+ * 慢放（拟人打字节奏）的意义是「角色正在你眼前打字」。人不在场时，系统通知已经把整句话
+ * 完整显示过了，再点进来看它一个字一个字重演一遍，剩下的只有等待。
+ *
+ * 判据是「送达时刻早于页面最近一次回到前台」：
+ *   - App 在前台时收到 → receivedAt 落在这段可见期内 → 在场，保留慢放
+ *   - 切后台 / 锁屏时收到，点通知进来 → 回到前台的时刻晚于 receivedAt → 缺席，跳过
+ *   - 冷启动（点通知才把 App 拉起来）→ 页面首次可见也晚于 receivedAt → 缺席，跳过
+ *
+ * 两处保守退让，都倒向「保留慢放」：receivedAt 缺失/非法（老 push 可能不带），以及还没
+ * 记录过回到前台的时刻（0）——后者若不挡住，会把每一条消息都判成缺席。
+ * 纯函数，边界值见 activeMsgRuntime.test.ts。
+ */
+export const wasDeliveredWhileAway = (
+  receivedAt: number | undefined,
+  becameVisibleAt: number = pageBecameVisibleAt,
+): boolean => {
+  if (typeof receivedAt !== 'number' || !Number.isFinite(receivedAt) || receivedAt <= 0) return false;
+  if (!Number.isFinite(becameVisibleAt) || becameVisibleAt <= 0) return false;
+  return receivedAt < becameVisibleAt;
+};
+
+/**
  * 算一条 inbox 消息落库该用的时间戳：一律取 sentAt（云端真正把这句话发出去的那一刻）。
  * 返回 undefined = 不指定，走 DB.saveMessage 默认的写库当刻（Date.now()）。
  *
@@ -963,8 +1003,23 @@ const resolveInboxPersistTimestampForMessage = async (
   }
 };
 
-/** 重试前等多久。本地存储的抖动一般几秒就过去了，30s 足够缓过来又不至于让用户干等。 */
-const INBOX_RETRY_DELAY_MS = 30_000;
+/**
+ * 重试前等多久（毫秒），按这条消息已经失败的次数取。
+ *
+ * 这条路上最常见的失败是 IndexedDB 的「将死连接」：App 切后台时系统强关连接，页面刚
+ * 解冻就处理推送，正好撞在重建窗口里，`db.transaction()` 同步抛 InvalidStateError
+ * （形态见 db.ts 的 onclose 注释——当次失败，下一次调用就自愈）。自愈是毫秒级的，
+ * 而推送通知早把这句话完整显示过了，聊天界面再让用户对着「正在输入」等半分钟，
+ * 观感上就是「通知都看到了，App 里还没有」。
+ *
+ * 所以第一档压到 1 秒。真的连着失败再拉长，避免存储持续故障时空转
+ * （连挂到 MAX_INBOX_PROCESS_ATTEMPTS 就不重试了，退回存原稿保底）。
+ */
+export const resolveInboxRetryDelay = (attempts: number): number => {
+  const ladder = [1_000, 5_000, 30_000];
+  const nth = Number.isFinite(attempts) ? Math.floor(attempts) : 1;
+  return ladder[Math.min(Math.max(nth, 1), ladder.length) - 1];
+};
 let inboxRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
@@ -972,19 +1027,19 @@ let inboxRetryTimer: ReturnType<typeof setTimeout> | null = null;
  * 「等下次打开 App」不能当作重试时机——用户不会为一条没出现的消息去重启，
  * 在他一直开着 App 聊天的时候，那条消息就永远躺在收件箱里了。
  */
-const scheduleInboxRetry = () => {
+const scheduleInboxRetry = (attempts: number) => {
   if (inboxRetryTimer != null) return;   // 已经排了就不重复排，一次重试会带上全部积压
   inboxRetryTimer = setTimeout(() => {
     inboxRetryTimer = null;
     void flushInboxToChat();
-  }, INBOX_RETRY_DELAY_MS);
+  }, resolveInboxRetryDelay(attempts));
 };
 
 /** 写回收件箱等下次处理（带上失败次数），并排一次自动重试。 */
 const requeueForRetry = async (message: ActiveMsg2InboxMessage, attempts: number): Promise<void> => {
   try {
     await ActiveMsgStore.saveInboxMessage({ ...message, processAttempts: attempts });
-    scheduleInboxRetry();
+    scheduleInboxRetry(attempts);
   } catch (reputErr) {
     // 写回也失败，大概率同一根因（存储关停 / 配额满）。消息到此为止，留个明确的日志。
     log.error('requeue failed, message lost', { messageId: message.messageId, error: reputErr });
@@ -1112,6 +1167,12 @@ const holdUntilEarlierChunksLand = async (
   });
   return true;
 };
+
+/**
+ * 送达失败发生在哪一段。**每条上报都要带**：不带的话面板上会多出一个空分组，
+ * 而空分组恰恰是最需要被看见的那种「不知道哪来的」。
+ */
+type InboxFailureStage = '收发' | '防穿帮闸' | '后处理' | '补收';
 
 /**
  * 告诉用户「有条消息没能正常显示」。
@@ -1760,11 +1821,6 @@ export const ActiveMsgRuntime = {
       });
     }
 
-    // 回到前台兜底: 后台期间 SW 收到 push 写进 inbox 后会 postMessage 触发 flushInboxToChat,
-    // 但页面被冻结 (iOS PWA / 移动端后台) 时那条 postMessage 可能丢失, 导致回前台后消息卡在 inbox
-    // 里不刷新 ("离开后台消息不返回"). 这里 visibilitychange→visible 主动 flush 一次兜底.
-    // 同时排空"待写日记"队列 (写 Notion/飞书的网络 fetch 后台会被冻结打断, 预写进 pendingDiary,
-    // 回前台 fetch 可靠时补打) + pending tool calls.
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
@@ -1781,6 +1837,9 @@ export const ActiveMsgRuntime = {
           void runPendingToolCallsSafely();
         })();
       });
+      // 冷启动那一下（点通知才把 App 拉起来）没有 visibilitychange 可听，这里补一次：
+      // 不补的话「回到前台的时刻」一直是 0，从通知进来的第一条判不出「送达时人不在」。
+      if (document.visibilityState === 'visible') notePageBecameVisible();
     }
 
     // 完整备份/增量同步可能恢复另一份 AMSG userId 或 Worker 配置。导入完成后立即按

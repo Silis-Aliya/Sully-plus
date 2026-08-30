@@ -12,7 +12,10 @@ import {
   findMissingChunkIndexes,
   findPersistedChunkIndexes,
   flushInboxToChat,
+  handlePageBecameVisible,
   isFreshInboxDelivery,
+  notePageBecameVisible,
+  wasDeliveredWhileAway,
   purgeInboxArtifacts,
   reconcileIOSPushRegistration,
   refreshPushSubscriptionIfMarked,
@@ -20,6 +23,7 @@ import {
   resolveFireExpireDecision,
   resolveInboxFailureAction,
   resolveInboxPersistTimestamp,
+  resolveInboxRetryDelay,
   revokeSwallowedSelfLogEntry,
 } from './activeMsgRuntime';
 import { ActiveMsgClient } from './activeMsgClient';
@@ -141,6 +145,39 @@ describe('resolveInboxFailureAction', () => {
     const err = new Error('IndexedDB transaction aborted');
     expect(resolveInboxFailureAction(err, MAX_INBOX_PROCESS_ATTEMPTS)).toBe('degrade');
     expect(resolveInboxFailureAction(err, MAX_INBOX_PROCESS_ATTEMPTS + 1)).toBe('degrade');
+  });
+});
+
+// 回归守卫：重试等多久。
+//
+// 这条路上最常见的失败是 IndexedDB 的「将死连接」——App 切后台时系统强关连接，页面刚
+// 解冻就处理推送，正好撞在重建窗口里，db.transaction() 同步抛 InvalidStateError
+// （db.ts 的 onclose 注释写着这个形态：当次失败、下一次调用就自愈）。线上埋点里
+// 「重试中」占失败的 96.7%，而「重试到头退回存原稿」几乎没有——全是一两次就缓过来了。
+//
+// 自愈是毫秒级的，等半分钟纯属让用户对着「正在输入」干等：推送通知早就把这句话完整
+// 显示过了，聊天界面却要过 30 秒才追上。所以第一次重试必须是秒级；真的连着失败再拉长
+// 间隔，避免存储持续故障时空转。
+describe('resolveInboxRetryDelay（重试等多久）', () => {
+  it('第一次重试是秒级——瞬态故障下一次调用就自愈，不该让用户干等', () => {
+    expect(resolveInboxRetryDelay(1)).toBeLessThanOrEqual(1_000);
+  });
+
+  it('连着失败就拉长间隔，别在持续故障时空转', () => {
+    expect(resolveInboxRetryDelay(2)).toBeGreaterThan(resolveInboxRetryDelay(1));
+    expect(resolveInboxRetryDelay(3)).toBeGreaterThan(resolveInboxRetryDelay(2));
+  });
+
+  it('次数超出上限也给得出延迟，不返回 undefined/NaN', () => {
+    const last = resolveInboxRetryDelay(MAX_INBOX_PROCESS_ATTEMPTS + 5);
+    expect(Number.isFinite(last)).toBe(true);
+    expect(last).toBeGreaterThan(0);
+  });
+
+  it('attempts 非法（0 / 负数 / NaN）时退到第一档，别算出 0 或负延迟', () => {
+    expect(resolveInboxRetryDelay(0)).toBe(resolveInboxRetryDelay(1));
+    expect(resolveInboxRetryDelay(-3)).toBe(resolveInboxRetryDelay(1));
+    expect(resolveInboxRetryDelay(Number.NaN)).toBe(resolveInboxRetryDelay(1));
   });
 });
 
@@ -337,6 +374,58 @@ describe('isFreshInboxDelivery（决定要不要慢放打字节奏）', () => {
 
   it('窗口要明显短于用户「看到通知再点进来」的典型间隔，否则补收照样慢放', () => {
     expect(INBOX_FRESH_DELIVERY_WINDOW_MS).toBeLessThanOrEqual(2 * 60_000);
+  });
+});
+
+// 慢放的第二个判据：消息落到设备时，用户在不在看这个页面。
+//
+// 「够不够新」只回答了「这句话是不是刚生成的」，回答不了「用户读没读过」。推送到达时
+// 页面在后台，系统通知就已经把整句话完整显示过了——用户再点进来，看到的是一句他刚读完
+// 的话被一个字一个字重演一遍。慢放的意义是「角色正在你眼前打字」，人不在场时它只剩等待。
+//
+// 反过来，用户本来就开着聊天界面时收到的消息要保留慢放：那才是它想要的场景。
+describe('wasDeliveredWhileAway（送达时用户在不在场）', () => {
+  const NOW = 1_700_000_000_000;
+
+  it('页面回到前台之前就送到了 → 用户是从通知知道的，跳过慢放', () => {
+    expect(wasDeliveredWhileAway(NOW - 30_000, NOW)).toBe(true);
+  });
+
+  it('App 在前台时送到 → 保留慢放，角色在他眼前说话', () => {
+    expect(wasDeliveredWhileAway(NOW + 5_000, NOW)).toBe(false);
+  });
+
+  it('恰好在回到前台那一刻送到 → 算在场（规则是「早于」才算缺席）', () => {
+    expect(wasDeliveredWhileAway(NOW, NOW)).toBe(false);
+  });
+
+  it('receivedAt 缺失 / 非法 → 当作用户在场，宁可慢放也别误伤实时消息', () => {
+    expect(wasDeliveredWhileAway(undefined, NOW)).toBe(false);
+    expect(wasDeliveredWhileAway(0, NOW)).toBe(false);
+    expect(wasDeliveredWhileAway(Number.NaN, NOW)).toBe(false);
+  });
+
+  it('还没记录过「回到前台」的时刻 → 不把所有消息都判成缺席', () => {
+    expect(wasDeliveredWhileAway(NOW - 30_000, 0)).toBe(false);
+  });
+});
+
+// 接线守卫：回到前台时，「记下时刻」必须排在「去 flush」之前。
+//
+// 顺序反了的话，后台期间攒下的那条消息在 flush 那一刻还查不到回到前台的时刻，会被判成
+// 「用户在场」照常慢放——而它恰恰是最该跳过的一条（用户就是看着通知点进来的）。
+// 这种错法不会有任何报错，消息照常出现，只是又慢了一遍。
+describe('handlePageBecameVisible（回到前台的入口）', () => {
+  afterEach(() => { notePageBecameVisible(0); });
+
+  it('先记下回到前台的时刻，之前送达的消息据此判为「用户不在场」', () => {
+    notePageBecameVisible(0);
+    const earlier = Date.now() - 5_000;
+    expect(wasDeliveredWhileAway(earlier), '前置条件：还没回过前台时不该判缺席').toBe(false);
+
+    handlePageBecameVisible();
+
+    expect(wasDeliveredWhileAway(earlier), '回到前台后，更早送达的那条算缺席送达').toBe(true);
   });
 });
 
