@@ -18,6 +18,7 @@ import {
     type VoiceFavorite,
     type VoiceFavoriteSource,
 } from '../../utils/voiceFavorites';
+import { normalizeChatSearchText, searchableChatMessageText } from '../../utils/chatMessageSearch';
 
 const PAGE_SIZE = 10;
 type SourceFilter = 'all' | VoiceFavoriteSource;
@@ -76,6 +77,10 @@ const VoiceFavoritesPortal: React.FC<VoiceFavoritesPortalProps> = ({ onClose }) 
     );
     const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
     const visible = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+
+    useEffect(() => {
+        setPage(0);
+    }, [normalizedSearchQuery]);
 
     useEffect(() => {
         if (page >= pageCount) setPage(Math.max(0, pageCount - 1));
