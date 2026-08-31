@@ -166,3 +166,31 @@ export type { WipeResult } from './wipe';
 // 导出 / 导入（接入外置记忆库、跨设备迁移用）
 export { exportMemoryPalace, importMemoryPalace, isMemoryPalaceExportFile } from './export';
 export type { MemoryPalaceExportFile, CharacterMemoryPalaceExport, ExportedVector, ImportResult } from './export';
+
+// Ombre Brain / Memory Hub 外置后端桥
+export {
+    inspectOmbreBridgeSchema,
+    listOmbreBridgeContexts,
+    memoryNodeToOmbrePayload,
+    readOmbreBridgeSettings,
+    saveOmbreBridgeSettings,
+    pushCharacterIndexToOmbre,
+    pushMemoryPalaceConfigToOmbre,
+    pushMemoryPalaceExportToOmbre,
+    previewSullyMigrationOnHub,
+    importSullyMigrationToHub,
+    pushRoomPlatesToOmbre,
+    pushMemoryNodeToOmbre,
+    searchOmbreBridgeMemories,
+} from './ombreBridge';
+export { buildHubMigrationPayload, sanitizeHubMigrationPayload, previewFullSullyMigration, commitFullSullyMigration } from './hubMigration';
+export type { HubMigrationPayload, HubMigrationReport } from './hubMigration';
+export type {
+    OmbreBridgeConfig,
+    OmbreBridgeContext,
+    OmbreBridgeMemory,
+    OmbreBridgeSearchParams,
+    OmbreBridgeWriteOptions,
+    OmbreBridgeCharacterIndexItem,
+    OmbreBridgeRoomPlateItem,
+} from './ombreBridge';

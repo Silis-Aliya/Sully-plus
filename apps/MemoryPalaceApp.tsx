@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useDeferredValue, useMemo } from 'react';
+﻿import React, { useState, useEffect, useCallback, useDeferredValue, useMemo } from 'react';
 import { useOS } from '../context/OSContext';
 import {
     MemoryRoom, MemoryNode, ROOM_CONFIGS, ROOM_LABELS, getRoomLabel,
@@ -14,8 +14,16 @@ import {
     getBootstrapResume, setBootstrapResume, clearBootstrapResume,
     updateStoredMemoryNode,
     DEFAULT_CHARACTER_ACCOMMODATION,
+    inspectOmbreBridgeSchema,
+    readOmbreBridgeSettings,
+    saveOmbreBridgeSettings,
+    pushCharacterIndexToOmbre,
+    pushMemoryPalaceConfigToOmbre,
+    pushMemoryPalaceExportToOmbre,
+    previewFullSullyMigration,
+    commitFullSullyMigration,
 } from '../utils/memoryPalace';
-import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport } from '../utils/memoryPalace';
+import type { Anticipation, MigrationProgress, DigestResult, MemoryLink, EventBox, DigestReport, HubMigrationPayload, HubMigrationReport } from '../utils/memoryPalace';
 import { confirmExportSafety } from '../utils/exportGuard';
 import type { CharacterAccommodationPolicy, CharacterProfile, MemoryPalaceWaterlinePreset, Message } from '../types';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
@@ -661,7 +669,7 @@ const MemoryWaterlineEditor: React.FC<{
 // ─── 主组件 ───────────────────────────────────────────
 
 export default function MemoryPalaceApp() {
-    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, updateRemoteVectorConfig, addToast, apiConfig, characterGroups } = useOS();
+    const { activeCharacterId, characters, updateCharacter, setActiveCharacterId, closeApp, apiPresets, userProfile, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, updateRemoteVectorConfig, addToast, apiConfig, characterGroups, realtimeConfig } = useOS();
     const char = characters.find(c => c.id === activeCharacterId);
     const [selectGroupId, setSelectGroupId] = useState(GROUP_FILTER_ALL); // 选角色页的分组筛选
 
@@ -736,6 +744,17 @@ export default function MemoryPalaceApp() {
     const [allSortBy, setAllSortBy] = useState<'time' | 'importance'>('time');
     const [allSortDir, setAllSortDir] = useState<'desc' | 'asc'>('desc');
     const [prevView, setPrevView] = useState<'room' | 'all' | 'boxes'>('room');
+
+    // Memory Hub / Ombre-compatible bridge：本地实验连接层，不纳入公开 push 版本。
+    const [ombreUrl, setOmbreUrl] = useState(() => readOmbreBridgeSettings().baseUrl || 'http://127.0.0.1:8787');
+    const [ombreKey, setOmbreKey] = useState(() => readOmbreBridgeSettings().apiKey);
+    const [ombreAutoSync, setOmbreAutoSync] = useState(() => readOmbreBridgeSettings().autoSync);
+    const [ombreLoading, setOmbreLoading] = useState(false);
+    const [ombreSyncing, setOmbreSyncing] = useState(false);
+    const [ombreStatus, setOmbreStatus] = useState<string | null>(null);
+    const [hubMigrationPayload, setHubMigrationPayload] = useState<HubMigrationPayload | null>(null);
+    const [hubMigrationReport, setHubMigrationReport] = useState<HubMigrationReport | null>(null);
+    const [hubMigrationHash, setHubMigrationHash] = useState('');
 
     // 认知消化状态
     const [digesting, setDigesting] = useState(false);
@@ -1135,6 +1154,171 @@ export default function MemoryPalaceApp() {
         setExpandedBoxId(null);
         setBoxMembers({});
         setView('boxes');
+    };
+
+    const ombreBridgeConfig = useMemo(() => ({
+        baseUrl: ombreUrl.trim(),
+        apiKey: ombreKey.trim() || undefined,
+    }), [ombreUrl, ombreKey]);
+
+    const saveOmbreBridgeConfig = async () => {
+        saveOmbreBridgeSettings({
+            baseUrl: ombreUrl,
+            apiKey: ombreKey,
+            autoSync: ombreAutoSync,
+            charNames: Object.fromEntries(characters.map(c => [c.id, c.name])),
+        });
+        if (ombreUrl.trim()) {
+            try {
+                await pushMemoryPalaceConfigToOmbre(ombreBridgeConfig, memoryPalaceConfig);
+            } catch (error: any) {
+                setOmbreStatus(`[err]Hub 已保存本地地址，但模型配置发送失败：${error?.message || error}`);
+                return;
+            }
+        }
+        setOmbreStatus(ombreUrl.trim()
+            ? `[ok]已保存 Memory Hub 连接，并同步了全局模型配置${ombreAutoSync ? '，Hub 权威运行已启用' : ''}`
+            : '[warn]已清空 Memory Hub URL');
+    };
+
+    const updateOmbreAutoSync = (enabled: boolean) => {
+        setOmbreAutoSync(enabled);
+        saveOmbreBridgeSettings({
+            baseUrl: ombreUrl,
+            apiKey: ombreKey,
+            autoSync: enabled,
+            charNames: Object.fromEntries(characters.map(c => [c.id, c.name])),
+        });
+        setOmbreStatus(enabled
+            ? '[ok]已开启：角色 Context、消息和新记忆由 Memory Hub 权威运行'
+            : '[warn]已关闭 Hub 权威运行；SullyOS 将使用本地 ContextBuilder');
+    };
+
+    const testOmbreBridgeConnection = async () => {
+        if (!ombreBridgeConfig.baseUrl) {
+            setOmbreStatus('[err]请先填写 Memory Hub URL');
+            return;
+        }
+        setOmbreLoading(true);
+        setOmbreStatus('正在测试 Memory Hub 连接…');
+        try {
+            const schema = await inspectOmbreBridgeSchema(ombreBridgeConfig);
+            const endpoints = Array.isArray(schema?.endpoints) ? schema.endpoints : [];
+            const looksLikeMemoryHub = schema?.service === 'memory-hub' || String(schema?.schema || '').includes('sullyos');
+            if (!looksLikeMemoryHub && !endpoints.some((item: unknown) => String(item).includes('/api/sully/characters'))) {
+                throw new Error('服务已响应，但没有发现 Memory Hub 的 SullyOS 接口');
+            }
+            setOmbreStatus(`[ok]Memory Hub 连接正常${endpoints.length ? `，发现 ${endpoints.length} 个接口` : ''}`);
+        } catch (e: any) {
+            setOmbreStatus(`[err]Memory Hub 测试失败：${e?.message || e}`);
+        } finally {
+            setOmbreLoading(false);
+        }
+    };
+
+    const syncAllCharactersToOmbre = async () => {
+        if (ombreSyncing) return;
+        if (!ombreBridgeConfig.baseUrl) {
+            setOmbreStatus('[err]请先填写 Memory Hub URL');
+            return;
+        }
+        setOmbreSyncing(true);
+        setOmbreStatus('正在把全部角色记忆写入 Memory Hub…');
+        try {
+            try {
+                const schema = await inspectOmbreBridgeSchema(ombreBridgeConfig);
+                const endpoints = Array.isArray(schema?.endpoints) ? schema.endpoints : [];
+                const looksLikeMemoryHub = schema?.service === 'memory-hub' || String(schema?.schema || '').includes('sullyos');
+                if (!looksLikeMemoryHub && !endpoints.some((item: unknown) => String(item).includes('/api/sully/characters'))) {
+                    throw new Error('没有发现 Memory Hub 的 /api/sully/characters 接口');
+                }
+            } catch (schemaError: any) {
+                throw new Error(`Memory Hub URL 不对或服务没启动。请填写 http://127.0.0.1:8787；当前接口检查失败：${schemaError?.message || schemaError}`);
+            }
+            const fullExport = await exportMemoryPalace(
+                characters.map(target => ({ id: target.id, name: target.name, refinedMemories: (target as any).refinedMemories })),
+                { includeVectors: true, embeddingConfig: memoryPalaceConfig.embedding, memoryPalaceConfig },
+            );
+            const fullCounts = fullExport.characters.reduce((sum, item) => ({
+                nodes: sum.nodes + (item.counts?.nodes || 0),
+                eventBoxes: sum.eventBoxes + (item.counts?.eventBoxes || 0),
+                anticipations: sum.anticipations + (item.counts?.anticipations || 0),
+                links: sum.links + (item.counts?.links || 0),
+                vectors: sum.vectors + (item.counts?.vectors || 0),
+                roomPlateEntries: sum.roomPlateEntries + (item.counts?.roomPlateEntries || 0),
+            }), { nodes: 0, eventBoxes: 0, anticipations: 0, links: 0, vectors: 0, roomPlateEntries: 0 });
+            await pushMemoryPalaceExportToOmbre(ombreBridgeConfig, fullExport);
+            await pushCharacterIndexToOmbre(
+                ombreBridgeConfig,
+                characters.map(target => ({
+                    id: target.id,
+                    name: target.name,
+                    avatar: target.avatar,
+                    visibility: 'private',
+                    description: '从 SullyOS 神经链接同步的 AI 大脑索引。',
+                    memoryPalaceEnabled: !!(target as any).memoryPalaceEnabled,
+                    autoArchiveEnabled: !!(target as any).autoArchiveEnabled,
+                    impression: (target as any).impression,
+                    learned: (target as any).learned,
+                    memories: (target as any).memories,
+                    refinedMemories: (target as any).refinedMemories,
+                    activeMemoryMonths: (target as any).activeMemoryMonths,
+                    selfInsights: (target as any).selfInsights,
+                    personalityStyle: (target as any).personalityStyle,
+                    ruminationTendency: (target as any).ruminationTendency,
+                    worldview: (target as any).worldview,
+                    systemPrompt: (target as any).systemPrompt,
+                })),
+                { memoryPalaceConfig },
+            );
+            setOmbreStatus(`[ok]全局同步完成：AI ${characters.length} 个，记忆 ${fullCounts.nodes} 条，事件盒 ${fullCounts.eventBoxes} 个，门牌认知 ${fullCounts.roomPlateEntries} 条，链接 ${fullCounts.links} 条，向量 ${fullCounts.vectors} 条，期盼 ${fullCounts.anticipations} 条`);
+        } catch (e: any) {
+            setOmbreStatus(`[err]全局同步失败：${e?.message || e}`);
+        } finally {
+            setOmbreSyncing(false);
+        }
+    };
+
+    const previewHubMigration = async () => {
+        if (ombreSyncing) return;
+        if (!ombreBridgeConfig.baseUrl) {
+            setOmbreStatus('[err]请先填写 Memory Hub URL');
+            return;
+        }
+        setOmbreSyncing(true);
+        setOmbreStatus('正在组装安全迁移包并由 Hub 预检；记忆向量较多时需要等待…');
+        try {
+            const result = await previewFullSullyMigration(ombreBridgeConfig, memoryPalaceConfig, realtimeConfig);
+            setHubMigrationPayload(result.payload);
+            setHubMigrationReport(result.report);
+            setHubMigrationHash(result.sourceHash || '');
+            const sourceTotal = Object.values(result.report.sourceCounts || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+            setOmbreStatus(`[ok]预检完成：发现 ${sourceTotal} 个源对象。请核对下方报告后再确认迁移。`);
+        } catch (e: any) {
+            setHubMigrationPayload(null);
+            setHubMigrationReport(null);
+            setOmbreStatus(`[err]完整迁移预检失败：${e?.message || e}`);
+        } finally {
+            setOmbreSyncing(false);
+        }
+    };
+
+    const commitHubMigration = async () => {
+        if (ombreSyncing || !hubMigrationPayload) return;
+        const confirmed = window.confirm('确认把刚才预检的完整数据迁移到 Memory Hub？\n\nHub 会写入权威 SQLite 与迁移归档；SullyOS 本地数据不会被删除。');
+        if (!confirmed) return;
+        setOmbreSyncing(true);
+        setOmbreStatus('正在写入 Memory Hub 权威库…');
+        try {
+            const report = await commitFullSullyMigration(ombreBridgeConfig, hubMigrationPayload);
+            setHubMigrationReport(report);
+            setHubMigrationPayload(null);
+            setOmbreStatus(`[ok]完整迁移完成${report.migrationId ? `：${report.migrationId}` : ''}。SullyOS 本地数据仍保留。`);
+        } catch (e: any) {
+            setOmbreStatus(`[err]完整迁移失败：${e?.message || e}`);
+        } finally {
+            setOmbreSyncing(false);
+        }
     };
 
     /** 把一条归档记忆复活成活节点。
@@ -2114,7 +2298,7 @@ export default function MemoryPalaceApp() {
         try {
             const data = await exportMemoryPalace(
                 [{ id: char.id, name: char.name }],
-                { includeVectors: exportWithVectors },
+                { includeVectors: exportWithVectors, embeddingConfig: memoryPalaceConfig.embedding, memoryPalaceConfig },
             );
             const c = data.characters[0]?.counts;
             const nodeCount = c?.nodes ?? 0;
@@ -3207,6 +3391,147 @@ export default function MemoryPalaceApp() {
                     <span style={{ fontSize: 11, color: '#b91c1c' }}>
                         注：「导入旧记忆」是一次性大批量操作，调用次数会明显多于日常，单独见那里的提示。
                     </span>
+                </div>
+
+                <div style={{ background: '#f0fdfa', borderRadius: 16, padding: 16, border: '1px solid #99f6e4', marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#0f766e', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Icon name="cloud" size={14} />
+                        <span>Memory Hub 连接</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: '#64748b', marginBottom: 10, lineHeight: 1.6 }}>
+                        P0 阶段提供两条通道：「同步全部 AI」是旧版记忆镜像；「预检完整迁移」会把角色、用户、世界书与挂载、消息、Legacy、全部 Memory Palace 实体和必要世界状态交给 Hub 接管。迁移包会自动剔除 API Key、Token、云凭据和外观数据。
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <div>
+                            <label className={labelClass}>MEMORY HUB URL</label>
+                            <input
+                                type="text"
+                                value={ombreUrl}
+                                onChange={e => setOmbreUrl(e.target.value)}
+                                placeholder="http://127.0.0.1:8787 或 https://你的VPS域名"
+                                className={inputClass}
+                            />
+                        </div>
+                        <div>
+                            <label className={labelClass}>HUB KEY</label>
+                            <input
+                                type="password"
+                                value={ombreKey}
+                                onChange={e => setOmbreKey(e.target.value)}
+                                placeholder="本地可留空；VPS 设置 MEMORY_HUB_TOKEN 时填写"
+                                className={inputClass}
+                            />
+                        </div>
+                    </div>
+                    <label style={{
+                        marginTop: 10, padding: '9px 10px', borderRadius: 10,
+                        border: '1px solid #99f6e4', background: 'white',
+                        display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+                    }}>
+                        <input
+                            type="checkbox"
+                            checked={ombreAutoSync}
+                            onChange={e => updateOmbreAutoSync(e.target.checked)}
+                        />
+                        <span style={{ flex: 1, fontSize: 12, color: '#0f766e', fontWeight: 700 }}>
+                            由 Memory Hub 权威运行角色
+                        </span>
+                    </label>
+                    <div style={{ fontSize: 10, color: '#64748b', marginTop: 5, lineHeight: 1.5 }}>
+                        开启后，SullyOS 会把当前消息交给 Hub，并使用 Hub 组装的人设、世界书、记忆与运行状态 Context；私密数据仍受 Hub 权限边界控制。
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginTop: 10 }}>
+                        <button
+                            onClick={saveOmbreBridgeConfig}
+                            style={{
+                                padding: '10px 0', borderRadius: 12, border: 'none',
+                                background: '#0f766e', color: 'white', fontSize: 12,
+                                fontWeight: 800, cursor: 'pointer',
+                            }}
+                        >
+                            保存 Hub
+                        </button>
+                        <button
+                            onClick={testOmbreBridgeConnection}
+                            disabled={ombreLoading || !ombreUrl.trim()}
+                            style={{
+                                padding: '10px 0', borderRadius: 12, border: '1px solid #99f6e4',
+                                background: 'white', color: '#0f766e', fontSize: 12,
+                                fontWeight: 800,
+                                cursor: ombreLoading || !ombreUrl.trim() ? 'not-allowed' : 'pointer',
+                                opacity: ombreLoading || !ombreUrl.trim() ? 0.55 : 1,
+                            }}
+                        >
+                            {ombreLoading ? '读取中...' : '测试读取'}
+                        </button>
+                        <button
+                            onClick={syncAllCharactersToOmbre}
+                            disabled={ombreSyncing || !ombreUrl.trim()}
+                            style={{
+                                padding: '10px 0', borderRadius: 12, border: '1px solid #a7f3d0',
+                                background: '#ecfdf5', color: '#047857', fontSize: 12,
+                                fontWeight: 800,
+                                cursor: ombreSyncing || !ombreUrl.trim() ? 'not-allowed' : 'pointer',
+                                opacity: ombreSyncing || !ombreUrl.trim() ? 0.55 : 1,
+                            }}
+                        >
+                            {ombreSyncing ? '处理中...' : '旧版记忆镜像'}
+                        </button>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+                        <button
+                            onClick={previewHubMigration}
+                            disabled={ombreSyncing || !ombreUrl.trim()}
+                            style={{
+                                padding: '11px 0', borderRadius: 12, border: '1px solid #5eead4',
+                                background: '#ccfbf1', color: '#115e59', fontSize: 12,
+                                fontWeight: 900, cursor: ombreSyncing || !ombreUrl.trim() ? 'not-allowed' : 'pointer',
+                                opacity: ombreSyncing || !ombreUrl.trim() ? 0.55 : 1,
+                            }}
+                        >
+                            {ombreSyncing ? '处理中...' : '预检完整迁移'}
+                        </button>
+                        <button
+                            onClick={commitHubMigration}
+                            disabled={ombreSyncing || !hubMigrationPayload}
+                            style={{
+                                padding: '11px 0', borderRadius: 12, border: 'none',
+                                background: hubMigrationPayload ? '#134e4a' : '#cbd5e1', color: 'white', fontSize: 12,
+                                fontWeight: 900, cursor: ombreSyncing || !hubMigrationPayload ? 'not-allowed' : 'pointer',
+                                opacity: ombreSyncing || !hubMigrationPayload ? 0.65 : 1,
+                            }}
+                        >
+                            确认迁移到 Hub
+                        </button>
+                    </div>
+                    {hubMigrationReport && (
+                        <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: 'rgba(255,255,255,.82)', border: '1px solid #99f6e4', fontSize: 10, color: '#334155' }}>
+                            <div style={{ fontWeight: 900, color: '#0f766e', marginBottom: 6 }}>
+                                完整迁移报告{hubMigrationHash ? ` · ${hubMigrationHash.slice(0, 12)}…` : ''}
+                            </div>
+                            {[
+                                ['源对象', hubMigrationReport.sourceCounts],
+                                ['已导入', hubMigrationReport.importedCounts],
+                                ['已跳过', hubMigrationReport.skippedCounts],
+                            ].map(([label, counts]) => (
+                                <div key={String(label)} style={{ marginBottom: 4 }}>
+                                    <b>{String(label)}：</b>
+                                    {Object.entries((counts || {}) as Record<string, number>).map(([key, value]) => `${key} ${value}`).join(' · ') || '0'}
+                                </div>
+                            ))}
+                            <div>
+                                缺失引用 {(hubMigrationReport.missingReferences || []).length} · 不支持字段 {(hubMigrationReport.unsupportedFields || []).length} · 哈希差异 {(hubMigrationReport.hashDifferences || []).length}
+                            </div>
+                        </div>
+                    )}
+                    {ombreStatus && (
+                        <div style={{
+                            marginTop: 10, fontSize: 12, fontWeight: 700,
+                            color: ombreStatus.startsWith('[ok]') ? '#047857' : ombreStatus.startsWith('[warn]') ? '#b45309' : ombreStatus.startsWith('[err]') ? '#dc2626' : '#0f766e',
+                        }}>
+                            <StatusMessage msg={ombreStatus} />
+                        </div>
+                    )}
                 </div>
 
                 {/* 副 API 配置 */}
