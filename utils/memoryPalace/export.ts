@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Memory Palace — 导出
  *
  * 把某个角色（或全部角色）的记忆宫殿数据打包成可读 + 可机读的 JSON，
@@ -13,8 +13,8 @@
  *     换了模型则向量作废（vector.model / dimensions 已随每条一起导出，便于核对）。
  */
 
-import { MemoryNodeDB, AnticipationDB, EventBoxDB, MemoryVectorDB, RoomPlateDB, MemoryLinkDB, plateId } from './db';
-import type { MemoryNode, Anticipation, EventBox, MemoryVector, RoomPlate, PlateRoom, MemoryLink } from './types';
+import { MemoryNodeDB, AnticipationDB, EventBoxDB, MemoryVectorDB, RoomPlateDB, plateId } from './db';
+import type { MemoryNode, Anticipation, EventBox, MemoryVector, RoomPlate, PlateRoom } from './types';
 import { getRoomLabel, PLATE_ROOMS, PLATE_ENTRY_CAPS } from './types';
 
 /** 导出时随向量一起带上的元信息（便于接入方判断能否复用） */
@@ -27,32 +27,14 @@ export interface ExportedVector {
     model?: string;
 }
 
-/** 导出给外置 Memory Hub 的模型口径；个人本地 Memory Hub 同步会携带 apiKey，分享 JSON 前请手动确认安全。 */
-export interface ExportedEmbeddingConfig {
-    baseUrl: string;
-    apiKey: string;
-    model: string;
-    dimensions: number;
-}
-
-export interface ExportedMemoryPalaceConfig {
-    embedding: ExportedEmbeddingConfig;
-    lightLLM: { baseUrl: string; apiKey: string; model: string };
-    rerank: { enabled: boolean; baseUrl: string; apiKey: string; model: string; topN: number };
-}
-
 /** 单个角色的导出结构 */
 export interface CharacterMemoryPalaceExport {
     charId: string;
     charName: string;
-    /** SullyOS 角色页里的核心记忆 / AI Context（月度 refined summaries）。 */
-    refinedMemories?: Record<string, string>;
-    counts: { nodes: number; eventBoxes: number; anticipations: number; vectors: number; links?: number; roomPlateEntries?: number };
+    counts: { nodes: number; eventBoxes: number; anticipations: number; vectors: number; roomPlateEntries?: number };
     /** 该角色向量统一用的 embedding 模型/维度（多数情况下整库一致，便于接入方一眼确认） */
     embeddingModels: string[];
     nodes: MemoryNode[];
-    /** 记忆节点之间的真实联想边：temporal / emotional / causal / person / metaphor */
-    links?: MemoryLink[];
     eventBoxes: EventBox[];
     anticipations: Anticipation[];
     /** 房间门牌（常驻语义层）。旧导出文件没有此字段，导入端按可选处理 */
@@ -69,9 +51,6 @@ export interface MemoryPalaceExportFile {
     exportedAtISO: string;
     includeVectors: boolean;
     note: string;
-    /** Memory Hub 可用它识别 SullyOS 全局 embedding 设置；个人本地 Memory Hub 同步会携带 apiKey；分享导出前请手动确认安全。 */
-    embeddingConfig?: ExportedEmbeddingConfig;
-    memoryPalaceConfig?: ExportedMemoryPalaceConfig;
     characters: CharacterMemoryPalaceExport[];
 }
 
@@ -88,7 +67,6 @@ async function collectCharacter(
     charId: string,
     charName: string,
     includeVectors: boolean,
-    refinedMemories?: Record<string, string>,
 ): Promise<CharacterMemoryPalaceExport> {
     const [nodes, eventBoxes, anticipations, roomPlates] = await Promise.all([
         MemoryNodeDB.getByCharId(charId),
@@ -96,17 +74,6 @@ async function collectCharacter(
         AnticipationDB.getByCharId(charId),
         RoomPlateDB.getByCharId(charId),
     ]);
-    const nodeIds = new Set(nodes.map(n => n.id));
-    const linkMap = new Map<string, MemoryLink>();
-    for (const node of nodes) {
-        const related = await MemoryLinkDB.getByNodeId(node.id);
-        for (const link of related) {
-            if (nodeIds.has(link.sourceId) && nodeIds.has(link.targetId)) {
-                linkMap.set(link.id, link);
-            }
-        }
-    }
-    const links = [...linkMap.values()];
 
     let vectors: ExportedVector[] | undefined;
     const modelSet = new Set<string>();
@@ -129,18 +96,15 @@ async function collectCharacter(
     return {
         charId,
         charName,
-        refinedMemories: refinedMemories || undefined,
         counts: {
             nodes: nodes.length,
             eventBoxes: eventBoxes.length,
             anticipations: anticipations.length,
             vectors: vectors?.length ?? 0,
-            links: links.length,
             roomPlateEntries: roomPlates.reduce((s, p) => s + p.entries.length, 0),
         },
         embeddingModels: [...modelSet],
         nodes: enrichedNodes as MemoryNode[],
-        links,
         eventBoxes,
         anticipations,
         roomPlates,
@@ -150,13 +114,13 @@ async function collectCharacter(
 
 /** 导出一个或多个角色的记忆宫殿数据为 JSON 文件结构 */
 export async function exportMemoryPalace(
-    chars: { id: string; name: string; refinedMemories?: Record<string, string> }[],
-    options: { includeVectors?: boolean; embeddingConfig?: { baseUrl?: string; apiKey?: string; model?: string; dimensions?: number }; memoryPalaceConfig?: ExportedMemoryPalaceConfig } = {},
+    chars: { id: string; name: string }[],
+    options: { includeVectors?: boolean } = {},
 ): Promise<MemoryPalaceExportFile> {
     const includeVectors = options.includeVectors ?? false;
     const characters: CharacterMemoryPalaceExport[] = [];
     for (const c of chars) {
-        characters.push(await collectCharacter(c.id, c.name, includeVectors, c.refinedMemories));
+        characters.push(await collectCharacter(c.id, c.name, includeVectors));
     }
     const now = Date.now();
     return {
@@ -166,13 +130,6 @@ export async function exportMemoryPalace(
         exportedAtISO: new Date(now).toISOString(),
         includeVectors,
         note: includeVectors ? NOTE_WITH_VECTORS : NOTE_NO_VECTORS,
-        embeddingConfig: options.embeddingConfig ? {
-            baseUrl: options.embeddingConfig.baseUrl || '',
-            apiKey: options.embeddingConfig.apiKey || '',
-            model: options.embeddingConfig.model || '',
-            dimensions: options.embeddingConfig.dimensions || 0,
-        } : undefined,
-        memoryPalaceConfig: options.memoryPalaceConfig,
         characters,
     };
 }
@@ -353,6 +310,3 @@ export async function importMemoryPalace(
         roomPlateEntries: plateEntriesImported,
     };
 }
-
-
-

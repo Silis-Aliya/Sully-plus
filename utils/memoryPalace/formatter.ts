@@ -201,7 +201,6 @@ export async function expandAndFormat(
     // 4a. 便利贴置顶记忆
     if (pinnedNodes.length > 0) {
         output += `📌 **便利贴（近期重要事项）**\n`;
-        output += `（这是你为 ta 记住的事，记着不等于要一直说。不必每次聊天都追问进展，也不必替 ta 安排什么时候去做。）\n`;
         for (const node of pinnedNodes) {
             const daysLeft = Math.ceil((node.pinnedUntil! - now) / (24 * 60 * 60 * 1000));
             output += `- [${formatMemoryDateWithDistance(node.createdAt, now)}] ${node.content}（剩余 ${daysLeft} 天）\n`;
@@ -232,7 +231,6 @@ export async function expandAndFormat(
     const activeAnticipations = anticipations.filter(a => a.status === 'active' || a.status === 'anchor');
     if (activeAnticipations.length > 0) {
         output += `> **窗台期盼**:\n`;
-        output += `> （这是你心里盼着的事，不是待办清单。它影响你的心情多过你的话头，不必每次都提起来。）\n`;
         for (const ant of activeAnticipations) {
             const label = ant.status === 'anchor' ? '🔒 锚点' : '✨ 期盼';
             output += `> - ${label}: ${ant.content}\n`;
