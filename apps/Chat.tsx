@@ -61,6 +61,16 @@ import { synthesizeSpeechDetailed, characterHasVoice } from '../utils/ttsRouter'
 import { shouldAutoGenerateVoice, shouldAutoPlayGeneratedVoice } from '../utils/voicePlayback';
 import { voiceLanguageAnalyticsValue, voiceLanguagePromptLabel } from '../utils/voiceLanguage';
 import { fetchBlobForShare, shareOrDownloadBlob } from '../utils/shareExport';
+import { CollaborationStore } from '../features/collaboration/store';
+import type { CollaborationTransferMessage, CollaborationInstallableArtifact } from '../features/collaboration/types';
+import {
+    installableToCharacterPatch,
+    installableToChatTheme,
+    installableToThemePatch,
+    installableToWorldbooks,
+    validateInstallableArtifact,
+} from '../features/collaboration/makers';
+import { upsertMountedWorldbooks } from '../utils/worldbook';
 import { getVoiceFavorite, removeVoiceFavorite, saveVoiceFavorite } from '../utils/voiceFavorites';
 import { resolveMiniMaxApiKey } from '../utils/minimaxApiKey';
 import { CHAT_GEN_EVENTS, isChatReplyGenerating } from '../utils/chatGenEvents';
@@ -90,6 +100,8 @@ import { analyzeVoiceWithEarsLite, judgeVoiceToneWithGroq, transcribeWithEarsAsr
 import { decideVoiceCloudReview, prepareVoiceCloudAudio, profileVoiceWithXfyun, shouldRunTencentSpeakerVerification, shouldRunXfyunVoiceProfile, verifyTencentSpeaker, type PreparedVoiceCloudAudio } from '../utils/voiceCloud';
 
 const VOICE_LANG_LABELS: Record<string, string> = { en: 'English', ja: '日本語', ko: '한국어', fr: 'Français', es: 'Español' };
+const CollaborationWindow = React.lazy(() => import('../features/collaboration/CollaborationWindow'));
+
 type InstantToolUiStatus = {
     charId: string;
     phase: 'running' | 'continuing' | 'done' | 'failed';

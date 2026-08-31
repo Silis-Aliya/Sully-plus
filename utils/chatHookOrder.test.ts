@@ -22,4 +22,14 @@ describe('Chat 空角色渲染的 Hook 顺序', () => {
         expect(source).toContain('updateTheme, saveAppearancePreset');
         expect(source).toContain('addApiPreset, availableModels, realtimeConfig');
     });
+
+    it('协同运行时依赖均显式导入，不依赖未声明的全局变量', () => {
+        const source = readFileSync(new URL('../apps/Chat.tsx', import.meta.url), 'utf8');
+
+        expect(source).toContain("import { CollaborationStore } from '../features/collaboration/store';");
+        expect(source).toContain('installableToChatTheme,');
+        expect(source).toContain('validateInstallableArtifact,');
+        expect(source).toContain("import { upsertMountedWorldbooks } from '../utils/worldbook';");
+        expect(source).toContain("const CollaborationWindow = React.lazy(() => import('../features/collaboration/CollaborationWindow'));");
+    });
 });
