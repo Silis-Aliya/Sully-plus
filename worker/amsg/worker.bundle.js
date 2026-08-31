@@ -14273,6 +14273,7 @@ var amsgHooks = {
       selfLog,
       selfLogDirty: false,
       mcpResolve,
+      maxToolIterations,
       mcpSessions: /* @__PURE__ */ new Map(),
       mcpSpentMs: 0,
       // 「还能不能再排」按客户端已知的 + 角色自己排过还没被认领的一起算，
@@ -14344,7 +14345,7 @@ var amsgHooks = {
           ...pack.chat.messages.map((message) => ({ role: message.role, content: message.content })),
           { role: "system", content: buildInstantTimelyBlock({ nowMs: ctx.now.getTime(), tz, realtimeWorldBlock }) }
         ],
-        maxToolIterations: MAX_TOOL_ITERATIONS,
+        maxToolIterations,
         totalTimeoutMs: INSTANT_TOTAL_TIMEOUT_MS,
         ...fireTools.length ? { tools: fireTools } : {}
       };
@@ -14353,7 +14354,7 @@ var amsgHooks = {
       messages: [{ role: "user", content: prompt }],
       // 轮次上限显式给一份：worker 要靠同一个数判「这是最后一轮了」（见 onLLMOutput），
       // 而上游只有内部默认值、没导出常量，各写各的迟早对不上。
-      maxToolIterations: MAX_TOOL_ITERATIONS,
+      maxToolIterations,
       // amsg-server 带 agentic-fire-tools feature 的版本起透传给每轮 LLM 请求；
       // 老 bundle 里不会走到这（tools 是随本次 bundle 一起升上去的）。
       ...fireTools.length ? { tools: fireTools } : {}
@@ -14403,7 +14404,7 @@ var amsgHooks = {
       }
       return hit;
     });
-    const effectiveIteration = stash.experienceMode === "switch" && stash.xhsChainClosed ? MAX_TOOL_ITERATIONS - 1 : ctx.iteration;
+    const effectiveIteration = stash.experienceMode === "switch" && stash.xhsChainClosed ? stash.maxToolIterations - 1 : ctx.iteration;
     let decision = processLLMRound(
       session,
       content,
@@ -14431,7 +14432,8 @@ var amsgHooks = {
       // 传 null = 这次不认排程（老部署没这口子），正文里写了也不当调用。
       typeof ctx.scheduleTask === "function" && stash.experienceMode !== "switch" ? { nativeToolCalls: nativeScheduleCalls } : null,
       // 最后一轮不再放行工具请求，改成用手上的内容收尾（见 agentic.ts 的 MAX_TOOL_ITERATIONS）。
-      effectiveIteration
+      effectiveIteration,
+      stash.maxToolIterations
     );
     if (decision.decision === "tool-request") {
       console.log("[amsg:agentic]", {

@@ -305,6 +305,8 @@ interface FireStash {
   selfLogDirty: boolean;
   /** 通用 MCP：暴露名 → 服务器/工具。tool_config 里没配（或对该角色不可见）时为 null。 */
   mcpResolve: Map<string, McpResolvedToolCore> | null;
+  /** 本次 fire 实际采用的工具轮次预算；MCP 使用长预算，普通工具维持默认预算。 */
+  maxToolIterations: number;
   /** 每服务器一份连接会话，单次 fire 内跨轮复用，fire 结束随 scratch 丢弃。 */
   mcpSessions: Map<string, McpSessionState>;
   /** 本次 fire 已经花在 MCP 调用上的毫秒数，见 MCP_TOTAL_BUDGET_MS。 */
@@ -1226,6 +1228,7 @@ export const amsgHooks = {
       selfLog,
       selfLogDirty: false,
       mcpResolve,
+      maxToolIterations,
       mcpSessions: new Map(),
       mcpSpentMs: 0,
       // 「还能不能再排」按客户端已知的 + 角色自己排过还没被认领的一起算，
@@ -1322,7 +1325,7 @@ export const amsgHooks = {
           ...pack.chat.messages.map((message) => ({ role: message.role as 'user' | 'assistant' | 'system', content: message.content })),
           { role: 'system' as const, content: buildInstantTimelyBlock({ nowMs: ctx.now.getTime(), tz, realtimeWorldBlock }) },
         ],
-        maxToolIterations: MAX_TOOL_ITERATIONS,
+        maxToolIterations,
         totalTimeoutMs: INSTANT_TOTAL_TIMEOUT_MS,
         ...(fireTools.length ? { tools: fireTools } : {}),
       };
@@ -1331,7 +1334,7 @@ export const amsgHooks = {
       messages: [{ role: 'user' as const, content: prompt }],
       // 轮次上限显式给一份：worker 要靠同一个数判「这是最后一轮了」（见 onLLMOutput），
       // 而上游只有内部默认值、没导出常量，各写各的迟早对不上。
-      maxToolIterations: MAX_TOOL_ITERATIONS,
+      maxToolIterations,
       // amsg-server 带 agentic-fire-tools feature 的版本起透传给每轮 LLM 请求；
       // 老 bundle 里不会走到这（tools 是随本次 bundle 一起升上去的）。
       ...(fireTools.length ? { tools: fireTools } : {}),
@@ -1407,7 +1410,7 @@ export const amsgHooks = {
     });
 
     const effectiveIteration = stash.experienceMode === 'switch' && stash.xhsChainClosed
-      ? MAX_TOOL_ITERATIONS - 1
+      ? stash.maxToolIterations - 1
       : ctx.iteration;
     let decision = processLLMRound(session, content, {
       // 名字取 tool_pack 里的那份：它跟着每轮聊天重新上云，改名当天就是新的。
@@ -1437,7 +1440,8 @@ export const amsgHooks = {
       ? { nativeToolCalls: nativeScheduleCalls }
       : null,
     // 最后一轮不再放行工具请求，改成用手上的内容收尾（见 agentic.ts 的 MAX_TOOL_ITERATIONS）。
-    effectiveIteration);
+    effectiveIteration,
+    stash.maxToolIterations);
 
     if (decision.decision === 'tool-request') {
       console.log('[amsg:agentic]', {

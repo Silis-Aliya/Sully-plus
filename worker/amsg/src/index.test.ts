@@ -11,7 +11,7 @@ import worker, {
   inspectWorkerEnv, offloadOversizedPush,
   resolveVapidEmail, runFireScheduleTool, runMcpFireTool,
 } from './index';
-import { MAX_TOOL_ITERATIONS } from './agentic';
+import { DEFAULT_TOOL_ITERATIONS, MCP_MAX_TOOL_ITERATIONS } from './agentic';
 import { MAX_PUSH_PAYLOAD_BYTES } from '@rei-standard/amsg-server/cloudflare';
 import {
   AMSG_FIRE_PACK_KEY,

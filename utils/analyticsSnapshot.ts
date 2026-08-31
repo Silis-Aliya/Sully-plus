@@ -165,6 +165,14 @@ export function collectCharSettings(
         HTML卡片: anyOn(x => x.htmlModeEnabled),
         角色级聊天装扮: anyOn(x => x.chatFineTune?.enabled),
         日常聊天协同: anyOn(x => x.chatCollaborationEnabled),
+        // 只问有没有角色选过粤语；不报角色名，也不拆成可关联的逐角色记录。
+        粤语语音: characters.some(x => [
+            x.chatVoiceLang,
+            x.dateVoiceLang,
+            x.callVoiceLang,
+            x.companionTouchSettings?.voiceLanguage,
+            x.companionTouchSettings?.startup?.voiceLanguage,
+        ].includes('yue')) ? '有人选' : '没人选',
         自定义时区: anyOn(x => x.customTimezoneEnabled),
         生活记录注入: anyOn(x => x.lifeRecordEnabled),
         小红书: anyOn(x => x.xhsEnabled),
@@ -330,6 +338,8 @@ export interface FeatureSources {
      * 只看「地址填没填」「连接成功过没有」两位，Worker 地址和共享密钥本身不进上报。
      */
     amsg2Global: { workerUrl?: string; initializedAt?: number };
+    /** 协同 sidecar 只用 count() 取出的行数，不读取窗口标题、消息、文件名或 Blob。 */
+    collaborationUsage?: { sessions: number; messages: number; assets: number };
 }
 
 /**
@@ -350,6 +360,14 @@ export function collectFeatureFlags(src: FeatureSources): Record<string, string>
     const amsg2ActiveChars = src.characters.filter(
         c => c.activeMsg2Config != null && c.activeMsg2Config.enabled !== false,
     );
+    const contextFlags = src.memoryPalaceConfig.featureFlags;
+    const contextEnabledCount = [
+        contextFlags?.recallRouter,
+        contextFlags?.interactionAdaptation,
+        contextFlags?.deepEngagement,
+    ].filter(value => value === true).length;
+    // 兼容仍直接调用同步收集器的旧路径；异步入口会传真实的 IndexedDB count。
+    const collaborationUsage = src.collaborationUsage ?? { sessions: 0, messages: 0, assets: 0 };
 
     return {
         // ── 外部服务接入 ──
@@ -402,12 +420,12 @@ export function collectFeatureFlags(src: FeatureSources): Record<string, string>
 
         // ── 协同工作 ──
         // 三个数字都来自 IndexedDB.count()，不会把窗口标题、对话正文或文件名读进统计层。
-        协同工作: src.collaborationUsage.sessions > 0 || src.collaborationUsage.messages > 0 || src.collaborationUsage.assets > 0
+        协同工作: collaborationUsage.sessions > 0 || collaborationUsage.messages > 0 || collaborationUsage.assets > 0
             ? '用过'
             : '没用过',
-        协同窗口数: bucketFewCount(src.collaborationUsage.sessions),
-        协同消息数: bucketFewCount(src.collaborationUsage.messages),
-        协同文件数: bucketFewCount(src.collaborationUsage.assets),
+        协同窗口数: bucketFewCount(collaborationUsage.sessions),
+        协同消息数: bucketFewCount(collaborationUsage.messages),
+        协同文件数: bucketFewCount(collaborationUsage.assets),
 
         // ── 模型线路 ──
         // 服务商是枚举，可以报；baseUrl / key / 模型名一律不报。
