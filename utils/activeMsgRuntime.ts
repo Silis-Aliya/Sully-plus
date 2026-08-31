@@ -903,6 +903,14 @@ export const notePageBecameVisible = (at: number = Date.now()): void => {
 };
 
 /**
+ * 统一的前台可见入口。实际补收流程仍由 init 中的增强版队列负责；这里必须
+ * 先记录可见时刻，供随后 flush 判断通知是否在用户离开页面时送达。
+ */
+export const handlePageBecameVisible = (): void => {
+  notePageBecameVisible();
+};
+
+/**
  * 这条消息落到设备时，用户是不是不在这个页面上（true = 不在，跳过慢放）。
  *
  * 慢放（拟人打字节奏）的意义是「角色正在你眼前打字」。人不在场时，系统通知已经把整句话
@@ -1824,6 +1832,7 @@ export const ActiveMsgRuntime = {
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState !== 'visible') return;
+        handlePageBecameVisible();
         // 先秒收本地 Push，再补拉云端缺口，最后处理补回内容；正常到达不被网络请求拖慢。
         void (async () => {
           await flushInboxToChat();

@@ -3,6 +3,8 @@ packages:
   - "worker/*"
 
 allowBuilds:
+  # pdfjs 的可选服务端画布依赖；浏览器端提取文本不执行其构建脚本。
+  canvas: false
   esbuild: true
   sharp: true
   workerd: true

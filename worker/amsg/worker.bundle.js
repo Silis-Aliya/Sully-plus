@@ -4155,20 +4155,25 @@ var resolveScheduleSlots = (schedule, now) => {
   }
   return { current: null, next: schedule.slots[0] };
 };
-var buildScheduleInjection = (schedule, evolvedNarrative, now = /* @__PURE__ */ new Date()) => {
+var buildScheduleInjection = (schedule, evolvedNarrative, now = /* @__PURE__ */ new Date(), options = {}) => {
   if (!schedule || !schedule.slots || schedule.slots.length === 0) return "";
   const { current: currentSlot, next: nextSlot } = resolveScheduleSlots(schedule, now);
+  const withClock = options.includeClock !== false;
+  const withTime = (text, startTime) => withClock ? `${text}\uFF08${startTime}\uFF09` : text;
   const isPreDawnCarryOver = !currentSlot && now.getHours() < PRE_DAWN_END_HOUR;
   let slotHeader = "";
   if (currentSlot) {
-    slotHeader = `\u5F53\u524D\u65F6\u6BB5\uFF1A${currentSlot.startTime} \u4F60\u6B63\u5728${currentSlot.activity}`;
+    slotHeader = withClock ? `\u5F53\u524D\u65F6\u6BB5\uFF1A${currentSlot.startTime} \u4F60\u6B63\u5728${currentSlot.activity}` : `\u5F53\u524D\u65F6\u6BB5\uFF1A\u4F60\u6B63\u5728${currentSlot.activity}`;
     if (currentSlot.location) slotHeader += `\uFF08${currentSlot.location}\uFF09`;
-    if (nextSlot) slotHeader += `
-\u4E4B\u540E\u5B89\u6392\uFF1A${nextSlot.startTime} ${nextSlot.activity}`;
+    if (nextSlot) {
+      slotHeader += withClock ? `
+\u4E4B\u540E\u5B89\u6392\uFF1A${nextSlot.startTime} ${nextSlot.activity}` : `
+\u4E4B\u540E\u5B89\u6392\uFF1A${nextSlot.activity}`;
+    }
     slotHeader += "\n";
   } else if (nextSlot) {
-    slotHeader = isPreDawnCarryOver ? `\u591C\u6DF1\u4E86\uFF0C\u4ECA\u5929\u7684\u5B89\u6392\u8FD8\u6CA1\u5F00\u59CB\uFF0C\u6700\u65E9\u7684\u4E00\u4EF6\u662F${nextSlot.activity}\uFF08${nextSlot.startTime}\uFF09
-` : `\u4ECA\u5929\u8FD8\u6CA1\u5F00\u59CB\u6D3B\u52A8\uFF0C\u7A0D\u540E\u5148${nextSlot.activity}\uFF08${nextSlot.startTime}\uFF09
+    slotHeader = isPreDawnCarryOver ? `\u591C\u6DF1\u4E86\uFF0C\u4ECA\u5929\u7684\u5B89\u6392\u8FD8\u6CA1\u5F00\u59CB\uFF0C\u6700\u65E9\u7684\u4E00\u4EF6\u662F${withTime(nextSlot.activity, nextSlot.startTime)}
+` : `\u4ECA\u5929\u8FD8\u6CA1\u5F00\u59CB\u6D3B\u52A8\uFF0C\u7A0D\u540E\u5148${withTime(nextSlot.activity, nextSlot.startTime)}
 `;
   }
   let narrative = "";
@@ -4184,9 +4189,27 @@ var buildScheduleInjection = (schedule, evolvedNarrative, now = /* @__PURE__ */ 
 `;
   const footnote = `
 \uFF08\u4E0D\u662F\u53F0\u8BCD\uFF0C\u4E0D\u7528\u8BF4\u51FA\u53E3\u2014\u2014\u8BA9\u5B83\u5F71\u54CD\u4F60\u7684\u8BED\u6C14\u548C\u60C5\u7EEA\u5C31\u597D\u3002\uFF09`;
-  let out = slotHeader;
+  let out = "";
+  if (options.includeFullDay) {
+    const rows = schedule.slots.map((slot) => {
+      let line = withClock ? `- ${slot.startTime} ${slot.activity}` : `- ${slot.activity}`;
+      if (slot.location) line += `\uFF08${slot.location}\uFF09`;
+      if (slot.description) line += `\uFF1A${slot.description}`;
+      return line;
+    });
+    out += `\u4F60\u4ECA\u5929\u7684\u5B8C\u6574\u65E5\u7A0B\uFF1A
+${rows.join("\n")}
+`;
+  }
+  out += slotHeader;
   if (narrative) {
     out += preamble + narrative + footnote;
+  }
+  const changeTarget = nextSlot ?? currentSlot;
+  if (options.includeChangeInstruction && withClock && changeTarget) {
+    out += `
+\u65E5\u7A0B\u662F\u4F60\u65E9\u4E0A\u7ED9\u81EA\u5DF1\u6392\u7684\u8BA1\u5212\uFF0C\u4E0D\u662F\u5FC5\u987B\u5C65\u884C\u7684\u547D\u4EE4\u3002\u771F\u5B9E\u53D1\u751F\u7684\u4E8B\u8DDF\u5B83\u5BF9\u4E0D\u4E0A\u65F6\uFF08\u6BD4\u5982\u8FD9\u4F1A\u513F\u8868\u4E0A\u5199\u7740\u7761\u89C9\u3001\u4F60\u5374\u9192\u7740\u5728\u8DDF\u5BF9\u65B9\u8BF4\u8BDD\uFF09\uFF0C\u628A\u5B83\u6539\u6210\u4F60\u5B9E\u9645\u5728\u505A\u7684\u4E8B\u5C31\u597D\u3002
+\u9700\u8981\u65F6\u5728\u56DE\u590D\u672B\u5C3E\u5355\u72EC\u8F93\u51FA\uFF1A[[ACTION:CHANGE_SCHEDULE | ${changeTarget.startTime} | \u53BB\u8D85\u5E02]]\uFF08\u65F6\u6BB5\u8981\u539F\u6837\u6284\u4E0A\u9762\u51FA\u73B0\u8FC7\u7684\u90A3\u51E0\u4E2A\uFF1B\u6B63\u5728\u8FDB\u884C\u7684\u8FD9\u4E00\u6761\u548C\u5B83\u4E4B\u540E\u7684\u90FD\u80FD\u6539\uFF0C\u5DF2\u7ECF\u8FC7\u53BB\u7684\u4E0D\u80FD\uFF09\u3002`;
   }
   out += "\n";
   return out;
@@ -8573,8 +8596,8 @@ function attachSceneSong(directives, sceneSong) {
   if (!sceneSong) return directives;
   return directives.map((d) => d.type === "music_action" ? { ...d, song: sceneSong } : d);
 }
-function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration) {
-  const isFinalRound = typeof iteration === "number" && iteration >= MAX_TOOL_ITERATIONS - 1;
+function processLLMRound(state, llmOutputText, build, mcp, schedule, iteration, maxToolIterations = DEFAULT_TOOL_ITERATIONS) {
+  const isFinalRound = typeof iteration === "number" && iteration >= maxToolIterations - 1;
   const nativeToolCalls = mcp?.nativeToolCalls ?? [];
   const textCalls = mcp?.resolve.size ? extractTextFakedMcpCalls(llmOutputText, mcp.resolve, { alsoMatchPrefix: MCP_FIRE_NAME_PREFIX }) : [];
   const nativeScheduleCalls = schedule?.nativeToolCalls ?? [];

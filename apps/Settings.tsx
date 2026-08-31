@@ -1,12 +1,9 @@
 ﻿
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useAlerts, useBackup, useCharacterData, useNavigation, useSystemConfig } from '../context/OSContext';
-import { Capacitor } from '@capacitor/core';
-import { Filesystem, Directory } from '@capacitor/filesystem';
-import { Share } from '@capacitor/share';
 import { extractContent, safeResponseJson } from '../utils/safeApi';
 import { extractModelIds, normalizeModelIds } from '../utils/modelList';
-import { EXPORT_CHUNK_SIZE, sliceRanges } from '../utils/backupExport';
+import { shareOrDownloadBlob } from '../utils/shareExport';
 import Modal from '../components/os/Modal';
 import { NotionManager, FeishuManager, RealtimeContextManager, fetchOwmWeather, fetchOpenMeteoWeather } from '../utils/realtimeContext';
 import { XhsMcpClient } from '../utils/xhsMcpClient';
@@ -1269,66 +1266,21 @@ const Settings: React.FC = () => {
           // Trigger export (Context handles loading state UI)
           const blob = await exportSystem(mode);
           
-          if (Capacitor.isNativePlatform()) {
-              // 手机端分片写盘：整包一次性 readAsDataURL 会把几十~上百 MB 的 base64
-              // 一股脑塞进内存，WebView 容易 OOM 闪退。改成按 3MiB 切片，每片转成纯
-              // base64 再 appendFile 追加。先写临时文件，全部写完才改名+分享；中途任何
-              // 一步失败都删掉残片，避免留下一个看着像成功、其实损坏的 .zip。
-              const fileName = `Sully_Backup_${mode}_${Date.now()}.zip`;
-              const tempName = `${fileName}.part`;
-
-              // 读一个 Blob 分片为纯 base64（去掉 data:...;base64, 前缀）。
-              const sliceToBase64 = (slice: Blob): Promise<string> => new Promise((resolve, reject) => {
-                  const reader = new FileReader();
-                  reader.onloadend = () => {
-                      const result = String(reader.result);
-                      const comma = result.indexOf(',');
-                      resolve(comma >= 0 ? result.slice(comma + 1) : result);
-                  };
-                  reader.onerror = () => reject(reader.error || new Error('读取备份分片失败'));
-                  reader.onabort = () => reject(new Error('读取备份分片被中断'));
-                  reader.readAsDataURL(slice);
-              });
-
-              try {
-                  const ranges = sliceRanges(blob.size, EXPORT_CHUNK_SIZE);
-                  for (let i = 0; i < ranges.length; i++) {
-                      const [start, end] = ranges[i];
-                      const base64 = await sliceToBase64(blob.slice(start, end));
-                      if (i === 0) {
-                          await Filesystem.writeFile({ path: tempName, data: base64, directory: Directory.Cache });
-                      } else {
-                          await Filesystem.appendFile({ path: tempName, data: base64, directory: Directory.Cache });
-                      }
-                  }
-                  // 全部分片写盘成功，才把临时文件改名为正式名并分享。
-                  await Filesystem.rename({ from: tempName, to: fileName, directory: Directory.Cache });
-                  const uriResult = await Filesystem.getUri({ directory: Directory.Cache, path: fileName });
-                  await Share.share({ title: `Sully Backup`, files: [uriResult.uri] });
-              } catch (e) {
-                  console.error("Native write failed", e);
-                  // 尽力清掉写了一半的残片，别留下损坏文件。
-                  try { await Filesystem.deleteFile({ path: tempName, directory: Directory.Cache }); } catch { /* ignore */ }
-                  trackEvent('保存备份文件到手机失败', { mode });
-                  addToast("保存文件失败", "error");
-              }
-          } else {
-              // Web Download
-              // 上一次导出的 object URL 先 revoke 掉，否则它会一直占着整包内存直到刷新页面。
-              if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
-              const url = URL.createObjectURL(blob);
-              downloadUrlRef.current = url;
-              setDownloadUrl(url);
-              setShowExportModal(true);
-
-              // Auto click
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `Sully_Backup_${mode}_${new Date().toISOString().slice(0,10)}.zip`;
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-          }
+          const fileName = `Sully_Backup_${mode}_${new Date().toISOString().slice(0,10)}.zip`;
+          // 保留手动下载兜底，同时让设置导出与协作文件统一走经过验证的
+          // 原生分片写盘 / Web Share / 浏览器下载管线。
+          if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
+          const url = URL.createObjectURL(blob);
+          downloadUrlRef.current = url;
+          setDownloadUrl(url);
+          setShowExportModal(true);
+          const result = await shareOrDownloadBlob({
+              blob,
+              fileName,
+              shareTitle: 'Sully Backup',
+              nativeChunked: true,
+          });
+          if (result === 'cancelled') return;
       } catch (e: any) {
           // 只报导出档位，错误文案是动态串不能进属性
           trackEvent('导出备份失败', { mode });

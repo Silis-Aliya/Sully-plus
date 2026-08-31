@@ -199,6 +199,20 @@ export interface ScheduleCardAppearance {
   customCss?: string;
 }
 
+export type JournalAppearancePresetId =
+  | 'original'
+  | 'letterpress'
+  | 'sakura'
+  | 'forest'
+  | 'midnight';
+
+/** 交换日记 App 的全局皮肤。 */
+export interface JournalAppearance {
+  preset?: JournalAppearancePresetId;
+  /** 仅允许 .sully-journal-* 作用域。 */
+  customCss?: string;
+}
+
 export interface OSTheme {
   hue: number;
   saturation: number;
@@ -236,6 +250,7 @@ export interface OSTheme {
   nowPlayingWidgetLight?: boolean;
   /** 日程卡片统一皮肤：桌面、全屏、房间与聊天内同步。 */
   scheduleCardAppearance?: ScheduleCardAppearance;
+  journalAppearance?: JournalAppearance;
   desktopDecorations?: DesktopDecoration[];
   customFont?: string;
   /** 顶部时间栏布局：安全显示（安全区下方）/ 紧凑显示（嵌入安全区）/ 完全隐藏。 */
@@ -3708,7 +3723,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'text' | 'image' | 'emoji' | 'voice' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'music_invite_result' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card' | 'code_card';
+export type MessageType = 'text' | 'image' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'music_invite_result' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card' | 'code_card';
 
 export interface Message {
     id: number;
@@ -3928,6 +3943,21 @@ export interface FullBackupData {
     dreamCollection?: Record<string, { firstAt: number; count: number }>;  // 梦境盲盒收藏册（os_dream_collection，账号级 localStorage）
     gotchiAccentHue?: string;  // 桌面电子宠物主题主色调偏好（tama_accent_hue，账号级 localStorage）
     localStorageSettings?: Record<string, string>; // 跨设备恢复的小体积本机设置/token/cookie 快照
+
+    // 独立协同工作数据库。二进制文件位于 ZIP 的 collaboration/assets/。
+    collaborationBackupVersion?: 1;
+    collaborationBackupMode?: 'text_only' | 'media_only' | 'full';
+    collaborationSessions?: any[];
+    collaborationMessages?: any[];
+    collaborationCategories?: any[];
+    collaborationSettings?: any;
+    collaborationAssetIndex?: {
+        id: string;
+        path: string;
+        mimeType: string;
+        size: number;
+        createdAt: number;
+    }[];
 }
 
 // --- CLOUD BACKUP TYPES ---
