@@ -100,17 +100,20 @@ type InstantToolUiStatus = {
 
 const Chat: React.FC = () => {
     const {
-        characters, activeCharacterId, setActiveCharacterId, updateCharacter,
-        userProfile, groups, characterGroups,
+        characters, activeCharacterId, setActiveCharacterId, addCharacter, updateCharacter,
+        userProfile, groups, characterGroups, addWorldbook,
     } = useCharacterData();
     const { closeApp, openDateWithChar } = useNavigation();
     const { addToast, showError } = useAlerts();
     const {
         lastMsgTimestamp, clearUnread, unreadMessages, proactiveComposingChars,
     } = useMessageActivity();
-    const { customThemes, removeCustomTheme, theme: osTheme } = useAppearance();
     const {
-        apiConfig, apiPresets, addApiPreset, realtimeConfig,
+        customThemes, addCustomTheme, removeCustomTheme, theme: osTheme,
+        updateTheme, saveAppearancePreset,
+    } = useAppearance();
+    const {
+        apiConfig, apiPresets, addApiPreset, availableModels, realtimeConfig,
         memoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters,
     } = useSystemConfig();
     const isProactiveComposing = !!(activeCharacterId && proactiveComposingChars[activeCharacterId]);
